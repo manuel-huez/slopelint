@@ -102,7 +102,7 @@ func analysisCacheRoot(dir string) (string, error) {
 			return "", err
 		}
 
-		dir = filepath.Join(userCacheDir, "defenselint")
+		dir = filepath.Join(userCacheDir, "slopelint")
 	}
 
 	return filepath.Join(dir, fmt.Sprintf("analysis-v%d", analysisCacheSchema)), nil

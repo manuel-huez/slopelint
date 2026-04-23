@@ -1,7 +1,7 @@
 # Rule Roadmap
 
 This document turns the "clean, readable, maintainable Go" goal into a concrete
-rule backlog for `defenselint`.
+rule backlog for `slopelint`.
 
 Current status in this worktree:
 
@@ -28,7 +28,7 @@ Ship rules in two lanes:
 
 ### P0: ship first
 
-These fit `defenselint`'s current model and should stay low-noise.
+These fit `slopelint`'s current model and should stay low-noise.
 
 #### `redundant_post_success_check`
 
@@ -239,7 +239,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 ## Non-goals
 
 Do not chase rules already covered well by `staticcheck`, `go vet`, or
-`gocritic` unless `defenselint` can add one of these:
+`gocritic` unless `slopelint` can add one of these:
 
 - path-sensitive proof
 - cross-function or cross-package evidence

@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-const contractPrefix = "defenselint:ensures"
+const contractPrefix = "slopelint:ensures"
+const legacyContractPrefix = "defenselint:ensures"
 const nilText = "nil"
 
 type guardContract struct {
@@ -134,11 +135,13 @@ func trimContractPrefix(text string) (string, bool) {
 	}
 
 	text = strings.TrimSpace(strings.TrimSuffix(text, "*/"))
-	if !strings.HasPrefix(text, contractPrefix) {
-		return "", false
+	for _, prefix := range []string{contractPrefix, legacyContractPrefix} {
+		if trimmed, ok := strings.CutPrefix(text, prefix); ok {
+			return strings.TrimSpace(trimmed), true
+		}
 	}
 
-	return strings.TrimSpace(strings.TrimPrefix(text, contractPrefix)), true
+	return "", false
 }
 
 func splitContractBody(body string) (string, string, bool, bool) {

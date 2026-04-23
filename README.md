@@ -1,281 +1,169 @@
-# defenselint
+# slopelint
 
-`defenselint` is a standalone Go linter that looks for defensive checks that are
-already impossible or already guaranteed on the current control-flow path.
+`slopelint` is a Go analyzer for preventing code slop in Go codebases.
 
-It is aimed at the kind of redundant `if` logic that shows up in hand-written or
-AI-generated Go code, for example:
+It targets code that keeps getting longer, noisier, and more ceremonial without
+adding meaning: redundant guards, dead branches, copied validation, trivial
+wrappers, and comments that only restate code.
 
-- repeated `nil` checks after an early return
-- repeated empty-string / zero-value checks after a guard clause
-- repeated `len(...)` checks after an earlier emptiness or non-emptiness guard
-- boolean-return / boolean-assignment branch ceremony
-- switch cases that can no longer match on the current path
-- identical `if` / `switch` branch bodies that should be merged
-- redundant `default` arms in exhaustive bool switches
-- redundant right-hand sides of `&&` and `||` expressions
-- struct-field checks that are already filtered by earlier conditions
-- post-guard defensive checks after helper calls, including same-repo package boundaries
+LLM output is one source of that slop, not the only one. The same patterns show
+up after rushed refactors, cargo-cult defensive programming, and copy-paste
+maintenance.
 
-## What it does
+## Current focus
 
-The linter parses and type-checks matched packages, then symbolically tracks a
-small fact set for local variables and selector chains such as:
+Today `slopelint` is strongest at path-sensitive redundancy and a small set of
+structural simplifications.
+
+Shipped rules:
+
+- repeated `nil`, empty-string, boolean, enum, or `len(...)` checks after guard
+  clauses
+- redundant right-hand side of `&&` / `||`
+- unreachable `switch` cases on already-filtered path
+- boolean-return ceremony like `if cond { return true }; return false`
+- identical `if` / `else` or adjacent `switch` branch bodies
+- redundant `default` in exhaustive `bool` switches
+- one-read temp aliases like `name := req.Name`
+
+Experimental rules behind `-experimental`:
+
+- trivial private wrappers with one production callsite
+- doc comments that only restate private declaration names
+
+## Why this exists
+
+Classic Go linters already cover many syntax bugs, suspicious APIs, and generic
+style rules.
+
+`slopelint` goes after a different failure mode: code that looks cautious or
+structured, but no longer carries real information.
+
+Examples:
+
+- checks that are already proven true or false
+- branch structure that can be merged or deleted
+- helpers and locals that add indirection without meaning
+- comments that explain nothing
+
+## How it works
+
+`slopelint` runs on top of `go/analysis`.
+
+It parses and type-checks matched packages, then tracks small path facts for:
 
 - `x == nil` / `x != nil`
 - `name == ""` / `name != ""`
 - `len(items) == 0` / `len(items) > 0`
-- `ok == true` / `ok == false`
-- `req.User.Role == Admin` / `req.User.Role != Admin`
+- boolean facts
+- selector chains like `req.User.Role == Admin`
 
-It also preserves equivalence across simple copies such as `name := req.Name`, so a
-later guard on `name` can still make a repeated `req.Name` check redundant.
+It also:
 
-For helper calls, the analyzer now infers summaries automatically. That lets
-facts flow across call boundaries, through result variables, and across
-same-repo package boundaries for patterns such as:
-
-```go
-func valid(req *Req) bool {
-    if req == nil { return false }
-    if req.Name == "" { return false }
-    return true
-}
-
-func handle(req *Req) {
-    if !valid(req) { return }
-    if req == nil { println("redundant") }    // reported
-    if req.Name == "" { println("redundant") } // reported
-}
-```
-
-It also handles result-variable flow:
-
-```go
-func check(req *Req) error {
-    if req == nil { return errors.New("bad") }
-    if req.Name == "" { return errors.New("bad") }
-    return nil
-}
-
-func handle(req *Req) {
-    err := check(req)
-    if err != nil { return }
-    if req == nil { println("redundant") }    // reported
-    if req.Name == "" { println("redundant") } // reported
-}
-```
-
-For helper-style guard functions, you can add opt-in contracts in doc comments:
-
-```go
-//defenselint:ensures req != nil
-//defenselint:ensures req.Name != ""
-func requireReq(req *Req) {}
-```
-
-After `requireReq(req)`, the analyzer will treat those facts as established on the
-reachable return path.
-
-Contracts are now optional. They are mainly useful for helpers whose bodies are not
-available to the analyzer or for making intended guarantees explicit.
-
-When later control flow contradicts or duplicates those facts, it reports the
-condition.
+- preserves simple aliases like `name := req.Name`
+- derives facts from helper return values
+- imports and exports summaries across same-repo package boundaries
+- propagates boolean and `error`/`nil`-style result facts
+- supports opt-in contracts via `//slopelint:ensures ...`
+- caches diagnostics and exported summaries on disk for faster reruns
 
 ## Example
 
 ```go
-func handle(req Request) {
-    if req.Name == "" {
-        return
-    }
-
-    if req.Name == "" { // reported: always false
-        panic("unreachable")
-    }
-
-    if req.Name != "" { // reported: always true
-        log.Println("already known")
-    }
+func valid(req *Req) bool {
+	if req == nil {
+		return false
+	}
+	if req.Name == "" {
+		return false
+	}
+	return true
 }
-```
 
-## Rule examples
+func handle(req *Req) {
+	if !valid(req) {
+		return
+	}
 
-These snippets show the finding categories emitted today.
-
-### `redundant_condition`
-
-```go
-func handle(name string) {
-    if name == "" { return }
-    if name == "" { println("dead") } // reported
-}
-```
-
-### `redundant_subexpression`
-
-```go
-func handle(name string) {
-    if name != "" && name != "" { println(name) } // reported
-}
-```
-
-### `unreachable_case`
-
-```go
-func handle(name string) {
-    switch {
-    case name == "":
-        return
-    case name != "":
-        return
-    case len(name) > 3:
-        println("dead") // reported
-    }
-}
-```
-
-### `boolean_ceremony`
-
-```go
-func ok(name string) bool {
-    if name != "" {
-        return true
-    }
-    return false // reported
-}
-```
-
-### `control_flow_merge`
-
-```go
-func handle(ok bool) error {
-    if ok {
-        return nil
-    } else {
-        return nil // reported
-    }
-}
-```
-
-### `redundant_default`
-
-```go
-func handle(ok bool) {
-    switch ok {
-    case true:
-        println("yes")
-    case false:
-        println("no")
-    default:
-        println("dead") // reported
-    }
-}
-```
-
-### `temp_alias`
-
-```go
-type Req struct{ Name string }
-
-func handle(req Req) {
-    name := req.Name // reported
-    if name == "" {
-        println("bad")
-    }
-}
-```
-
-### `trivial_wrapper` (`-experimental`)
-
-```go
-func execute(name string) bool { return name != "" }
-
-func run(name string) bool {
-    return execute(name) // reported when run has one production callsite
-}
-```
-
-### `comment_noise` (`-experimental`)
-
-```go
-// Validate user
-func validateUser(name string) bool { // reported
-    return name != ""
+	if req == nil { // reported
+		panic("dead")
+	}
+	if req.Name == "" { // reported
+		panic("dead")
+	}
 }
 ```
 
 ## Build
 
 ```bash
-go build ./cmd/defenselint
+go build -o slopelint ./cmd/slopelint
 ```
 
 ## Run
 
 ```bash
-./defenselint ./...
-./defenselint ./internal/...
-./defenselint -max-states=64 ./...
-./defenselint -experimental ./...
-go vet -vettool=$(which defenselint) ./...
+./slopelint ./...
+./slopelint ./internal/...
+./slopelint -max-states=64 ./...
+./slopelint -experimental ./...
+go vet -vettool=$(pwd)/slopelint ./...
 ```
 
-The standalone binary now uses Go's `go/analysis` driver, so the same executable
-works directly, under multicheckers, or as a `go vet` tool via `-vettool`.
+Useful flags:
 
-Direct runs now cache per-package diagnostics and exported summaries on disk, so
-unchanged follow-up runs can skip the symbolic walk. Cache is enabled by default.
-Use `-cache=false` or `DEFENSELINT_CACHE=0` to disable it, and `-cache-dir` or
-`DEFENSELINT_CACHE_DIR` to choose a different cache location.
+- `-max-states`: widening cap for symbolic paths
+- `-cache=false`: disable persistent cache
+- `-cache-dir=/path/to/cache`: override cache location
+- `-experimental`: turn on smell checks
 
-Experimental smell rules are off by default. Enable them with `-experimental`.
-Current experimental checks cover one-callsite same-package trivial forwarders
-and one-line private doc comments that only restate declaration names.
+Useful env vars:
 
-## Current model
+- `SLOPELINT_CACHE=0`
+- `SLOPELINT_CACHE_DIR=/path/to/cache`
 
-The first version is intentionally conservative and focuses on the patterns that
-cause the most noisy defensive code:
-
-- path-sensitive `if` handling
-- expression switches
-- statement-local `select` and `type switch` fallback
-- automatic call summaries for helper functions and boolean predicates
-- same-repo cross-package summary import/export via `go/analysis` object facts
-- result-variable propagation for boolean and nil/error-style helpers
-- single-pass loop analysis with widening
-- copy propagation for simple assignments like `name := req.Name`
-- alias-aware fact propagation for simple symbol copies
-- field tracking for selector chains like `req.User.Role`
-- derived `len(...)` facts for empty vs non-empty guards
-- opt-in call contracts via `//defenselint:ensures ...`
-- conservative invalidation across calls and writes
+Default cache location: `os.UserCacheDir()/slopelint/analysis-v*`
 
 ## Current limits
 
-To keep the implementation predictable, the linter still skips functions
-containing `goto`, since that needs a more global CFG model.
+- not a general style or architecture linter
+- skips functions containing `goto`
+- conservative around writes, unknown calls, loops, `select`, `type switch`,
+  labeled control flow
+- strongest today on path-based proof; broader smell rules stay experimental
+- weak at type-level semantic meaning
+- report-only today; no custom autofix implementation yet
 
-It does handle labeled `break` / `continue` and `fallthrough` conservatively
-when the target stays within normal loop/switch/select structure.
+## Rule IDs
 
-It also does **not** try to infer semantic guarantees from named types alone.
-For example, a type like `type SanitizedString string` is still just a string to
-this analyzer unless earlier control flow already filtered its possible values.
+Machine-readable categories emitted today:
 
-That means the tool is strong at **path-based filtering** and intentionally weak
-at **type-level semantic inference**.
+- `redundant_condition`
+- `redundant_subexpression`
+- `unreachable_case`
+- `boolean_ceremony`
+- `control_flow_merge`
+- `redundant_default`
+- `temp_alias`
 
-When consumed through `go/analysis`, findings also carry machine-readable
-categories such as `redundant_condition`, `boolean_ceremony`,
-`control_flow_merge`, `redundant_default`, `temp_alias`, `redundant_subexpression`, and
-`unreachable_case`. With `-experimental`, that set also includes
-`trivial_wrapper` and `comment_noise`.
+Experimental categories:
 
-## Next checks
+- `trivial_wrapper`
+- `comment_noise`
 
-Planned rule IDs, priorities, and guardrails for the next wave of checks live in
-[`docs/rule-roadmap.md`](docs/rule-roadmap.md).
+## Contracts
+
+Use contracts when helper body is unavailable or when you want guarantees to be
+explicit:
+
+```go
+//slopelint:ensures req != nil
+//slopelint:ensures req.Name != ""
+func requireReq(req *Req) {}
+```
+
+After `requireReq(req)`, reachable path inherits those facts.
+
+## Roadmap
+
+Planned checks, rule lanes, priorities: [docs/rule-roadmap.md](docs/rule-roadmap.md)

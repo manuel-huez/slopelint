@@ -1,4 +1,4 @@
-package defenselint
+package slopelint
 
 import (
 	"os"
@@ -9,8 +9,8 @@ import (
 )
 
 func TestAnalyzerCrossPackageFacts(t *testing.T) {
-	vettool := filepath.Join(t.TempDir(), "defenselint")
-	build := exec.Command("go", "build", "-o", vettool, "./cmd/defenselint")
+	vettool := filepath.Join(t.TempDir(), "slopelint")
+	build := exec.Command("go", "build", "-o", vettool, "./cmd/slopelint")
 
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {

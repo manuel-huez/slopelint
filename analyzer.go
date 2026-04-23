@@ -1,11 +1,11 @@
-package defenselint
+package slopelint
 
 import (
 	"os"
 	"reflect"
 	"strings"
 
-	"example.com/defenselint/internal/lint"
+	"example.com/slopelint/internal/lint"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -18,10 +18,10 @@ var cacheEnabled = true
 var cacheDir string
 var experimental bool
 
-// Analyzer reports defensive checks already implied by current control-flow path.
+// Analyzer reports path-proven redundancy and other low-signal code structure.
 var Analyzer = &analysis.Analyzer{
-	Name:       "defenselint",
-	Doc:        "report defensive checks that are already impossible or guaranteed",
+	Name:       "slopelint",
+	Doc:        "report path-proven redundancy and other low-signal code structure",
 	FactTypes:  lint.AnalysisFactTypes(),
 	Run:        run,
 	ResultType: reflect.TypeFor[analysisResult](),
@@ -77,7 +77,11 @@ func run(pass *analysis.Pass) (any, error) {
 }
 
 func cacheEnvEnabled() bool {
-	value := strings.TrimSpace(os.Getenv("DEFENSELINT_CACHE"))
+	value := strings.TrimSpace(os.Getenv("SLOPELINT_CACHE"))
+	if value == "" {
+		value = strings.TrimSpace(os.Getenv("DEFENSELINT_CACHE"))
+	}
+
 	if value == "" {
 		return true
 	}
@@ -93,6 +97,11 @@ func cacheEnvEnabled() bool {
 func resolvedCacheDir() string {
 	if cacheDir != "" {
 		return cacheDir
+	}
+
+	dir := strings.TrimSpace(os.Getenv("SLOPELINT_CACHE_DIR"))
+	if dir != "" {
+		return dir
 	}
 
 	return strings.TrimSpace(os.Getenv("DEFENSELINT_CACHE_DIR"))

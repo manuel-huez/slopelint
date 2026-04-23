@@ -1,10 +1,10 @@
 package main
 
 import (
-	"example.com/defenselint"
+	"example.com/slopelint"
 	"golang.org/x/tools/go/analysis/singlechecker"
 )
 
 func main() {
-	singlechecker.Main(defenselint.Analyzer)
+	singlechecker.Main(slopelint.Analyzer)
 }

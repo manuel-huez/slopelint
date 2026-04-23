@@ -1,4 +1,4 @@
-module example.com/defenselint
+module example.com/slopelint
 
 go 1.22.0
 

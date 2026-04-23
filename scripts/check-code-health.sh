@@ -59,7 +59,7 @@ run_golangci_lint() {
 }
 
 run_go_deadcode() {
-  deadcode ./cmd/defenselint ./internal/...
+  deadcode ./cmd/slopelint ./internal/...
 }
 
 run_jscpd() {

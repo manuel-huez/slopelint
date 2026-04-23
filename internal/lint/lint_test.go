@@ -468,8 +468,8 @@ func TestContractCommentsEstablishFactsAfterCall(t *testing.T) {
 
 type Req struct { Name string }
 
-//defenselint:ensures req != nil
-//defenselint:ensures req.Name != ""
+//slopelint:ensures req != nil
+//slopelint:ensures req.Name != ""
 func requireReq(req *Req) {}
 
 func f(req *Req) {

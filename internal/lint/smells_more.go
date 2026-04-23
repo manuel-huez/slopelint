@@ -422,7 +422,12 @@ func (l *linter) privateFuncWithFunctionalOptions(
 }
 
 func privateConstructorName(name string) bool {
-	return strings.HasPrefix(name, "new") || strings.HasPrefix(name, "build")
+	words := splitIdentifierWords(name)
+	if len(words) == 0 {
+		return false
+	}
+
+	return words[0] == "new" || words[0] == "build"
 }
 
 func funcHasFunctionalOptionParam(info *types.Info, fields *ast.FieldList) bool {

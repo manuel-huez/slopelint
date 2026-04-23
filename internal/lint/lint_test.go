@@ -360,6 +360,22 @@ func f(values []string) {
 	}
 }
 
+func TestStateHashIncludesAliasAndBindingsWithoutFacts(t *testing.T) {
+	empty := newState()
+	withAlias := linkAlias(newState(), "pkg:a:1", "pkg:b:2")
+
+	if empty.hash() == withAlias.hash() {
+		t.Fatalf("alias-only state collapsed into empty hash %q", empty.hash())
+	}
+
+	withBinding := newState()
+	withBinding.bindings["pkg:ok:3"] = resultBinding{roots: []string{"pkg:req:4"}}
+
+	if empty.hash() == withBinding.hash() {
+		t.Fatalf("binding-only state collapsed into empty hash %q", empty.hash())
+	}
+}
+
 func TestDetectsUnreachableSwitchCases(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
@@ -1984,6 +2000,42 @@ func run() int {
 		`private API "newThing" uses functional options for 1 production callsites; pass config directly`,
 	) {
 		t.Fatalf("expected options-overkill finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsOptionsOverkillWhenPrefixIsNotConstructorWord(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type config struct { name string }
+type option func(*config)
+
+func withName(name string) option {
+	return func(cfg *config) { cfg.name = name }
+}
+
+func newsThing(opts ...option) int {
+	var cfg config
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return len(cfg.name)
+}
+
+func run() int {
+	return newsThing(withName("x"))
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `private API "newsThing" uses functional options`) {
+		t.Fatalf(
+			"non-constructor prefix should not trigger options-overkill finding, got:\n%s",
+			joined,
+		)
 	}
 }
 

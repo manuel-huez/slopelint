@@ -134,13 +134,13 @@ func (s state) clone() state {
 }
 
 func (s state) hash() string {
-	if len(s.facts) == 0 {
-		return "{}"
-	}
-
 	var b strings.Builder
 
-	appendFactsHash(&b, s.facts)
+	if len(s.facts) == 0 {
+		b.WriteString("{}")
+	} else {
+		appendFactsHash(&b, s.facts)
+	}
 
 	if len(s.aliases) != 0 {
 		b.WriteByte('|')

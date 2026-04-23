@@ -143,10 +143,13 @@ items still need stronger repo-local evidence.
 - Examples:
   - `func run(ctx context.Context) error { return execute(ctx) }`
   - `func newCache() *Cache { return buildCache() }`
+  - `func run(ctx context.Context) error { err := execute(ctx); return err }`
 - Why: wrapper layers make call graphs noisy if they do not add naming value.
 - Guardrails:
   - private helpers first
   - no added logging, metrics, tracing, panic recovery, or argument rewriting
+  - assign-and-return wrappers only when call results are returned unchanged and
+    in order
   - skip if wrapper name is materially better than callee name
   - stronger signal when caller count is one
 - Suggested category: `trivial_wrapper`

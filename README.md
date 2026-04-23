@@ -94,6 +94,21 @@ func handle(req *Req) {
 }
 ```
 
+Experimental wrapper example:
+
+```go
+func execute(name string) bool { return name != "" }
+
+func run(name string) bool {
+	ok := execute(name)
+	return ok // reported with -experimental
+}
+
+func use(name string) bool {
+	return run(name)
+}
+```
+
 ## Build
 
 ```bash

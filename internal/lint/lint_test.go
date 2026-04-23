@@ -1187,6 +1187,123 @@ func use(name string) bool {
 	}
 }
 
+func TestDetectsTrivialForwarderAssignReturnExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(name string) bool { return name != "" }
+
+func run(name string) bool {
+	ok := execute(name)
+	return ok
+}
+
+func use(name string) bool {
+	return run(name)
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "run" only forwards to "execute" at one callsite; inline or merge names`,
+	) {
+		t.Fatalf("expected trivial assign-return forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsTrivialForwarderVarReturnExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(name string) (string, bool) { return name, name != "" }
+
+func run(name string) (string, bool) {
+	var value, ok = execute(name)
+	return value, ok
+}
+
+func use(name string) bool {
+	value, ok := run(name)
+	return ok && value != ""
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "run" only forwards to "execute" at one callsite; inline or merge names`,
+	) {
+		t.Fatalf("expected trivial var-return forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsTrivialForwarderWhenReturnOrderChanges(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(name string) (string, bool) { return name, name != "" }
+
+func run(name string) (bool, string) {
+	value, ok := execute(name)
+	return ok, value
+}
+
+func use(name string) bool {
+	ok, _ := run(name)
+	return ok
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only forwards to "execute"`) {
+		t.Fatalf("unexpected trivial forwarder finding when return order changes, got:\n%s", joined)
+	}
+}
+
+func TestSkipsTrivialForwarderWhenVarAddsExplicitType(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type runner interface { Run() bool }
+
+type worker struct{}
+
+func (worker) Run() bool { return true }
+
+func execute(name string) worker { return worker{} }
+
+func run(name string) runner {
+	var value runner = execute(name)
+	return value
+}
+
+func use(name string) bool {
+	return run(name).Run()
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only forwards to "execute"`) {
+		t.Fatalf(
+			"unexpected trivial forwarder finding when var adds explicit type, got:\n%s",
+			joined,
+		)
+	}
+}
+
 func TestSkipsTrivialForwarderWithMultipleCallsites(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

@@ -9,7 +9,11 @@ import (
 	"unicode"
 )
 
-const restatementCommentWordCap = 6
+const (
+	restatementCommentWordCap       = 6
+	trivialForwarderDirectStmtCount = 1
+	trivialForwarderAssignStmtCount = 2
+)
 
 var restatementNoiseWords = map[string]struct{}{
 	"a":        {},
@@ -115,16 +119,17 @@ func (l *linter) checkTrivialForwarder(fn *ast.FuncDecl, callCounts map[string]i
 }
 
 func isEligibleTrivialForwarderDecl(fn *ast.FuncDecl) bool {
-	switch {
-	case fn == nil, fn.Name == nil, fn.Body == nil, fn.Doc != nil, fn.Recv != nil:
+	if fn == nil || fn.Name == nil || fn.Body == nil || fn.Doc != nil || fn.Recv != nil {
 		return false
-	case ast.IsExported(fn.Name.Name), hasTypeParams(fn.Type):
-		return false
-	case len(fn.Body.List) != 1:
-		return false
-	default:
-		return true
 	}
+
+	if ast.IsExported(fn.Name.Name) || hasTypeParams(fn.Type) {
+		return false
+	}
+
+	bodyLen := len(fn.Body.List)
+
+	return bodyLen == 1 || bodyLen == 2
 }
 
 func hasTypeParams(fnType *ast.FuncType) bool {
@@ -135,7 +140,13 @@ func (l *linter) trivialForwarderObject(
 	fn *ast.FuncDecl,
 	callCounts map[string]int,
 ) (*types.Func, bool) {
-	if l.hasAttachedComment(fn.Body.List[0]) {
+	for _, stmt := range fn.Body.List {
+		if l.hasAttachedComment(stmt) {
+			return nil, false
+		}
+	}
+
+	if l.hasAttachedComment(fn.Body) {
 		return nil, false
 	}
 
@@ -160,7 +171,7 @@ func (l *linter) trivialForwarderBodyCall(
 		return nil, false
 	}
 
-	call, ok := l.trivialForwarderCall(fn.Body.List[0], sig.Results())
+	call, ok := l.trivialForwarderCall(fn.Body.List, sig.Results())
 	if !ok {
 		return nil, false
 	}
@@ -195,7 +206,7 @@ func (l *linter) samePackageForwardTarget(obj *types.Func, call *ast.CallExpr) b
 }
 
 func (l *linter) trivialForwarderCall(
-	stmt ast.Stmt,
+	stmts []ast.Stmt,
 	results *types.Tuple,
 ) (*ast.CallExpr, bool) {
 	resultCount := 0
@@ -203,6 +214,20 @@ func (l *linter) trivialForwarderCall(
 		resultCount = results.Len()
 	}
 
+	switch len(stmts) {
+	case trivialForwarderDirectStmtCount:
+		return l.directTrivialForwarderCall(stmts[0], resultCount)
+	case trivialForwarderAssignStmtCount:
+		return l.assignReturnTrivialForwarderCall(stmts[0], stmts[1], resultCount)
+	default:
+		return nil, false
+	}
+}
+
+func (l *linter) directTrivialForwarderCall(
+	stmt ast.Stmt,
+	resultCount int,
+) (*ast.CallExpr, bool) {
 	switch stmt := stmt.(type) {
 	case *ast.ReturnStmt:
 		if resultCount == 0 || len(stmt.Results) != 1 {
@@ -229,6 +254,119 @@ func (l *linter) trivialForwarderCall(
 	default:
 		return nil, false
 	}
+}
+
+func (l *linter) assignReturnTrivialForwarderCall(
+	assignStmt ast.Stmt,
+	returnStmt ast.Stmt,
+	resultCount int,
+) (*ast.CallExpr, bool) {
+	if resultCount == 0 {
+		return nil, false
+	}
+
+	ret, ok := returnStmt.(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != resultCount {
+		return nil, false
+	}
+
+	call, temps, ok := l.forwardedCallResultTemps(assignStmt)
+	if !ok || len(temps) != resultCount {
+		return nil, false
+	}
+
+	for idx, result := range ret.Results {
+		if !identRefersToObject(l.pkg.TypesInfo, l.unparen(result), temps[idx]) {
+			return nil, false
+		}
+	}
+
+	return call, true
+}
+
+func (l *linter) forwardedCallResultTemps(stmt ast.Stmt) (*ast.CallExpr, []*types.Var, bool) {
+	switch stmt := stmt.(type) {
+	case *ast.AssignStmt:
+		return l.forwardedCallResultTempsFromAssign(stmt)
+	case *ast.DeclStmt:
+		return l.forwardedCallResultTempsFromDecl(stmt)
+	default:
+		return nil, nil, false
+	}
+}
+
+func (l *linter) forwardedCallResultTempsFromAssign(
+	stmt *ast.AssignStmt,
+) (*ast.CallExpr, []*types.Var, bool) {
+	if stmt == nil || stmt.Tok != token.DEFINE || len(stmt.Rhs) != 1 {
+		return nil, nil, false
+	}
+
+	call, ok := l.unparen(stmt.Rhs[0]).(*ast.CallExpr)
+	if !ok {
+		return nil, nil, false
+	}
+
+	temps, ok := l.definedVarsForIdents(stmt.Lhs)
+	if !ok {
+		return nil, nil, false
+	}
+
+	return call, temps, true
+}
+
+func (l *linter) forwardedCallResultTempsFromDecl(
+	stmt *ast.DeclStmt,
+) (*ast.CallExpr, []*types.Var, bool) {
+	decl, ok := stmt.Decl.(*ast.GenDecl)
+	if !ok || decl == nil || decl.Tok != token.VAR || len(decl.Specs) != 1 {
+		return nil, nil, false
+	}
+
+	spec, ok := decl.Specs[0].(*ast.ValueSpec)
+	if !ok || spec == nil || spec.Type != nil || len(spec.Values) != 1 {
+		return nil, nil, false
+	}
+
+	call, ok := l.unparen(spec.Values[0]).(*ast.CallExpr)
+	if !ok {
+		return nil, nil, false
+	}
+
+	exprs := make([]ast.Expr, 0, len(spec.Names))
+	for _, name := range spec.Names {
+		exprs = append(exprs, name)
+	}
+
+	temps, ok := l.definedVarsForIdents(exprs)
+	if !ok {
+		return nil, nil, false
+	}
+
+	return call, temps, true
+}
+
+func (l *linter) definedVarsForIdents(exprs []ast.Expr) ([]*types.Var, bool) {
+	if len(exprs) == 0 {
+		return nil, false
+	}
+
+	vars := make([]*types.Var, 0, len(exprs))
+	for _, expr := range exprs {
+		ident, ok := expr.(*ast.Ident)
+		if !ok || ident == nil || ident.Name == "_" {
+			return nil, false
+		}
+
+		obj, ok := l.pkg.TypesInfo.Defs[ident].(*types.Var)
+		if !ok || obj == nil {
+			return nil, false
+		}
+
+		vars = append(vars, obj)
+	}
+
+	return vars, true
 }
 
 func funcParamObjects(info *types.Info, fields *ast.FieldList) []*types.Var {

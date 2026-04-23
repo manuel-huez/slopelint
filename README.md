@@ -28,6 +28,7 @@ Shipped rules:
 - trivial private wrappers with one production callsite
 - doc comments that only restate private declaration names
 - redundant `MarshalJSON` methods covered by `MarshalText`
+- repeated normalization calls like duplicate `strings.TrimSpace(name)`
 
 Experimental rules behind `-experimental`:
 
@@ -116,6 +117,18 @@ func use(name string) bool {
 }
 ```
 
+Normalization example:
+
+```go
+func defaultName(name string) string {
+	if strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name) // reported
+	}
+
+	return "fallback"
+}
+```
+
 ## Build
 
 ```bash
@@ -175,6 +188,7 @@ Machine-readable categories emitted today:
 - `trivial_wrapper`
 - `comment_noise`
 - `serialization_ceremony`
+- `normalization_ceremony`
 
 Experimental categories:
 

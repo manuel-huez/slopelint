@@ -1260,6 +1260,119 @@ func (value Status) MarshalJSON() ([]byte, error) {
 	}
 }
 
+func TestDetectsRedundantTrimSpaceGuardReturn(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "strings"
+
+func defaultName(name string) string {
+	if strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name)
+	}
+
+	return "fallback"
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`"strings.TrimSpace(name)" is computed multiple times in this function; bind normalized value once`,
+	) {
+		t.Fatalf("expected redundant trim-space finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "normalization_ceremony") {
+		t.Fatalf("expected normalization_ceremony kind, got %#v", issues)
+	}
+}
+
+func TestSkipsTrimSpaceGuardReturnWhenReturnDiffers(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "strings"
+
+func defaultName(name string) string {
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+
+	return "fallback"
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `computed multiple times`) {
+		t.Fatalf("unexpected redundant trim-space finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRepeatedNestedNormalizationCall(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "strings"
+
+func complete(value string, candidates []string) []string {
+	out := make([]string, 0)
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate, strings.ToLower(strings.TrimSpace(value))) {
+			out = append(out, strings.ToLower(strings.TrimSpace(value)))
+		}
+	}
+	return out
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`"strings.ToLower(strings.TrimSpace(value))" is computed multiple times in this function; bind normalized value once`,
+	) {
+		t.Fatalf("expected repeated nested normalization finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRepeatedNormalizationInFuncLiteral(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "strings"
+
+func build(name string) func() string {
+	return func() string {
+		if strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+
+		return "fallback"
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`"strings.TrimSpace(name)" is computed multiple times in this function; bind normalized value once`,
+	) {
+		t.Fatalf("expected func literal normalization finding, got:\n%s", joined)
+	}
+}
+
 func TestDetectsSingleUseTempAlias(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

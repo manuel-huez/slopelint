@@ -19,11 +19,14 @@ Current status in this worktree:
   declaration docs that only restate identifier words
 - proof lane shipped: `redundant_json_marshal_text` for `MarshalJSON` methods
   that only call `json.Marshal(value.String())` when `MarshalText` exists
+- smell lane shipped: `repeated_normalization_call` for duplicate
+  `strings.TrimSpace(...)` and case-folded trim calls inside one function
 - smell lane experimental: `duplicate_validation_ladder`,
   `single_use_private_helper`, `single_impl_interface`, `options_overkill`,
   `internal_result_wrapper`, and paired `generic_name`
 - current proving corpus: `stocks-researcher` raises redundant scalar
-  `MarshalJSON` methods through `serialization_ceremony`
+  `MarshalJSON` methods through `serialization_ceremony` and repeated
+  normalization through `normalization_ceremony`
 
 ## Rule lanes
 
@@ -142,6 +145,24 @@ items still need stronger repo-local evidence.
   - require exact one-statement `return json.Marshal(receiver.String())`
   - require `json.Marshal` to resolve to `encoding/json`
 - Suggested category: `serialization_ceremony`
+
+#### `repeated_normalization_call`
+
+- Status: shipped
+- Lane: `smell`
+- Goal: flag repeated normalization of the same expression inside one function.
+- Examples:
+  - `if strings.TrimSpace(name) != "" { return strings.TrimSpace(name) }`
+  - repeated `strings.ToLower(strings.TrimSpace(value))` in one function
+- Why: repeated normalization in deeper branches hides one obvious normalized
+  value and can drift when one call changes.
+- Guardrails:
+  - require exact rendered expression match
+  - only count repeated calls inside the same function body
+  - treat nested function literals as separate scopes
+  - only cover `strings.TrimSpace` and
+    `strings.ToLower/ToUpper(strings.TrimSpace(...))` today
+- Suggested category: `normalization_ceremony`
 
 #### `single_use_private_helper`
 

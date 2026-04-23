@@ -46,6 +46,7 @@ var restatementNoiseWords = map[string]struct{}{
 
 func (l *linter) scanDefaultSmells() {
 	l.checkTrivialForwarders()
+	l.checkRepeatedNormalizationCallsPackage()
 	l.checkRedundantJSONMarshalText()
 	l.checkRestatementComments()
 }

@@ -146,7 +146,7 @@ func (l *linter) summaryBindingsForFunc(fn *ast.FuncDecl) []summaryBinding {
 }
 
 func (l *linter) summarizeFunc(fn summarizableFunc) callSummary {
-	if l.hasUnstructuredJumps(fn.decl.Body) {
+	if l.hasUnsupportedJumps(fn.decl.Body) {
 		return callSummary{}
 	}
 

@@ -34,10 +34,13 @@ type linter struct {
 }
 
 type flowResult struct {
-	next      []state
-	breaks    []state
-	continues []state
-	returns   []returnState
+	next             []state
+	breaks           []state
+	continues        []state
+	fallthroughs     []state
+	labeledBreaks    map[string][]state
+	labeledContinues map[string][]state
+	returns          []returnState
 }
 
 type returnKind uint8
@@ -128,14 +131,15 @@ func (l *linter) analyzeFunction(body *ast.BlockStmt) {
 		return
 	}
 
-	if l.hasUnstructuredJumps(body) {
+	if l.hasUnsupportedJumps(body) {
 		return
 	}
 
+	l.scanStructuralBlock(body.List)
 	l.execBlock(body.List, []state{newState()})
 }
 
-func (l *linter) hasUnstructuredJumps(body *ast.BlockStmt) bool {
+func (l *linter) hasUnsupportedJumps(body *ast.BlockStmt) bool {
 	unsupported := false
 
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -143,7 +147,7 @@ func (l *linter) hasUnstructuredJumps(body *ast.BlockStmt) bool {
 		case *ast.FuncLit:
 			return false
 		case *ast.BranchStmt:
-			if n.Label != nil || n.Tok == token.GOTO || n.Tok == token.FALLTHROUGH {
+			if n.Tok == token.GOTO {
 				unsupported = true
 				return false
 			}
@@ -166,14 +170,69 @@ func (l *linter) execBlock(stmts []ast.Stmt, states []state) flowResult {
 		res.next = step.next
 		res.breaks = append(res.breaks, step.breaks...)
 		res.continues = append(res.continues, step.continues...)
+		res.fallthroughs = append(res.fallthroughs, step.fallthroughs...)
+		res.labeledBreaks = l.mergeLabeledStates(res.labeledBreaks, step.labeledBreaks)
+		res.labeledContinues = l.mergeLabeledStates(res.labeledContinues, step.labeledContinues)
 		res.returns = append(res.returns, step.returns...)
 	}
 
 	res.next = l.normalizeStates(res.next)
 	res.breaks = l.normalizeStates(res.breaks)
 	res.continues = l.normalizeStates(res.continues)
+	res.fallthroughs = l.normalizeStates(res.fallthroughs)
+	res.labeledBreaks = l.normalizeLabeledStates(res.labeledBreaks)
+	res.labeledContinues = l.normalizeLabeledStates(res.labeledContinues)
 
 	return res
+}
+
+func (l *linter) mergeLabeledStates(dst, src map[string][]state) map[string][]state {
+	if len(src) == 0 {
+		return dst
+	}
+
+	if dst == nil {
+		dst = make(map[string][]state, len(src))
+	}
+
+	for label, states := range src {
+		dst[label] = append(dst[label], states...)
+	}
+
+	return dst
+}
+
+func (l *linter) normalizeLabeledStates(in map[string][]state) map[string][]state {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string][]state, len(in))
+	for label, states := range in {
+		normalized := l.normalizeStates(states)
+		if len(normalized) == 0 {
+			continue
+		}
+
+		out[label] = normalized
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+func consumeLabeledStates(in map[string][]state, label string) []state {
+	if len(in) == 0 || label == "" {
+		return nil
+	}
+
+	states := in[label]
+	delete(in, label)
+
+	return states
 }
 
 //nolint:cyclop // Statement dispatch intentionally mirrors Go AST forms.
@@ -188,7 +247,7 @@ func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 	case *ast.ExprStmt:
 		return flowResult{next: l.execExprStmt(stmt, states)}
 	case *ast.LabeledStmt:
-		return l.execStmt(stmt.Stmt, states)
+		return l.execLabeledStmt(stmt, states)
 	case *ast.AssignStmt:
 		return flowResult{next: l.execAssignStmt(stmt, states)}
 	case *ast.DeclStmt:
@@ -201,9 +260,23 @@ func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 		//exhaustive:ignore token.Token includes many non-branch values irrelevant here.
 		switch stmt.Tok {
 		case token.BREAK:
+			if stmt.Label != nil {
+				return flowResult{
+					labeledBreaks: map[string][]state{stmt.Label.Name: states},
+				}
+			}
+
 			return flowResult{breaks: states}
 		case token.CONTINUE:
+			if stmt.Label != nil {
+				return flowResult{
+					labeledContinues: map[string][]state{stmt.Label.Name: states},
+				}
+			}
+
 			return flowResult{continues: states}
+		case token.FALLTHROUGH:
+			return flowResult{fallthroughs: states}
 		default:
 			return flowResult{}
 		}
@@ -228,6 +301,25 @@ func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 	default:
 		// Keep the tool conservative: if we do not model a statement, drop accumulated facts.
 		return flowResult{next: l.wipeFacts(states)}
+	}
+}
+
+func (l *linter) execLabeledStmt(stmt *ast.LabeledStmt, states []state) flowResult {
+	label := stmt.Label.Name
+
+	switch inner := stmt.Stmt.(type) {
+	case *ast.ForStmt:
+		return l.execForStmtWithLabel(inner, label, states)
+	case *ast.RangeStmt:
+		return l.execRangeStmtWithLabel(inner, label, states)
+	case *ast.SwitchStmt:
+		return l.execSwitchStmtWithLabel(inner, label, states)
+	case *ast.TypeSwitchStmt:
+		return l.execTypeSwitchStmtWithLabel(inner, label, states)
+	case *ast.SelectStmt:
+		return l.execSelectStmtWithLabel(inner, label, states)
+	default:
+		return l.execStmt(inner, states)
 	}
 }
 
@@ -504,10 +596,17 @@ func (l *linter) execIfStmt(stmt *ast.IfStmt, states []state) flowResult {
 	}
 
 	return flowResult{
-		next:      l.normalizeStates(append(thenRes.next, elseRes.next...)),
-		breaks:    l.normalizeStates(append(thenRes.breaks, elseRes.breaks...)),
-		continues: l.normalizeStates(append(thenRes.continues, elseRes.continues...)),
-		returns:   append(thenRes.returns, elseRes.returns...),
+		next:         l.normalizeStates(append(thenRes.next, elseRes.next...)),
+		breaks:       l.normalizeStates(append(thenRes.breaks, elseRes.breaks...)),
+		continues:    l.normalizeStates(append(thenRes.continues, elseRes.continues...)),
+		fallthroughs: l.normalizeStates(append(thenRes.fallthroughs, elseRes.fallthroughs...)),
+		labeledBreaks: l.normalizeLabeledStates(
+			l.mergeLabeledStates(thenRes.labeledBreaks, elseRes.labeledBreaks),
+		),
+		labeledContinues: l.normalizeLabeledStates(
+			l.mergeLabeledStates(thenRes.labeledContinues, elseRes.labeledContinues),
+		),
+		returns: append(thenRes.returns, elseRes.returns...),
 	}
 }
 
@@ -523,6 +622,10 @@ func (l *linter) execElse(stmt ast.Stmt, states []state) flowResult {
 }
 
 func (l *linter) execForStmt(stmt *ast.ForStmt, states []state) flowResult {
+	return l.execForStmtWithLabel(stmt, "", states)
+}
+
+func (l *linter) execForStmtWithLabel(stmt *ast.ForStmt, label string, states []state) flowResult {
 	if stmt.Init != nil {
 		states = l.execStmt(stmt.Init, states).next
 	}
@@ -551,6 +654,9 @@ func (l *linter) execForStmt(stmt *ast.ForStmt, states []state) flowResult {
 	bodyRes := l.execBlock(stmt.Body.List, enterStates)
 
 	iterStates := l.normalizeStates(append(bodyRes.next, bodyRes.continues...))
+	iterStates = append(iterStates, consumeLabeledStates(bodyRes.labeledContinues, label)...)
+	iterStates = l.normalizeStates(iterStates)
+
 	if stmt.Post != nil {
 		iterStates = l.execStmt(stmt.Post, iterStates).next
 	}
@@ -561,16 +667,30 @@ func (l *linter) execForStmt(stmt *ast.ForStmt, states []state) flowResult {
 
 	afterLoop = append(afterLoop, exitStates...)
 	afterLoop = append(afterLoop, bodyRes.breaks...)
+	afterLoop = append(afterLoop, consumeLabeledStates(bodyRes.labeledBreaks, label)...)
 
 	if stmt.Cond != nil && len(iterStates) != 0 {
 		widened := l.wipeFacts(iterStates)
 		afterLoop = append(afterLoop, l.refineStates(widened, stmt.Cond, false)...)
 	}
 
-	return flowResult{next: l.normalizeStates(afterLoop), returns: bodyRes.returns}
+	return flowResult{
+		next:             l.normalizeStates(afterLoop),
+		labeledBreaks:    l.normalizeLabeledStates(bodyRes.labeledBreaks),
+		labeledContinues: l.normalizeLabeledStates(bodyRes.labeledContinues),
+		returns:          bodyRes.returns,
+	}
 }
 
 func (l *linter) execRangeStmt(stmt *ast.RangeStmt, states []state) flowResult {
+	return l.execRangeStmtWithLabel(stmt, "", states)
+}
+
+func (l *linter) execRangeStmtWithLabel(
+	stmt *ast.RangeStmt,
+	label string,
+	states []state,
+) flowResult {
 	states = l.invalidateForExprSideEffects(states, stmt.X)
 	enterStates := l.normalizeStates(states)
 
@@ -592,15 +712,72 @@ func (l *linter) execRangeStmt(stmt *ast.RangeStmt, states []state) flowResult {
 	// A range loop may execute zero times, so the incoming state is always an exit state.
 	out := append([]state{}, states...)
 	out = append(out, bodyRes.breaks...)
+	out = append(out, consumeLabeledStates(bodyRes.labeledBreaks, label)...)
+	_ = consumeLabeledStates(bodyRes.labeledContinues, label)
 
 	return flowResult{
-		next:      l.normalizeStates(out),
-		continues: l.normalizeStates(bodyRes.continues),
-		returns:   bodyRes.returns,
+		next:             l.normalizeStates(out),
+		labeledBreaks:    l.normalizeLabeledStates(bodyRes.labeledBreaks),
+		labeledContinues: l.normalizeLabeledStates(bodyRes.labeledContinues),
+		returns:          bodyRes.returns,
 	}
 }
 
 func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult {
+	return l.execSwitchStmtWithLabel(stmt, "", states)
+}
+
+func (l *linter) prepareSwitchClauseStates(
+	stmt *ast.SwitchStmt,
+	clause *ast.CaseClause,
+	remaining []state,
+	carriedFallthrough []state,
+) ([]state, []state, bool, bool) {
+	hasExplicitCase := len(clause.List) > 0
+
+	caseStates := append([]state{}, carriedFallthrough...)
+
+	if !hasExplicitCase {
+		caseStates = append(caseStates, remaining...)
+
+		return caseStates, remaining, false, true
+	}
+
+	if len(remaining) == 0 && len(carriedFallthrough) == 0 {
+		l.report(
+			clause.Case,
+			"unreachable_case",
+			fmt.Sprintf(
+				"switch case %q is unreachable here; previous cases already cover all reachable values",
+				l.renderCaseClauseHeader(clause),
+			),
+		)
+
+		return nil, remaining, true, false
+	}
+
+	if len(remaining) == 0 {
+		return caseStates, remaining, false, false
+	}
+
+	tri, because := l.truthAcrossCase(remaining, stmt.Tag, clause.List)
+	if tri == triFalse && len(carriedFallthrough) == 0 {
+		l.reportCase(clause, because)
+	}
+
+	caseStates = append(
+		caseStates,
+		l.refineStatesCase(remaining, stmt.Tag, clause.List, true)...,
+	)
+
+	return caseStates, l.refineStatesCase(remaining, stmt.Tag, clause.List, false), false, false
+}
+
+func (l *linter) execSwitchStmtWithLabel(
+	stmt *ast.SwitchStmt,
+	label string,
+	states []state,
+) flowResult {
 	if stmt.Init != nil {
 		states = l.execStmt(stmt.Init, states).next
 	}
@@ -614,42 +791,44 @@ func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult
 	out := make([]state, 0)
 	conts := make([]state, 0)
 	returns := make([]returnState, 0)
+	carriedFallthrough := make([]state, 0)
 	defaultSeen := false
+
+	var (
+		labeledBreaks    map[string][]state
+		labeledContinues map[string][]state
+	)
 
 	for _, raw := range stmt.Body.List {
 		clause := raw.(*ast.CaseClause)
 
-		caseStates := remaining
-		if len(clause.List) > 0 {
-			if len(remaining) == 0 {
-				l.report(
-					clause.Case,
-					"unreachable_case",
-					fmt.Sprintf(
-						"switch case %q is unreachable here; previous cases already cover all reachable values",
-						l.renderCaseClauseHeader(clause),
-					),
-				)
+		caseStates, nextRemaining, skipClause, isDefault := l.prepareSwitchClauseStates(
+			stmt,
+			clause,
+			remaining,
+			carriedFallthrough,
+		)
 
-				continue
-			}
-
-			tri, because := l.truthAcrossCase(remaining, stmt.Tag, clause.List)
-			if tri == triFalse {
-				l.reportCase(clause, because)
-			}
-
-			caseStates = l.refineStatesCase(remaining, stmt.Tag, clause.List, true)
-			remaining = l.refineStatesCase(remaining, stmt.Tag, clause.List, false)
-		} else {
+		if isDefault {
 			defaultSeen = true
 		}
 
+		if skipClause {
+			continue
+		}
+
+		remaining = nextRemaining
+
+		caseStates = l.normalizeStates(caseStates)
 		caseRes := l.execBlock(clause.Body, caseStates)
+		out = append(out, consumeLabeledStates(caseRes.labeledBreaks, label)...)
 		out = append(out, caseRes.next...)
 		out = append(out, caseRes.breaks...)
 		conts = append(conts, caseRes.continues...)
 		returns = append(returns, caseRes.returns...)
+		labeledBreaks = l.mergeLabeledStates(labeledBreaks, caseRes.labeledBreaks)
+		labeledContinues = l.mergeLabeledStates(labeledContinues, caseRes.labeledContinues)
+		carriedFallthrough = l.normalizeStates(caseRes.fallthroughs)
 	}
 
 	if !defaultSeen {
@@ -657,13 +836,23 @@ func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult
 	}
 
 	return flowResult{
-		next:      l.normalizeStates(out),
-		continues: l.normalizeStates(conts),
-		returns:   returns,
+		next:             l.normalizeStates(out),
+		continues:        l.normalizeStates(conts),
+		labeledBreaks:    l.normalizeLabeledStates(labeledBreaks),
+		labeledContinues: l.normalizeLabeledStates(labeledContinues),
+		returns:          returns,
 	}
 }
 
 func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) flowResult {
+	return l.execTypeSwitchStmtWithLabel(stmt, "", states)
+}
+
+func (l *linter) execTypeSwitchStmtWithLabel(
+	stmt *ast.TypeSwitchStmt,
+	label string,
+	states []state,
+) flowResult {
 	if stmt.Init != nil {
 		states = l.execStmt(stmt.Init, states).next
 	}
@@ -682,6 +871,11 @@ func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) fl
 	returns := make([]returnState, 0)
 	defaultSeen := false
 
+	var (
+		labeledBreaks    map[string][]state
+		labeledContinues map[string][]state
+	)
+
 	for _, raw := range stmt.Body.List {
 		clause := raw.(*ast.CaseClause)
 		if len(clause.List) == 0 {
@@ -689,10 +883,13 @@ func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) fl
 		}
 
 		caseRes := l.execBlock(clause.Body, states)
+		out = append(out, consumeLabeledStates(caseRes.labeledBreaks, label)...)
 		out = append(out, caseRes.next...)
 		out = append(out, caseRes.breaks...)
 		conts = append(conts, caseRes.continues...)
 		returns = append(returns, caseRes.returns...)
+		labeledBreaks = l.mergeLabeledStates(labeledBreaks, caseRes.labeledBreaks)
+		labeledContinues = l.mergeLabeledStates(labeledContinues, caseRes.labeledContinues)
 	}
 
 	if !defaultSeen {
@@ -700,13 +897,23 @@ func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) fl
 	}
 
 	return flowResult{
-		next:      l.normalizeStates(out),
-		continues: l.normalizeStates(conts),
-		returns:   returns,
+		next:             l.normalizeStates(out),
+		continues:        l.normalizeStates(conts),
+		labeledBreaks:    l.normalizeLabeledStates(labeledBreaks),
+		labeledContinues: l.normalizeLabeledStates(labeledContinues),
+		returns:          returns,
 	}
 }
 
 func (l *linter) execSelectStmt(stmt *ast.SelectStmt, states []state) flowResult {
+	return l.execSelectStmtWithLabel(stmt, "", states)
+}
+
+func (l *linter) execSelectStmtWithLabel(
+	stmt *ast.SelectStmt,
+	label string,
+	states []state,
+) flowResult {
 	states = l.normalizeStates(states)
 	if len(states) == 0 {
 		return flowResult{}
@@ -715,6 +922,11 @@ func (l *linter) execSelectStmt(stmt *ast.SelectStmt, states []state) flowResult
 	out := make([]state, 0)
 	conts := make([]state, 0)
 	returns := make([]returnState, 0)
+
+	var (
+		labeledBreaks    map[string][]state
+		labeledContinues map[string][]state
+	)
 
 	for _, raw := range stmt.Body.List {
 		clause := raw.(*ast.CommClause)
@@ -725,16 +937,21 @@ func (l *linter) execSelectStmt(stmt *ast.SelectStmt, states []state) flowResult
 		}
 
 		caseRes := l.execBlock(clause.Body, clauseStates)
+		out = append(out, consumeLabeledStates(caseRes.labeledBreaks, label)...)
 		out = append(out, caseRes.next...)
 		out = append(out, caseRes.breaks...)
 		conts = append(conts, caseRes.continues...)
 		returns = append(returns, caseRes.returns...)
+		labeledBreaks = l.mergeLabeledStates(labeledBreaks, caseRes.labeledBreaks)
+		labeledContinues = l.mergeLabeledStates(labeledContinues, caseRes.labeledContinues)
 	}
 
 	return flowResult{
-		next:      l.normalizeStates(out),
-		continues: l.normalizeStates(conts),
-		returns:   returns,
+		next:             l.normalizeStates(out),
+		continues:        l.normalizeStates(conts),
+		labeledBreaks:    l.normalizeLabeledStates(labeledBreaks),
+		labeledContinues: l.normalizeLabeledStates(labeledContinues),
+		returns:          returns,
 	}
 }
 

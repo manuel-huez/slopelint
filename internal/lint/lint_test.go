@@ -493,6 +493,310 @@ func f(s string, v any) {
 	}
 }
 
+func TestLabeledBreakDoesNotBlindWholeFunction(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(n int, s string) {
+	if s == "" { return }
+Loop:
+	for i := 0; i < n; i++ {
+		for {
+			break Loop
+		}
+	}
+	if s == "" { println("bad") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(joined, `condition "s == \"\"" is always false here`) {
+		t.Fatalf("expected labeled break function to still be analyzed, got:\n%s", joined)
+	}
+}
+
+func TestLabeledContinueDoesNotBlindWholeFunction(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items []int, s string) {
+	if s == "" { return }
+Outer:
+	for range items {
+		for {
+			continue Outer
+		}
+	}
+	if s == "" { println("bad") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(joined, `condition "s == \"\"" is always false here`) {
+		t.Fatalf("expected labeled continue function to still be analyzed, got:\n%s", joined)
+	}
+}
+
+func TestFallthroughMergesReachableStates(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(s string) {
+	switch s {
+	case "a":
+		fallthrough
+	case "b":
+		if s == "c" { println("bad") }
+		if s == "a" { println("maybe") }
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(joined, `condition "s == \"c\"" is always false here`) {
+		t.Fatalf("expected fallthrough clause to merge case states, got:\n%s", joined)
+	}
+
+	if strings.Contains(joined, `condition "s == \"a\"" is always false here`) {
+		t.Fatalf("fallthrough should keep prior case state reachable, got:\n%s", joined)
+	}
+}
+
+func TestInfersPredicateFactsThroughFallthroughSwitch(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Req struct{}
+
+func valid(req *Req, s string) bool {
+	if req == nil { return false }
+	switch s {
+	case "a":
+		fallthrough
+	case "b":
+		return true
+	default:
+		return false
+	}
+}
+
+func f(req *Req, s string) {
+	ok := valid(req, s)
+	if !ok { return }
+	if req == nil { println("bad") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
+		t.Fatalf("expected fallthrough-backed helper facts, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRedundantBoolReturn(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool) bool {
+	if ok {
+		return true
+	}
+	return false
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(joined, `if returns boolean literals; replace with "return ok"`) {
+		t.Fatalf("expected bool-return ceremony finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "boolean_ceremony") {
+		t.Fatalf("expected boolean_ceremony kind, got %#v", issues)
+	}
+}
+
+func TestDetectsRedundantBoolAssignment(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool) bool {
+	out := false
+	if ok {
+		out = true
+	} else {
+		out = false
+	}
+	return out
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(joined, `if assigns boolean literals; replace with "out = ok"`) {
+		t.Fatalf("expected bool-assignment ceremony finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsIdenticalIfElseBodies(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool) error {
+	if ok {
+		return nil
+	} else {
+		return nil
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`if and else branches are identical; drop condition or hoist shared body`,
+	) {
+		t.Fatalf("expected identical-branch finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "control_flow_merge") {
+		t.Fatalf("expected control_flow_merge kind, got %#v", issues)
+	}
+}
+
+func TestSkipsIdenticalIfElseBodiesWhenScopeWouldChange(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool) int {
+	if ok {
+		v := 1
+		return v
+	} else {
+		v := 1
+		return v
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(
+		joined,
+		`if and else branches are identical; drop condition or hoist shared body`,
+	) {
+		t.Fatalf(
+			"unexpected identical-branch finding when branch-local defs exist, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestDetectsIdenticalSwitchCaseBodies(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool) int {
+	switch ok {
+	case true:
+		return 1
+	case false:
+		return 1
+	}
+	return 0
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(joined, `switch case "false" duplicates case "true"; merge case lists`) {
+		t.Fatalf("expected identical switch branch finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsExhaustiveBoolDefault(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool) {
+	switch ok {
+	case true:
+		println("yes")
+	case false:
+		println("no")
+	default:
+		println("dead")
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`default case is redundant; bool switch already covers true and false`,
+	) {
+		t.Fatalf("expected redundant default finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "redundant_default") {
+		t.Fatalf("expected redundant_default kind, got %#v", issues)
+	}
+}
+
+func TestSkipsExhaustiveBoolDefaultWithPanic(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool) {
+	switch ok {
+	case true:
+		return
+	case false:
+		return
+	default:
+		panic("impossible")
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(
+		joined,
+		`default case is redundant; bool switch already covers true and false`,
+	) {
+		t.Fatalf("unexpected redundant default finding for panic default, got:\n%s", joined)
+	}
+}
+
 func TestFindingsExposeKinds(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
@@ -559,4 +863,14 @@ func joinMessages(issues []Issue) string {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+func hasIssueKind(issues []Issue, kind string) bool {
+	for _, issue := range issues {
+		if issue.Kind == kind {
+			return true
+		}
+	}
+
+	return false
 }

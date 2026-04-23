@@ -9,7 +9,10 @@ AI-generated Go code, for example:
 - repeated `nil` checks after an early return
 - repeated empty-string / zero-value checks after a guard clause
 - repeated `len(...)` checks after an earlier emptiness or non-emptiness guard
+- boolean-return / boolean-assignment branch ceremony
 - switch cases that can no longer match on the current path
+- identical `if` / `switch` branch bodies that should be merged
+- redundant `default` arms in exhaustive bool switches
 - redundant right-hand sides of `&&` and `||` expressions
 - struct-field checks that are already filtered by earlier conditions
 - post-guard defensive checks after helper calls, including same-repo package boundaries
@@ -142,12 +145,11 @@ cause the most noisy defensive code:
 
 ## Current limits
 
-To keep the implementation predictable, the linter skips functions containing
-control flow that would require a more global CFG model:
+To keep the implementation predictable, the linter still skips functions
+containing `goto`, since that needs a more global CFG model.
 
-- `goto`
-- labeled `break` / `continue`
-- `fallthrough`
+It does handle labeled `break` / `continue` and `fallthrough` conservatively
+when the target stays within normal loop/switch/select structure.
 
 It also does **not** try to infer semantic guarantees from named types alone.
 For example, a type like `type SanitizedString string` is still just a string to
@@ -157,5 +159,11 @@ That means the tool is strong at **path-based filtering** and intentionally weak
 at **type-level semantic inference**.
 
 When consumed through `go/analysis`, findings also carry machine-readable
-categories such as `redundant_condition`, `redundant_subexpression`, and
+categories such as `redundant_condition`, `boolean_ceremony`,
+`control_flow_merge`, `redundant_default`, `redundant_subexpression`, and
 `unreachable_case`.
+
+## Next checks
+
+Planned rule IDs, priorities, and guardrails for the next wave of checks live in
+[`docs/rule-roadmap.md`](docs/rule-roadmap.md).

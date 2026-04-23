@@ -1128,6 +1128,138 @@ func f(ok bool) {
 	}
 }
 
+func TestDetectsExhaustiveConstSetDefault(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type mode int
+
+const (
+	modeRead mode = iota
+	modeWrite
+)
+
+func f(value mode) int {
+	switch value {
+	case modeRead:
+		return 1
+	case modeWrite:
+		return 2
+	default:
+		return 0
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`default case is redundant; mode switch covers all in-package constants`,
+	) {
+		t.Fatalf("expected redundant const-set default finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsExhaustiveConstSetDefaultWhenZeroValueInvalid(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "fmt"
+
+type mode int
+
+const (
+	modeRead mode = iota + 1
+	modeWrite
+)
+
+func f(value mode) (int, error) {
+	switch value {
+	case modeRead:
+		return 1, nil
+	case modeWrite:
+		return 2, nil
+	default:
+		return 0, fmt.Errorf("invalid mode %d", value)
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `switch covers all in-package constants`) {
+		t.Fatalf("unexpected redundant const-set default finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRedundantJSONMarshalText(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "encoding/json"
+
+type Symbol string
+
+func (value Symbol) String() string {
+	return string(value)
+}
+
+func (value Symbol) MarshalText() ([]byte, error) {
+	return []byte(value.String()), nil
+}
+
+func (value Symbol) MarshalJSON() ([]byte, error) {
+	return json.Marshal(value.String())
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`Symbol.MarshalJSON only marshals String while MarshalText exists; remove MarshalJSON and let encoding/json use MarshalText`,
+	) {
+		t.Fatalf("expected redundant JSON/Text marshal finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "serialization_ceremony") {
+		t.Fatalf("expected serialization_ceremony kind, got %#v", issues)
+	}
+}
+
+func TestSkipsJSONMarshalWhenNoMarshalText(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "encoding/json"
+
+type Status string
+
+func (value Status) String() string {
+	return string(value)
+}
+
+func (value Status) MarshalJSON() ([]byte, error) {
+	return json.Marshal(value.String())
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only marshals String while MarshalText exists`) {
+		t.Fatalf("unexpected redundant JSON/Text marshal finding, got:\n%s", joined)
+	}
+}
+
 func TestDetectsSingleUseTempAlias(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
@@ -1372,6 +1504,220 @@ func validateUser(name string) bool {
 			"unexpected restatement-comment finding when comment adds intent, got:\n%s",
 			joined,
 		)
+	}
+}
+
+func TestDetectsDuplicateValidationLadderExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type req struct {
+	name string
+	kind string
+	size int
+}
+
+func create(value req) error {
+	if value.name == "" {
+		return errBad
+	}
+	if value.kind == "" {
+		return errBad
+	}
+	if value.size == 0 {
+		return errBad
+	}
+	return nil
+}
+
+func update(value req) error {
+	if value.name == "" {
+		return errBad
+	}
+	if value.kind == "" {
+		return errBad
+	}
+	if value.size == 0 {
+		return errBad
+	}
+	return nil
+}
+
+var errBad error
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`validation ladder in "update" duplicates "create"; extract shared validation`,
+	) {
+		t.Fatalf("expected duplicate validation finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "duplicate_validation") {
+		t.Fatalf("expected duplicate_validation kind, got %#v", issues)
+	}
+}
+
+func TestDetectsSingleUsePrivateHelperExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func setupHelper(value *int) {
+	*value = 1
+	println(*value)
+}
+
+func run() {
+	var value int
+	setupHelper(&value)
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "setupHelper" has one production callsite and a tiny body; inline or give it a stronger role`,
+	) {
+		t.Fatalf("expected single-use helper finding, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`private helper "setupHelper" has generic name and one tiny callsite; rename or inline`,
+	) {
+		t.Fatalf("expected paired generic-name finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsSingleUsePrivateHelperWithComplexBodyExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "sort"
+
+func sortValues(values []int) {
+	sort.SliceStable(values, func(i, j int) bool {
+		return values[i] < values[j]
+	})
+}
+
+func run(values []int) {
+	sortValues(values)
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `has one production callsite and a tiny body`) {
+		t.Fatalf("unexpected single-use helper finding for complex body, got:\n%s", joined)
+	}
+}
+
+func TestDetectsSingleImplInterfaceExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type writer interface {
+	Write(string)
+}
+
+type fileWriter struct{}
+
+func (fileWriter) Write(value string) {}
+
+func use(value writer) {
+	value.Write("x")
+}
+
+func run() {
+	use(fileWriter{})
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private interface "writer" has one in-package implementation "fileWriter"; use concrete type unless substitution is needed`,
+	) {
+		t.Fatalf("expected single-impl interface finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsOptionsOverkillExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type config struct { name string }
+type option func(*config)
+
+func withName(name string) option {
+	return func(cfg *config) { cfg.name = name }
+}
+
+func newThing(opts ...option) int {
+	var cfg config
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return len(cfg.name)
+}
+
+func run() int {
+	return newThing(withName("x"))
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private API "newThing" uses functional options for 1 production callsites; pass config directly`,
+	) {
+		t.Fatalf("expected options-overkill finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsInternalResultWrapperExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type parseResult struct {
+	value string
+	ok    bool
+}
+
+func parse() parseResult {
+	return parseResult{value: "x", ok: true}
+}
+
+func run() bool {
+	return parse().ok
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private result wrapper "parseResult" only carries value plus status; return ordinary Go results`,
+	) {
+		t.Fatalf("expected result-wrapper finding, got:\n%s", joined)
 	}
 }
 

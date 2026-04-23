@@ -44,9 +44,18 @@ var restatementNoiseWords = map[string]struct{}{
 	"value":    {},
 }
 
-func (l *linter) scanExperimentalPackage() {
+func (l *linter) scanDefaultSmells() {
 	l.checkTrivialForwarders()
+	l.checkRedundantJSONMarshalText()
 	l.checkRestatementComments()
+}
+
+func (l *linter) scanExperimentalPackage() {
+	l.checkDuplicateValidationLadders()
+	l.checkSingleUsePrivateHelpers()
+	l.checkSingleImplInterfaces()
+	l.checkOptionsOverkill()
+	l.checkInternalResultWrappers()
 }
 
 func (l *linter) checkTrivialForwarders() {
@@ -65,9 +74,17 @@ func (l *linter) checkTrivialForwarders() {
 }
 
 func (l *linter) packageCallCounts() map[string]int {
+	return l.packageCallCountsForFiles(true)
+}
+
+func (l *linter) packageCallCountsForFiles(includeTests bool) map[string]int {
 	counts := make(map[string]int)
 
 	for _, file := range l.pkg.Files {
+		if !includeTests && l.fileIsTest(file) {
+			continue
+		}
+
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -116,6 +133,8 @@ func (l *linter) checkTrivialForwarder(fn *ast.FuncDecl, callCounts map[string]i
 			l.render(call.Fun),
 		),
 	)
+
+	l.reportGenericNameForTrivialForwarder(fn)
 }
 
 func isEligibleTrivialForwarderDecl(fn *ast.FuncDecl) bool {

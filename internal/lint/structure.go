@@ -425,17 +425,29 @@ func (l *linter) checkIdenticalSwitchBranches(stmt *ast.SwitchStmt) {
 }
 
 func (l *linter) checkExhaustiveDefensiveDefault(stmt *ast.SwitchStmt) {
-	if stmt.Tag == nil || !isBoolType(l.pkg.TypesInfo.TypeOf(stmt.Tag)) {
+	if stmt.Tag == nil {
 		return
+	}
+
+	if l.checkExhaustiveBoolDefault(stmt) {
+		return
+	}
+
+	l.checkExhaustiveConstSetDefault(stmt)
+}
+
+func (l *linter) checkExhaustiveBoolDefault(stmt *ast.SwitchStmt) bool {
+	if !isBoolType(l.pkg.TypesInfo.TypeOf(stmt.Tag)) {
+		return false
 	}
 
 	coverage, ok := l.boolSwitchCoverage(stmt)
 	if !ok || !coverage.exhaustive() {
-		return
+		return false
 	}
 
 	if isImpossibleStatePanic(coverage.defaultClause.Body, l.pkg.TypesInfo) {
-		return
+		return false
 	}
 
 	l.report(
@@ -443,6 +455,8 @@ func (l *linter) checkExhaustiveDefensiveDefault(stmt *ast.SwitchStmt) {
 		"redundant_default",
 		"default case is redundant; bool switch already covers true and false",
 	)
+
+	return true
 }
 
 func (l *linter) checkSingleUseTempAlias(stmts []ast.Stmt, idx int) {

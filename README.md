@@ -23,13 +23,20 @@ Shipped rules:
 - unreachable `switch` cases on already-filtered path
 - boolean-return ceremony like `if cond { return true }; return false`
 - identical `if` / `else` or adjacent `switch` branch bodies
-- redundant `default` in exhaustive `bool` switches
+- redundant `default` in exhaustive `bool` and closed const-set switches
 - one-read temp aliases like `name := req.Name`
+- trivial private wrappers with one production callsite
+- doc comments that only restate private declaration names
+- redundant `MarshalJSON` methods covered by `MarshalText`
 
 Experimental rules behind `-experimental`:
 
-- trivial private wrappers with one production callsite
-- doc comments that only restate private declaration names
+- duplicate validation ladders
+- single-use private helpers with tiny bodies
+- single-implementation private interfaces
+- functional options around tiny private APIs
+- private result wrappers that only carry value plus status
+- generic helper names when paired with another smell
 
 ## Why this exists
 
@@ -94,14 +101,14 @@ func handle(req *Req) {
 }
 ```
 
-Experimental wrapper example:
+Wrapper example:
 
 ```go
 func execute(name string) bool { return name != "" }
 
 func run(name string) bool {
 	ok := execute(name)
-	return ok // reported with -experimental
+	return ok // reported
 }
 
 func use(name string) bool {
@@ -165,11 +172,17 @@ Machine-readable categories emitted today:
 - `control_flow_merge`
 - `redundant_default`
 - `temp_alias`
+- `trivial_wrapper`
+- `comment_noise`
+- `serialization_ceremony`
 
 Experimental categories:
 
-- `trivial_wrapper`
-- `comment_noise`
+- `duplicate_validation`
+- `abstraction_overkill`
+- `api_overkill`
+- `result_wrapper`
+- `generic_naming`
 
 ## Contracts
 

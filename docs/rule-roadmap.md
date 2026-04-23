@@ -10,15 +10,20 @@ Current status in this worktree:
 - proof lane shipped: `identical_branch_body` for `if` / `else` and adjacent
   `switch` arms with identical bodies
 - proof lane shipped: `exhaustive_defensive_default` for exhaustive `bool`
-  switches
+  switches and conservative closed const-set switches
 - proof lane shipped: `single_use_temp_alias` for immediate one-read cheap
   aliases
-- smell lane experimental: `trivial_forwarder` for docless same-package private
+- smell lane shipped: `trivial_forwarder` for docless same-package private
   wrappers with one production callsite
-- smell lane experimental: `restatement_comment` for one-line private
+- smell lane shipped: `restatement_comment` for one-line private
   declaration docs that only restate identifier words
-- next backlog: `duplicate_validation_ladder`, `single_use_private_helper`,
-  broader exhaustive-default support for closed const sets
+- proof lane shipped: `redundant_json_marshal_text` for `MarshalJSON` methods
+  that only call `json.Marshal(value.String())` when `MarshalText` exists
+- smell lane experimental: `duplicate_validation_ladder`,
+  `single_use_private_helper`, `single_impl_interface`, `options_overkill`,
+  `internal_result_wrapper`, and paired `generic_name`
+- current proving corpus: `stocks-researcher` raises redundant scalar
+  `MarshalJSON` methods through `serialization_ceremony`
 
 ## Rule lanes
 
@@ -83,8 +88,8 @@ These are implemented and enabled by default.
 
 #### `exhaustive_defensive_default`
 
-- Status: shipped for exhaustive `bool` switches; planned extension for named
-  types with closed in-package const sets
+- Status: shipped for exhaustive `bool` switches and conservative named types
+  with closed in-package const sets
 - Lane: `proof`
 - Goal: flag `default` arms kept "for safety" when switch is already exhaustive.
 - Examples:
@@ -93,8 +98,9 @@ These are implemented and enabled by default.
     in-package constants of `mode` are covered
 - Why: defensive defaults hide real future exhaustiveness gaps.
 - Guardrails:
-  - start with `bool` switches first
-  - only extend to named types with a closed in-package const set
+  - named const-set mode only covers same-package private named types
+  - named const-set mode requires the zero value to be part of the known set
+  - skip defaults that explicitly handle invalid, unsupported, or unknown values
   - skip when `default` panics with an explicit impossible-state message and the
     project wants that style
 - Suggested category: `redundant_default`
@@ -120,9 +126,26 @@ items still need stronger repo-local evidence.
   - skip when name adds clear domain meaning or declaration has comment
 - Suggested category: `temp_alias`
 
+#### `redundant_json_marshal_text`
+
+- Status: shipped
+- Lane: `proof`
+- Goal: flag `MarshalJSON` methods that only return
+  `json.Marshal(value.String())` when the same value receiver type already has
+  `MarshalText`.
+- Examples:
+  - `func (value Symbol) MarshalJSON() ([]byte, error) { return json.Marshal(value.String()) }`
+- Why: `encoding/json` already uses `encoding.TextMarshaler` for JSON string
+  values, so the JSON method is redundant boilerplate.
+- Guardrails:
+  - require same type to declare value-receiver `MarshalText`
+  - require exact one-statement `return json.Marshal(receiver.String())`
+  - require `json.Marshal` to resolve to `encoding/json`
+- Suggested category: `serialization_ceremony`
+
 #### `single_use_private_helper`
 
-- Status: planned
+- Status: experimental
 - Lane: `smell`
 - Goal: flag unexported helpers with one callsite and tiny bodies.
 - Why: AI often splits straightforward logic into helpers that add indirection
@@ -131,13 +154,13 @@ items still need stronger repo-local evidence.
   - same-package only
   - exactly one production callsite
   - small body threshold
-  - skip recursion, methods satisfying interfaces, generics, `defer`, `go`,
-    `select`, or helpers with doc comments
+  - skip recursion, methods satisfying interfaces, generics, `func` literals,
+    branches, loops, `defer`, `go`, `select`, or helpers with doc comments
 - Suggested category: `abstraction_overkill`
 
 #### `trivial_forwarder`
 
-- Status: experimental
+- Status: shipped
 - Lane: `smell`
 - Goal: flag wrappers that only forward args/results to another function.
 - Examples:
@@ -156,7 +179,7 @@ items still need stronger repo-local evidence.
 
 #### `duplicate_validation_ladder`
 
-- Status: planned
+- Status: experimental
 - Lane: `smell`
 - Goal: flag repeated validation sequences that should become one helper or
   constructor.
@@ -177,7 +200,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `single_impl_interface`
 
-- Status: planned
+- Status: experimental
 - Lane: `smell`
 - Goal: flag internal interfaces with one implementation and no real
   substitution pressure.
@@ -192,7 +215,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `options_overkill`
 
-- Status: planned
+- Status: experimental
 - Lane: `smell`
 - Goal: flag functional options or builder-style setup around tiny private APIs.
 - Why: this pattern is expensive when the call surface is small and stable.
@@ -205,7 +228,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `internal_result_wrapper`
 
-- Status: planned
+- Status: experimental
 - Lane: `smell`
 - Goal: flag private result structs that only carry `(value, ok)` or `(value,
   err)` style data without extra behavior.
@@ -220,7 +243,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `restatement_comment`
 
-- Status: experimental
+- Status: shipped
 - Lane: `smell`
 - Goal: flag comments that only restate names or obvious code.
 - Examples:
@@ -235,7 +258,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `generic_name`
 
-- Status: planned
+- Status: experimental
 - Lane: `smell`
 - Goal: flag weak names such as `Helper`, `Manager`, `Processor`, `Util`,
   `Base`, or `Impl` when body behavior is still generic.
@@ -249,13 +272,15 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 ## Suggested remaining implementation order
 
-1. `duplicate_validation_ladder`
-2. `single_use_private_helper`
-3. extend `exhaustive_defensive_default` beyond `bool` to named types with
-   closed const sets
-4. graduate `trivial_forwarder` from experimental if corpus stays clean
-5. graduate `restatement_comment` from experimental if corpus stays clean
-6. everything else behind an experimental or style flag
+All listed rules now have a first implementation.
+
+Next work:
+
+1. run the experimental lane on more healthy Go repos and record noisy cases
+2. tune or split `abstraction_overkill` before considering default-on behavior
+3. add optional autofix support for syntax-preserving trivial wrappers and
+   restatement comments
+4. keep P2 rules behind `-experimental` until multiple corpora stay clean
 
 ## Non-goals
 

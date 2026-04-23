@@ -131,6 +131,8 @@ func (l *linter) analyzeFiles() {
 		})
 	}
 
+	l.scanDefaultSmells()
+
 	if l.experimental {
 		l.scanExperimentalPackage()
 	}

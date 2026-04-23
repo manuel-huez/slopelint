@@ -990,7 +990,7 @@ func (l *linter) invalidateLHS(st *state, lhs ast.Expr) {
 
 func (l *linter) invalidatePrefix(st *state, prefix string) {
 	for key := range st.facts {
-		if isSameOrChild(key, prefix) {
+		if isSameOrChild(key, prefix) || predicateFactInvalidatedByPrefix(key, prefix) {
 			delete(st.facts, key)
 		}
 	}
@@ -1001,13 +1001,27 @@ func (l *linter) invalidatePrefix(st *state, prefix string) {
 
 func (l *linter) invalidateDescendants(st *state, prefix string) {
 	for key := range st.facts {
-		if key != prefix && isSameOrChild(key, prefix) {
+		if key != prefix &&
+			(isSameOrChild(key, prefix) || predicateFactInvalidatedByPrefix(key, prefix)) {
 			delete(st.facts, key)
 		}
 	}
 
 	removeAliasPrefix(st, prefix, true)
 	removeBindingsForPrefix(st, prefix)
+}
+
+func predicateFactInvalidatedByPrefix(key string, prefix string) bool {
+	if !strings.Contains(key, "|"+predicatePathSegmentPrefix) {
+		return false
+	}
+
+	root, _, ok := strings.Cut(prefix, "|")
+	if !ok {
+		return false
+	}
+
+	return strings.HasPrefix(key, root+"|"+predicatePathSegmentPrefix)
 }
 
 func (l *linter) wipeFacts(states []state) []state {
@@ -1421,6 +1435,15 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 				}
 			}
 		}
+	case *ast.CallExpr:
+		if sym, ok := l.predicateCallSymbolOf(expr); ok {
+			return l.truthSymbolScalar(
+				st,
+				sym,
+				scalar{kind: scalarBool, text: boolTrueText},
+				true,
+			)
+		}
 	case *ast.UnaryExpr:
 		if expr.Op == token.NOT {
 			tri, ev := l.truth(st, expr.X)
@@ -1637,6 +1660,15 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 			return l.refineState(st, expr.X, !wantTrue)
 		}
 	case *ast.CallExpr:
+		if sym, ok := l.predicateCallSymbolOf(expr); ok {
+			states := []state{st}
+			if next, ok := l.refineCallExpr(st, expr, wantTrue); ok {
+				states = next
+			}
+
+			return l.refinePredicateCallStates(states, sym, expr.Pos(), wantTrue)
+		}
+
 		if next, ok := l.refineCallExpr(st, expr, wantTrue); ok {
 			return next
 		}
@@ -1734,6 +1766,33 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 	}
 
 	return []state{st}
+}
+
+func (l *linter) refinePredicateCallStates(
+	states []state,
+	sym symbol,
+	pos token.Pos,
+	wantTrue bool,
+) []state {
+	value := scalar{kind: scalarBool, text: boolFalseText}
+	if wantTrue {
+		value.text = boolTrueText
+	}
+
+	out := make([]state, 0, len(states))
+	for _, st := range states {
+		next, ok := l.setExact(
+			st,
+			sym,
+			value,
+			evidence{pos: pos, text: l.relationText(sym, "==", value)},
+		)
+		if ok {
+			out = append(out, next)
+		}
+	}
+
+	return l.normalizeStates(out)
 }
 
 func (l *linter) refineSymbolOrdered(
@@ -2048,6 +2107,7 @@ func (l *linter) checkBooleanSubexpressions(states []state, expr ast.Expr) {
 		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
 		switch expr.Op {
 		case token.LAND:
+			l.reportRedundantBooleanOperand(states, expr.X, "left side of &&")
 			l.checkBooleanSubexpressions(states, expr.X)
 
 			leftTrue := l.refineStates(states, expr.X, true)
@@ -2069,6 +2129,7 @@ func (l *linter) checkBooleanSubexpressions(states []state, expr ast.Expr) {
 				l.checkBooleanSubexpressions(leftTrue, expr.Y)
 			}
 		case token.LOR:
+			l.reportRedundantBooleanOperand(states, expr.X, "left side of ||")
 			l.checkBooleanSubexpressions(states, expr.X)
 
 			leftFalse := l.refineStates(states, expr.X, false)
@@ -2090,6 +2151,26 @@ func (l *linter) checkBooleanSubexpressions(states []state, expr ast.Expr) {
 				l.checkBooleanSubexpressions(leftFalse, expr.Y)
 			}
 		}
+	}
+}
+
+func (l *linter) reportRedundantBooleanOperand(
+	states []state,
+	expr ast.Expr,
+	headline string,
+) {
+	tri, because := l.truthAcross(states, expr)
+	if because == nil {
+		return
+	}
+
+	switch tri {
+	case triTrue:
+		l.reportRedundantSubexpr(expr, headline+" is always true", because)
+	case triFalse:
+		l.reportRedundantSubexpr(expr, headline+" is always false", because)
+	case triUnknown:
+		return
 	}
 }
 
@@ -2215,7 +2296,11 @@ func (l *linter) valueSymbolOf(expr ast.Expr) (symbol, bool) {
 		return sym, true
 	}
 
-	return l.lenSymbolOf(expr)
+	if sym, ok := l.lenSymbolOf(expr); ok {
+		return sym, true
+	}
+
+	return l.predicateCallSymbolOf(expr)
 }
 
 func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
@@ -2259,6 +2344,35 @@ func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {
 	}
 
 	return lenSymbolForBase(base), true
+}
+
+func (l *linter) predicateCallSymbolOf(expr ast.Expr) (symbol, bool) {
+	call, ok := l.unparen(expr).(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 || !isBoolType(l.pkg.TypesInfo.TypeOf(call)) {
+		return symbol{}, false
+	}
+
+	obj, key, ok := l.calledFunc(call)
+	if !ok || obj == nil || !isIsPredicateName(obj.Name()) {
+		return symbol{}, false
+	}
+
+	sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok || l.pkg.TypesInfo.Selections[sel] == nil {
+		return symbol{}, false
+	}
+
+	receiver, ok := l.symbolOf(sel.X)
+	if !ok {
+		return symbol{}, false
+	}
+
+	return symbol{
+		key:  receiver.key + "|" + predicatePathSegmentPrefix + strings.ReplaceAll(key, "|", "/"),
+		root: receiver.root,
+		name: l.render(call),
+		typ:  l.pkg.TypesInfo.TypeOf(call),
+	}, true
 }
 
 func isLenSymbol(sym symbol) bool {

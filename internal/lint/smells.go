@@ -49,6 +49,7 @@ func (l *linter) scanDefaultSmells() {
 	l.checkRepeatedNormalizationCallsPackage()
 	l.checkRedundantJSONMarshalText()
 	l.checkRestatementComments()
+	l.checkPredicateReturnSignatures()
 }
 
 func (l *linter) scanExperimentalPackage() {
@@ -72,6 +73,49 @@ func (l *linter) checkTrivialForwarders() {
 			l.checkTrivialForwarder(fn, callCounts)
 		}
 	}
+}
+
+func (l *linter) checkPredicateReturnSignatures() {
+	for _, file := range l.pkg.Files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name == nil || !isIsPredicateName(fn.Name.Name) {
+				continue
+			}
+
+			obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
+			if !ok || obj == nil {
+				continue
+			}
+
+			sig, ok := obj.Type().(*types.Signature)
+			if !ok || isPredicateSignature(sig) {
+				continue
+			}
+
+			l.report(
+				fn.Name.Pos(),
+				"predicate_signature",
+				fmt.Sprintf(
+					`predicate-like function %q should return bool or (bool, error)`,
+					fn.Name.Name,
+				),
+			)
+		}
+	}
+}
+
+func isPredicateSignature(sig *types.Signature) bool {
+	results := sig.Results()
+	if results == nil || results.Len() == 0 || results.Len() > 2 {
+		return false
+	}
+
+	if !isBoolType(results.At(0).Type()) {
+		return false
+	}
+
+	return results.Len() == 1 || isErrorType(results.At(1).Type())
 }
 
 func (l *linter) packageCallCounts() map[string]int {

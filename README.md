@@ -20,13 +20,17 @@ Shipped rules:
 - repeated `nil`, empty-string, boolean, enum, or `len(...)` checks after guard
   clauses
 - redundant right-hand side of `&&` / `||`
+- repeated `IsX()` predicate checks after guard clauses
 - unreachable `switch` cases on already-filtered path
 - boolean-return ceremony like `if cond { return true }; return false`
 - identical `if` / `else` or adjacent `switch` branch bodies
+- adjacent `range` loops that repeat the same body
 - redundant `default` in exhaustive `bool` and closed const-set switches
+- redundant `len(src) > 0` guards before `append(dst, src...)`
 - one-read temp aliases like `name := req.Name`
 - trivial private wrappers with one production callsite
 - doc comments that only restate private declaration names
+- `IsX` predicates that do not return `bool` or `(bool, error)`
 - redundant `MarshalJSON` methods covered by `MarshalText`
 - repeated normalization calls like duplicate `strings.TrimSpace(name)`
 
@@ -64,6 +68,7 @@ It parses and type-checks matched packages, then tracks small path facts for:
 - `name == ""` / `name != ""`
 - `len(items) == 0` / `len(items) > 0`
 - boolean facts
+- no-arg `IsX()` predicate facts
 - selector chains like `req.User.Role == Admin`
 
 It also:
@@ -184,7 +189,10 @@ Machine-readable categories emitted today:
 - `boolean_ceremony`
 - `control_flow_merge`
 - `redundant_default`
+- `append_ceremony`
+- `loop_ceremony`
 - `temp_alias`
+- `predicate_signature`
 - `trivial_wrapper`
 - `comment_noise`
 - `serialization_ceremony`

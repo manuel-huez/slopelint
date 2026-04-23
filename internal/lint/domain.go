@@ -9,6 +9,7 @@ import (
 	"go/types"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 type triState uint8
@@ -359,4 +360,25 @@ func isPointerLike(t types.Type) bool {
 	default:
 		return false
 	}
+}
+
+func isErrorType(t types.Type) bool {
+	errorObj := types.Universe.Lookup("error")
+	if errorObj == nil {
+		return false
+	}
+
+	return types.Identical(types.Unalias(t), errorObj.Type())
+}
+
+func isIsPredicateName(name string) bool {
+	if !strings.HasPrefix(name, "Is") || len(name) <= len("Is") {
+		return false
+	}
+
+	for _, ch := range name[len("Is"):] {
+		return ch == '_' || unicode.IsUpper(ch) || unicode.IsDigit(ch)
+	}
+
+	return false
 }

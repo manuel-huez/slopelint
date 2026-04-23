@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const lenPathSegment = "#len"
+const (
+	lenPathSegment             = "#len"
+	predicatePathSegmentPrefix = "#pred:"
+)
 
 const (
 	scalarKeyParts      = 2
@@ -279,6 +282,10 @@ func summaryTargetForKey(key string, bindings []summaryBinding) (contractTarget,
 func validSummaryPath(path []string) bool {
 	for i, segment := range path {
 		if segment == "" {
+			return false
+		}
+
+		if strings.HasPrefix(segment, predicatePathSegmentPrefix) {
 			return false
 		}
 

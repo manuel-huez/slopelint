@@ -1467,24 +1467,16 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 			}
 
 			right, rightEv := l.truth(st, expr.Y)
+			if right == triFalse {
+				return triFalse, rightEv
+			}
+
 			if left == triTrue && right == triTrue {
 				if leftEv != nil {
 					return triTrue, leftEv
 				}
 
 				return triTrue, rightEv
-			}
-
-			if left == triTrue && right == triFalse {
-				return triFalse, rightEv
-			}
-
-			if left == triFalse || right == triFalse {
-				if leftEv != nil {
-					return triFalse, leftEv
-				}
-
-				return triFalse, rightEv
 			}
 
 			return triUnknown, nil
@@ -1495,24 +1487,16 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 			}
 
 			right, rightEv := l.truth(st, expr.Y)
+			if right == triTrue {
+				return triTrue, rightEv
+			}
+
 			if left == triFalse && right == triFalse {
 				if leftEv != nil {
 					return triFalse, leftEv
 				}
 
 				return triFalse, rightEv
-			}
-
-			if left == triFalse && right == triTrue {
-				return triTrue, rightEv
-			}
-
-			if left == triTrue || right == triTrue {
-				if leftEv != nil {
-					return triTrue, leftEv
-				}
-
-				return triTrue, rightEv
 			}
 
 			return triUnknown, nil
@@ -2596,9 +2580,9 @@ func (l *linter) refineLenCompare(
 		return l.refineLenToExactZero(st, sym, pos)
 	case lenRefineNotZero:
 		return l.refineLenToNotZero(st, sym, pos)
-	default:
-		return state{}, false, false
 	}
+
+	return state{}, false, false
 }
 
 func (l *linter) refineLenToExactZero(st state, sym symbol, pos token.Pos) (state, bool, bool) {

@@ -93,9 +93,9 @@ func bindingConditionContracts(binding resultBinding, kind returnKind) []boundCo
 		return binding.whenNil
 	case returnNonNil:
 		return binding.whenNonNil
-	default:
-		return nil
 	}
+
+	return nil
 }
 
 func (l *linter) applyBoundContracts(st state, contracts []boundContract) []state {

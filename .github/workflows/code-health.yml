@@ -36,5 +36,5 @@ jobs:
       - name: Fail on formatter changes
         run: git diff --exit-code
 
-      - name: Run full code health checks
+      - name: Run full code health checks, including slopelint self-check
         run: ./scripts/check-code-health.sh

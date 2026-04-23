@@ -307,7 +307,7 @@ func scalarFromConstantValue(v constant.Value) (scalar, bool) {
 	case constant.Int:
 		return scalar{kind: scalarInt, text: v.ExactString()}, true
 	case constant.Float, constant.Complex:
-		return scalar{}, false
+		return scalar{kind: scalarInvalid}, false
 	default:
 		return scalar{}, false
 	}

@@ -234,9 +234,9 @@ func (l *linter) reportBoolActionPair(
 			thenAction.value,
 			elseAction.value,
 		)
-	default:
-		return false
 	}
+
+	return false
 }
 
 func (l *linter) reportBoolReturnCeremony(
@@ -1261,12 +1261,10 @@ func nextIdentifierWordStart(runes []rune, idx int) (int, bool) {
 	switch {
 	case curr == '_':
 		return idx + 1, true
-	case prev == '_':
-		return idx, true
-	case unicode.IsLower(prev) && unicode.IsUpper(curr):
-		return idx, true
-	case unicode.IsUpper(prev) && unicode.IsUpper(curr) &&
-		idx+1 < len(runes) && unicode.IsLower(runes[idx+1]):
+	case prev == '_',
+		unicode.IsLower(prev) && unicode.IsUpper(curr),
+		unicode.IsUpper(prev) && unicode.IsUpper(curr) &&
+			idx+1 < len(runes) && unicode.IsLower(runes[idx+1]):
 		return idx, true
 	default:
 		return 0, false

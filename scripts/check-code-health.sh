@@ -62,6 +62,10 @@ run_go_deadcode() {
   deadcode ./cmd/slopelint ./internal/...
 }
 
+run_slopelint() {
+  go run ./cmd/slopelint ./...
+}
+
 run_jscpd() {
   # Enforce zero production-code clones while ignoring intentionally repetitive
   # test scaffolding and harness setup.
@@ -71,6 +75,7 @@ run_jscpd() {
 }
 
 run_step "go vet" go vet ./...
+run_step "slopelint self-check" run_slopelint
 run_step "go test" go test ./...
 run_step "golangci-lint" run_golangci_lint
 run_step "go deadcode" run_go_deadcode

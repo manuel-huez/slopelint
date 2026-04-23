@@ -262,11 +262,7 @@ func (l *linter) samePackageForwardTarget(obj *types.Func, call *ast.CallExpr) b
 		return false
 	}
 
-	if obj.Pkg().Path() != callee.Pkg().Path() {
-		return false
-	}
-
-	return true
+	return obj.Pkg().Path() == callee.Pkg().Path()
 }
 
 func (l *linter) trivialForwarderCall(
@@ -687,16 +683,15 @@ func restatementCommentWords(text string) []string {
 }
 
 func restatementWordsMatch(commentWord, identWord string) bool {
-	switch {
-	case commentWord == identWord:
+	if commentWord == identWord {
 		return true
-	case strings.TrimSuffix(commentWord, "s") == identWord:
-		return true
-	case strings.TrimSuffix(commentWord, "ed") == identWord:
-		return true
-	case strings.TrimSuffix(commentWord, "ing") == identWord:
-		return true
-	default:
-		return false
 	}
+
+	for _, suffix := range []string{"s", "ed", "ing"} {
+		if strings.TrimSuffix(commentWord, suffix) == identWord {
+			return true
+		}
+	}
+
+	return false
 }

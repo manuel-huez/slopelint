@@ -1,5 +1,8 @@
 # slopelint
 
+> [!WARNING]
+> `slopelint` is still **experimental**. Expect rough edges, breaking changes, and incomplete docs.
+
 `slopelint` is a Go analyzer for preventing code slop in Go codebases.
 
 It targets code that keeps getting longer, noisier, and more ceremonial without
@@ -148,6 +151,12 @@ go build -o slopelint ./cmd/slopelint
 ./slopelint -max-states=64 ./...
 ./slopelint -experimental ./...
 go vet -vettool=$(pwd)/slopelint ./...
+```
+
+Repo code-health checks run `slopelint` on this repo itself:
+
+```bash
+./scripts/check-code-health.sh
 ```
 
 Useful flags:

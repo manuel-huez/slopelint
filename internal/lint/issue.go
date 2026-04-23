@@ -7,21 +7,27 @@ import (
 
 // Issue is one linter finding.
 type Issue struct {
-	Pos     token.Position
+	Pos     token.Pos
 	Message string
 }
 
-func sortIssues(issues []Issue) {
+func sortIssues(fset *token.FileSet, issues []Issue) {
 	sort.Slice(issues, func(i, j int) bool {
-		if issues[i].Pos.Filename != issues[j].Pos.Filename {
-			return issues[i].Pos.Filename < issues[j].Pos.Filename
+		pi := fset.Position(issues[i].Pos)
+		pj := fset.Position(issues[j].Pos)
+
+		if pi.Filename != pj.Filename {
+			return pi.Filename < pj.Filename
 		}
-		if issues[i].Pos.Line != issues[j].Pos.Line {
-			return issues[i].Pos.Line < issues[j].Pos.Line
+
+		if pi.Line != pj.Line {
+			return pi.Line < pj.Line
 		}
-		if issues[i].Pos.Column != issues[j].Pos.Column {
-			return issues[i].Pos.Column < issues[j].Pos.Column
+
+		if pi.Column != pj.Column {
+			return pi.Column < pj.Column
 		}
+
 		return issues[i].Message < issues[j].Message
 	})
 }

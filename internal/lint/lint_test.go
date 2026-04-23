@@ -21,10 +21,12 @@ func f(s string, p *int) {
 `)
 
 	issues := lintInDir(t, tmp)
+
 	joined := joinMessages(issues)
 	if !strings.Contains(joined, `condition "s == \"\"" is always false here`) {
 		t.Fatalf("expected redundant string check, got:\n%s", joined)
 	}
+
 	if !strings.Contains(joined, `condition "p == nil" is always false here`) {
 		t.Fatalf("expected redundant nil check, got:\n%s", joined)
 	}
@@ -48,10 +50,12 @@ func f(r *Req) {
 `)
 
 	issues := lintInDir(t, tmp)
+
 	joined := joinMessages(issues)
 	if !strings.Contains(joined, `condition "r == nil" is always false here`) {
 		t.Fatalf("expected root nilness to be preserved, got:\n%s", joined)
 	}
+
 	if strings.Contains(joined, `condition "r.Name == \"\"" is always false here`) {
 		t.Fatalf("field fact should have been invalidated across mutate call, got:\n%s", joined)
 	}
@@ -82,6 +86,7 @@ func f(s Status) {
 `)
 
 	issues := lintInDir(t, tmp)
+
 	joined := joinMessages(issues)
 	if !strings.Contains(joined, `switch case "Done" is unreachable here`) {
 		t.Fatalf("expected unreachable switch case, got:\n%s", joined)
@@ -90,15 +95,18 @@ func f(s Status) {
 
 func lintInDir(t *testing.T, dir string) []Issue {
 	t.Helper()
+
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
+
 	defer func() {
 		if err := os.Chdir(oldWD); err != nil {
 			t.Fatalf("restore cwd: %v", err)
 		}
 	}()
+
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
@@ -107,15 +115,18 @@ func lintInDir(t *testing.T, dir string) []Issue {
 	if err != nil {
 		t.Fatalf("load packages: %v", err)
 	}
+
 	var issues []Issue
 	for _, pkg := range pkgs {
 		issues = append(issues, LintPackage(pkg, Options{MaxStates: 32})...)
 	}
+
 	return issues
 }
 
 func writeFile(t *testing.T, path string, contents string) {
 	t.Helper()
+
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -126,5 +137,6 @@ func joinMessages(issues []Issue) string {
 	for _, issue := range issues {
 		parts = append(parts, issue.Message)
 	}
+
 	return strings.Join(parts, "\n")
 }

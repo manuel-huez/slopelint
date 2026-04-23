@@ -55,13 +55,11 @@ go build ./cmd/defenselint
 ./defenselint ./...
 ./defenselint ./internal/...
 ./defenselint -max-states=64 ./...
+go vet -vettool=$(which defenselint) ./...
 ```
 
-The process exits with:
-
-- `0` when nothing is reported
-- `1` when findings are reported
-- `2` on tool or package-loading errors
+The standalone binary now uses Go's `go/analysis` driver, so the same executable
+works directly, under multicheckers, or as a `go vet` tool via `-vettool`.
 
 ## Current model
 
@@ -92,12 +90,3 @@ this analyzer unless earlier control flow already filtered its possible values.
 
 That means the tool is strong at **path-based filtering** and intentionally weak
 at **type-level semantic inference**.
-
-## Suggested next extensions
-
-If you want to push it further, the next practical upgrades would be:
-
-1. facts exported across packages for constructor-style APIs
-2. closed-domain support for enum-like named types
-3. a `go/analysis` front-end for direct `go vet` / multichecker integration
-4. suggested fixes for trivially removable checks

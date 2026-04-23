@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	boolTrueText  = "true"
+	boolFalseText = "false"
+)
+
 // Options controls linter behavior.
 type Options struct {
 	MaxStates int
@@ -18,6 +23,7 @@ func LintPackage(pkg *LoadedPackage, opts Options) []Issue {
 	if opts.MaxStates <= 0 {
 		opts.MaxStates = 32
 	}
+
 	l := &linter{
 		pkg:         pkg,
 		maxStates:   opts.MaxStates,
@@ -26,7 +32,8 @@ func LintPackage(pkg *LoadedPackage, opts Options) []Issue {
 		renderCache: make(map[ast.Node]string),
 	}
 	l.run()
-	sortIssues(l.issues)
+	sortIssues(pkg.FSet, l.issues)
+
 	return l.issues
 }
 
@@ -52,6 +59,7 @@ func (l *linter) run() {
 				if fn.Body != nil {
 					l.analyzeFunction(fn.Body)
 				}
+
 				return false
 			case *ast.FuncLit:
 				l.analyzeFunction(fn.Body)
@@ -67,14 +75,17 @@ func (l *linter) analyzeFunction(body *ast.BlockStmt) {
 	if body == nil {
 		return
 	}
+
 	if l.hasUnsupportedControlFlow(body) {
 		return
 	}
+
 	l.execBlock(body.List, []state{newState()})
 }
 
 func (l *linter) hasUnsupportedControlFlow(body *ast.BlockStmt) bool {
 	unsupported := false
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
@@ -91,8 +102,10 @@ func (l *linter) hasUnsupportedControlFlow(body *ast.BlockStmt) bool {
 			unsupported = true
 			return false
 		}
+
 		return !unsupported
 	})
+
 	return unsupported
 }
 
@@ -102,19 +115,24 @@ func (l *linter) execBlock(stmts []ast.Stmt, states []state) flowResult {
 		if len(res.next) == 0 {
 			break
 		}
+
 		step := l.execStmt(stmt, res.next)
 		res.next = step.next
 		res.breaks = append(res.breaks, step.breaks...)
 		res.continues = append(res.continues, step.continues...)
 	}
+
 	res.next = l.normalizeStates(res.next)
 	res.breaks = l.normalizeStates(res.breaks)
 	res.continues = l.normalizeStates(res.continues)
+
 	return res
 }
 
+//nolint:cyclop // Statement dispatch intentionally mirrors Go AST forms.
 func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 	states = l.normalizeStates(states)
+
 	switch stmt := stmt.(type) {
 	case *ast.BlockStmt:
 		return l.execBlock(stmt.List, states)
@@ -131,6 +149,7 @@ func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 	case *ast.ReturnStmt:
 		return flowResult{}
 	case *ast.BranchStmt:
+		//exhaustive:ignore token.Token includes many non-branch values irrelevant here.
 		switch stmt.Tok {
 		case token.BREAK:
 			return flowResult{breaks: states}
@@ -170,6 +189,7 @@ func (l *linter) execGoStmt(stmt *ast.GoStmt, states []state) []state {
 func (l *linter) execSendStmt(stmt *ast.SendStmt, states []state) []state {
 	states = l.invalidateForExprSideEffects(states, stmt.Chan)
 	states = l.invalidateForExprSideEffects(states, stmt.Value)
+
 	return states
 }
 
@@ -180,47 +200,64 @@ func (l *linter) execIncDecStmt(stmt *ast.IncDecStmt, states []state) []state {
 		l.invalidateLHS(&st, stmt.X)
 		states[i] = st
 	}
+
 	return l.normalizeStates(states)
 }
 
+//nolint:cyclop,gocognit // Var declaration handling needs explicit step-wise flow for precision.
 func (l *linter) execDeclStmt(stmt *ast.DeclStmt, states []state) []state {
 	gen, ok := stmt.Decl.(*ast.GenDecl)
 	if !ok || gen.Tok != token.VAR {
 		return states
 	}
+
 	out := make([]state, 0, len(states))
 	for _, st0 := range states {
 		st := st0.clone()
+
 		for _, spec := range gen.Specs {
 			vs, ok := spec.(*ast.ValueSpec)
 			if !ok {
 				continue
 			}
+
 			for _, value := range vs.Values {
 				st = l.invalidateForExprSideEffectsOne(st, value)
 			}
+
 			for idx, name := range vs.Names {
 				if name.Name == "_" {
 					continue
 				}
+
 				sym, ok := l.symbolOf(name)
 				if !ok {
 					continue
 				}
+
 				l.invalidatePrefix(&st, sym.key)
+
 				if len(vs.Values) == len(vs.Names) {
 					st = l.assignValue(st, sym, vs.Values[idx], st0)
 					continue
 				}
+
 				if zero, ok := zeroScalarOfType(sym.typ); ok {
-					if next, ok := l.setExact(st, sym, zero, evidence{pos: name.Pos(), text: l.relationText(sym, "==", zero)}); ok {
+					if next, ok := l.setExact(
+						st,
+						sym,
+						zero,
+						evidence{pos: name.Pos(), text: l.relationText(sym, "==", zero)},
+					); ok {
 						st = next
 					}
 				}
 			}
 		}
+
 		out = append(out, st)
 	}
+
 	return l.normalizeStates(out)
 }
 
@@ -242,11 +279,14 @@ func (l *linter) execAssignStmt(stmt *ast.AssignStmt, states []state) []state {
 				if !ok {
 					continue
 				}
+
 				st = l.assignValue(st, sym, stmt.Rhs[i], st0)
 			}
 		}
+
 		out = append(out, st)
 	}
+
 	return l.normalizeStates(out)
 }
 
@@ -255,12 +295,20 @@ func (l *linter) assignValue(dst state, lhs symbol, rhs ast.Expr, rhsState state
 		l.copyFacts(&dst, lhs, rhsSym, rhsState)
 		return dst
 	}
+
 	if value, ok := l.scalarOf(rhs); ok {
-		if next, ok := l.setExact(dst, lhs, value, evidence{pos: rhs.Pos(), text: l.relationText(lhs, "==", value)}); ok {
+		if next, ok := l.setExact(
+			dst,
+			lhs,
+			value,
+			evidence{pos: rhs.Pos(), text: l.relationText(lhs, "==", value)},
+		); ok {
 			return next
 		}
+
 		return dst
 	}
+
 	return dst
 }
 
@@ -268,12 +316,14 @@ func (l *linter) execIfStmt(stmt *ast.IfStmt, states []state) flowResult {
 	if stmt.Init != nil {
 		states = l.execStmt(stmt.Init, states).next
 	}
+
 	states = l.normalizeStates(states)
 	if len(states) == 0 {
 		return flowResult{}
 	}
 
 	l.checkBooleanSubexpressions(states, stmt.Cond)
+
 	if tri, because := l.truthAcross(states, stmt.Cond); tri == triTrue {
 		l.reportCondition(stmt.Cond, true, because)
 	} else if tri == triFalse {
@@ -284,12 +334,14 @@ func (l *linter) execIfStmt(stmt *ast.IfStmt, states []state) flowResult {
 	elseStates := l.refineStates(states, stmt.Cond, false)
 
 	thenRes := l.execBlock(stmt.Body.List, thenStates)
+
 	var elseRes flowResult
 	if stmt.Else != nil {
 		elseRes = l.execElse(stmt.Else, elseStates)
 	} else {
 		elseRes = flowResult{next: elseStates}
 	}
+
 	return flowResult{
 		next:      l.normalizeStates(append(thenRes.next, elseRes.next...)),
 		breaks:    l.normalizeStates(append(thenRes.breaks, elseRes.breaks...)),
@@ -312,6 +364,7 @@ func (l *linter) execForStmt(stmt *ast.ForStmt, states []state) flowResult {
 	if stmt.Init != nil {
 		states = l.execStmt(stmt.Init, states).next
 	}
+
 	states = l.normalizeStates(states)
 	if len(states) == 0 {
 		return flowResult{}
@@ -319,18 +372,22 @@ func (l *linter) execForStmt(stmt *ast.ForStmt, states []state) flowResult {
 
 	enterStates := states
 	exitStates := []state(nil)
+
 	if stmt.Cond != nil {
 		l.checkBooleanSubexpressions(states, stmt.Cond)
+
 		if tri, because := l.truthAcross(states, stmt.Cond); tri == triFalse {
 			l.reportCondition(stmt.Cond, false, because)
 		} else if tri == triTrue {
 			l.reportCondition(stmt.Cond, true, because)
 		}
+
 		enterStates = l.refineStates(states, stmt.Cond, true)
 		exitStates = l.refineStates(states, stmt.Cond, false)
 	}
 
 	bodyRes := l.execBlock(stmt.Body.List, enterStates)
+
 	iterStates := l.normalizeStates(append(bodyRes.next, bodyRes.continues...))
 	if stmt.Post != nil {
 		iterStates = l.execStmt(stmt.Post, iterStates).next
@@ -339,33 +396,41 @@ func (l *linter) execForStmt(stmt *ast.ForStmt, states []state) flowResult {
 	// The loop may execute multiple times. Preserve precision inside one iteration,
 	// then widen when approximating the state after additional iterations.
 	var afterLoop []state
+
 	afterLoop = append(afterLoop, exitStates...)
 	afterLoop = append(afterLoop, bodyRes.breaks...)
+
 	if stmt.Cond != nil && len(iterStates) != 0 {
 		widened := l.wipeFacts(iterStates)
 		afterLoop = append(afterLoop, l.refineStates(widened, stmt.Cond, false)...)
 	}
+
 	return flowResult{next: l.normalizeStates(afterLoop)}
 }
 
 func (l *linter) execRangeStmt(stmt *ast.RangeStmt, states []state) flowResult {
 	states = l.invalidateForExprSideEffects(states, stmt.X)
 	enterStates := l.normalizeStates(states)
+
 	bodyStart := make([]state, 0, len(enterStates))
 	for _, st0 := range enterStates {
 		st := st0.clone()
 		if stmt.Key != nil {
 			l.invalidateLHS(&st, stmt.Key)
 		}
+
 		if stmt.Value != nil {
 			l.invalidateLHS(&st, stmt.Value)
 		}
+
 		bodyStart = append(bodyStart, st)
 	}
+
 	bodyRes := l.execBlock(stmt.Body.List, bodyStart)
 	// A range loop may execute zero times, so the incoming state is always an exit state.
 	out := append([]state{}, states...)
 	out = append(out, bodyRes.breaks...)
+
 	return flowResult{
 		next:      l.normalizeStates(out),
 		continues: l.normalizeStates(bodyRes.continues),
@@ -376,6 +441,7 @@ func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult
 	if stmt.Init != nil {
 		states = l.execStmt(stmt.Init, states).next
 	}
+
 	states = l.normalizeStates(states)
 	if len(states) == 0 {
 		return flowResult{}
@@ -388,21 +454,32 @@ func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult
 
 	for _, raw := range stmt.Body.List {
 		clause := raw.(*ast.CaseClause)
+
 		caseStates := remaining
 		if len(clause.List) > 0 {
 			if len(remaining) == 0 {
-				l.report(clause.Case, fmt.Sprintf("switch case %q is unreachable here; previous cases already cover all reachable values", l.renderCaseClauseHeader(clause)))
+				l.report(
+					clause.Case,
+					fmt.Sprintf(
+						"switch case %q is unreachable here; previous cases already cover all reachable values",
+						l.renderCaseClauseHeader(clause),
+					),
+				)
+
 				continue
 			}
+
 			tri, because := l.truthAcrossCase(remaining, stmt.Tag, clause.List)
 			if tri == triFalse {
 				l.reportCase(clause, because)
 			}
+
 			caseStates = l.refineStatesCase(remaining, stmt.Tag, clause.List, true)
 			remaining = l.refineStatesCase(remaining, stmt.Tag, clause.List, false)
 		} else {
 			defaultSeen = true
 		}
+
 		caseRes := l.execBlock(clause.Body, caseStates)
 		out = append(out, caseRes.next...)
 		out = append(out, caseRes.breaks...)
@@ -412,6 +489,7 @@ func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult
 	if !defaultSeen {
 		out = append(out, remaining...)
 	}
+
 	return flowResult{next: l.normalizeStates(out), continues: l.normalizeStates(conts)}
 }
 
@@ -420,6 +498,7 @@ func (l *linter) invalidateLHS(st *state, lhs ast.Expr) {
 		l.invalidatePrefix(st, sym.key)
 		return
 	}
+
 	for root := range l.rootsInExpr(lhs) {
 		l.invalidatePrefix(st, root)
 	}
@@ -445,10 +524,12 @@ func (l *linter) wipeFacts(states []state) []state {
 	if len(states) == 0 {
 		return nil
 	}
+
 	out := make([]state, len(states))
 	for i := range out {
 		out[i] = newState()
 	}
+
 	return out
 }
 
@@ -457,11 +538,13 @@ func (l *linter) invalidateForExprSideEffects(states []state, expr ast.Expr) []s
 	for _, st := range states {
 		out = append(out, l.invalidateForExprSideEffectsOne(st, expr))
 	}
+
 	return l.normalizeStates(out)
 }
 
 func (l *linter) invalidateForExprSideEffectsOne(st state, expr ast.Expr) state {
 	out := st.clone()
+
 	ast.Inspect(expr, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
@@ -469,8 +552,10 @@ func (l *linter) invalidateForExprSideEffectsOne(st state, expr ast.Expr) state 
 		case *ast.CallExpr:
 			out = l.invalidateForCallOne(out, n)
 		}
+
 		return true
 	})
+
 	return out
 }
 
@@ -479,13 +564,16 @@ func (l *linter) invalidateForCall(states []state, call *ast.CallExpr) []state {
 	for _, st := range states {
 		out = append(out, l.invalidateForCallOne(st, call))
 	}
+
 	return l.normalizeStates(out)
 }
 
+//nolint:cyclop,gocognit // Side-effect invalidation must branch by call shape and argument semantics.
 func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 	if tv, ok := l.pkg.TypesInfo.Types[call.Fun]; ok && tv.IsType() {
 		return st
 	}
+
 	out := st.clone()
 	addFull := func(expr ast.Expr) {
 		for root := range l.rootsInExpr(expr) {
@@ -511,10 +599,12 @@ func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 			addFull(u.X)
 			continue
 		}
+
 		tv, ok := l.pkg.TypesInfo.Types[arg]
 		if !ok {
 			continue
 		}
+
 		if isPointerLike(tv.Type) {
 			addDescendants(arg)
 		}
@@ -537,6 +627,7 @@ func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 
 func (l *linter) rootsInExpr(expr ast.Expr) map[string]struct{} {
 	roots := make(map[string]struct{})
+
 	ast.Inspect(expr, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
@@ -546,8 +637,10 @@ func (l *linter) rootsInExpr(expr ast.Expr) map[string]struct{} {
 				roots[sym.root] = struct{}{}
 			}
 		}
+
 		return true
 	})
+
 	return roots
 }
 
@@ -555,7 +648,7 @@ func (l *linter) copyFacts(dst *state, lhs, rhs symbol, src state) {
 	for key, f := range src.facts {
 		if key == rhs.key || isSameOrChild(key, rhs.key) {
 			newKey := lhs.key + strings.TrimPrefix(key, rhs.key)
-			(*dst).facts[newKey] = f.clone()
+			dst.facts[newKey] = f.clone()
 		}
 	}
 }
@@ -564,17 +657,21 @@ func (l *linter) normalizeStates(states []state) []state {
 	if len(states) == 0 {
 		return nil
 	}
+
 	seen := make(map[string]state, len(states))
 	for _, st := range states {
 		seen[st.hash()] = st
 	}
+
 	out := make([]state, 0, len(seen))
 	for _, st := range seen {
 		out = append(out, st)
 	}
+
 	if len(out) <= l.maxStates {
 		return out
 	}
+
 	return []state{l.mergeStates(out)}
 }
 
@@ -582,35 +679,42 @@ func (l *linter) mergeStates(states []state) state {
 	if len(states) == 0 {
 		return newState()
 	}
+
 	out := states[0].clone()
 	for key, f := range out.facts {
 		merged := f.clone()
+
 		for i := 1; i < len(states); i++ {
 			other, ok := states[i].facts[key]
 			if !ok {
 				merged = fact{}
 				break
 			}
+
 			merged = l.joinFacts(merged, other)
 			if merged.empty() {
 				break
 			}
 		}
+
 		if merged.empty() {
 			delete(out.facts, key)
 		} else {
 			out.facts[key] = merged
 		}
 	}
+
 	return out
 }
 
 func (l *linter) joinFacts(a, b fact) fact {
 	out := fact{}
+
 	if a.exact != nil && b.exact != nil && a.exact.value == b.exact.value {
 		copyExact := *a.exact
 		out.exact = &copyExact
 	}
+
 	if len(a.not) != 0 && len(b.not) != 0 {
 		out.not = make(map[string]evidence)
 		for k, ev := range a.not {
@@ -618,10 +722,12 @@ func (l *linter) joinFacts(a, b fact) fact {
 				out.not[k] = ev
 			}
 		}
+
 		if len(out.not) == 0 {
 			out.not = nil
 		}
 	}
+
 	return out
 }
 
@@ -629,44 +735,56 @@ func (l *linter) truthAcross(states []state, expr ast.Expr) (triState, *evidence
 	if len(states) == 0 {
 		return triUnknown, nil
 	}
+
 	allTrue := true
 	allFalse := true
+
 	var because *evidence
+
 	for _, st := range states {
 		tri, ev := l.truth(st, expr)
 		if tri != triTrue {
 			allTrue = false
 		}
+
 		if tri != triFalse {
 			allFalse = false
 		}
+
 		if because == nil && ev != nil {
 			copyEv := *ev
 			because = &copyEv
 		}
 	}
+
 	if allTrue {
 		return triTrue, because
 	}
+
 	if allFalse {
 		return triFalse, because
 	}
+
 	return triUnknown, nil
 }
 
+//nolint:cyclop,gocognit,nestif // Boolean reasoning is intentionally explicit for analyzer correctness.
 func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 	expr = l.unparen(expr)
 	if scalar, ok := l.scalarOf(expr); ok && scalar.kind == scalarBool {
-		if scalar.text == "true" {
+		if scalar.text == boolTrueText {
 			return triTrue, nil
 		}
+
 		return triFalse, nil
 	}
+
 	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok && tv.Value != nil {
 		if scalar, ok := scalarFromConstantValue(tv.Value); ok && scalar.kind == scalarBool {
-			if scalar.text == "true" {
+			if scalar.text == boolTrueText {
 				return triTrue, nil
 			}
+
 			return triFalse, nil
 		}
 	}
@@ -676,11 +794,13 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 		if sym, ok := l.symbolOf(expr); ok && isBoolType(sym.typ) {
 			if f, ok := st.facts[sym.key]; ok {
 				if f.exact != nil && f.exact.value.kind == scalarBool {
-					if f.exact.value.text == "true" {
+					if f.exact.value.text == boolTrueText {
 						copyWhy := f.exact.why
 						return triTrue, &copyWhy
 					}
+
 					copyWhy := f.exact.why
+
 					return triFalse, &copyWhy
 				}
 			}
@@ -688,6 +808,7 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 	case *ast.UnaryExpr:
 		if expr.Op == token.NOT {
 			tri, ev := l.truth(st, expr.X)
+			//exhaustive:ignore triState unknown falls through to conservative unknown.
 			switch tri {
 			case triTrue:
 				return triFalse, ev
@@ -698,55 +819,69 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 			}
 		}
 	case *ast.BinaryExpr:
+		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
 		switch expr.Op {
 		case token.LAND:
 			left, leftEv := l.truth(st, expr.X)
 			if left == triFalse {
 				return triFalse, leftEv
 			}
+
 			right, rightEv := l.truth(st, expr.Y)
 			if left == triTrue && right == triTrue {
 				if leftEv != nil {
 					return triTrue, leftEv
 				}
+
 				return triTrue, rightEv
 			}
+
 			if left == triTrue && right == triFalse {
 				return triFalse, rightEv
 			}
+
 			if left == triFalse || right == triFalse {
 				if leftEv != nil {
 					return triFalse, leftEv
 				}
+
 				return triFalse, rightEv
 			}
+
 			return triUnknown, nil
 		case token.LOR:
 			left, leftEv := l.truth(st, expr.X)
 			if left == triTrue {
 				return triTrue, leftEv
 			}
+
 			right, rightEv := l.truth(st, expr.Y)
 			if left == triFalse && right == triFalse {
 				if leftEv != nil {
 					return triFalse, leftEv
 				}
+
 				return triFalse, rightEv
 			}
+
 			if left == triFalse && right == triTrue {
 				return triTrue, rightEv
 			}
+
 			if left == triTrue || right == triTrue {
 				if leftEv != nil {
 					return triTrue, leftEv
 				}
+
 				return triTrue, rightEv
 			}
+
 			return triUnknown, nil
 		case token.EQL, token.NEQ:
 			return l.truthCompare(st, expr.X, expr.Y, expr.Op == token.EQL)
 		}
 	}
+
 	return triUnknown, nil
 }
 
@@ -754,41 +889,56 @@ func (l *linter) truthCompare(st state, lhs, rhs ast.Expr, wantEq bool) (triStat
 	if sym, scalar, ok := l.symbolScalar(lhs, rhs); ok {
 		return l.truthSymbolScalar(st, sym, scalar, wantEq)
 	}
+
 	if sym, scalar, ok := l.symbolScalar(rhs, lhs); ok {
 		return l.truthSymbolScalar(st, sym, scalar, wantEq)
 	}
+
 	if ls, ok := l.scalarOf(lhs); ok {
 		if rs, ok := l.scalarOf(rhs); ok {
 			equal := ls == rs
 			if wantEq == equal {
 				return triTrue, nil
 			}
+
 			return triFalse, nil
 		}
 	}
+
 	return triUnknown, nil
 }
 
-func (l *linter) truthSymbolScalar(st state, sym symbol, value scalar, wantEq bool) (triState, *evidence) {
+func (l *linter) truthSymbolScalar(
+	st state,
+	sym symbol,
+	value scalar,
+	wantEq bool,
+) (triState, *evidence) {
 	f, ok := st.facts[sym.key]
 	if !ok {
 		return triUnknown, nil
 	}
+
 	if f.exact != nil {
 		equal := f.exact.value == value
+
 		copyWhy := f.exact.why
 		if wantEq == equal {
 			return triTrue, &copyWhy
 		}
+
 		return triFalse, &copyWhy
 	}
+
 	if ev, ok := f.not[value.key()]; ok {
 		copyWhy := ev
 		if wantEq {
 			return triFalse, &copyWhy
 		}
+
 		return triTrue, &copyWhy
 	}
+
 	return triUnknown, nil
 }
 
@@ -797,20 +947,24 @@ func (l *linter) refineStates(states []state, expr ast.Expr, wantTrue bool) []st
 	for _, st := range states {
 		out = append(out, l.refineState(st, expr, wantTrue)...)
 	}
+
 	return l.normalizeStates(out)
 }
 
+//nolint:cyclop,gocognit // Refinement intentionally enumerates boolean operators and propagation paths.
 func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 	expr = l.unparen(expr)
 	if tri, _ := l.truth(st, expr); tri == triTrue {
 		if wantTrue {
 			return []state{st}
 		}
+
 		return nil
 	} else if tri == triFalse {
 		if wantTrue {
 			return nil
 		}
+
 		return []state{st}
 	}
 
@@ -820,29 +974,35 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 			return l.refineState(st, expr.X, !wantTrue)
 		}
 	case *ast.BinaryExpr:
+		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
 		switch expr.Op {
 		case token.LAND:
 			if wantTrue {
 				left := l.refineState(st, expr.X, true)
 				return l.refineStates(left, expr.Y, true)
 			}
+
 			out := l.refineState(st, expr.X, false)
 			leftTrue := l.refineState(st, expr.X, true)
 			out = append(out, l.refineStates(leftTrue, expr.Y, false)...)
+
 			return l.normalizeStates(out)
 		case token.LOR:
 			if !wantTrue {
 				left := l.refineState(st, expr.X, false)
 				return l.refineStates(left, expr.Y, false)
 			}
+
 			out := l.refineState(st, expr.X, true)
 			leftFalse := l.refineState(st, expr.X, false)
 			out = append(out, l.refineStates(leftFalse, expr.Y, true)...)
+
 			return l.normalizeStates(out)
 		case token.EQL:
 			if sym, scalar, ok := l.symbolScalar(expr.X, expr.Y); ok {
 				return l.refineSymbolScalar(st, sym, scalar, wantTrue, expr.Pos())
 			}
+
 			if sym, scalar, ok := l.symbolScalar(expr.Y, expr.X); ok {
 				return l.refineSymbolScalar(st, sym, scalar, wantTrue, expr.Pos())
 			}
@@ -850,109 +1010,159 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 			if sym, scalar, ok := l.symbolScalar(expr.X, expr.Y); ok {
 				return l.refineSymbolScalar(st, sym, scalar, !wantTrue, expr.Pos())
 			}
+
 			if sym, scalar, ok := l.symbolScalar(expr.Y, expr.X); ok {
 				return l.refineSymbolScalar(st, sym, scalar, !wantTrue, expr.Pos())
 			}
 		}
 	case *ast.Ident, *ast.SelectorExpr:
 		if sym, ok := l.symbolOf(expr); ok && isBoolType(sym.typ) {
-			val := scalar{kind: scalarBool, text: map[bool]string{true: "true", false: "false"}[wantTrue]}
-			next, ok := l.setExact(st, sym, val, evidence{pos: expr.Pos(), text: l.relationText(sym, "==", val)})
+			val := scalar{
+				kind: scalarBool,
+				text: map[bool]string{true: boolTrueText, false: boolFalseText}[wantTrue],
+			}
+
+			next, ok := l.setExact(
+				st,
+				sym,
+				val,
+				evidence{pos: expr.Pos(), text: l.relationText(sym, "==", val)},
+			)
 			if !ok {
 				return nil
 			}
+
 			return []state{next}
 		}
 	}
+
 	if wantTrue {
 		return []state{st}
 	}
+
 	return []state{st}
 }
 
-func (l *linter) refineSymbolScalar(st state, sym symbol, value scalar, wantEq bool, pos token.Pos) []state {
+func (l *linter) refineSymbolScalar(
+	st state,
+	sym symbol,
+	value scalar,
+	wantEq bool,
+	pos token.Pos,
+) []state {
 	if wantEq {
-		next, ok := l.setExact(st, sym, value, evidence{pos: pos, text: l.relationText(sym, "==", value)})
+		next, ok := l.setExact(
+			st,
+			sym,
+			value,
+			evidence{pos: pos, text: l.relationText(sym, "==", value)},
+		)
 		if !ok {
 			return nil
 		}
+
 		return []state{next}
 	}
+
 	next, ok := l.addNot(st, sym, value, evidence{pos: pos, text: l.relationText(sym, "!=", value)})
 	if !ok {
 		return nil
 	}
+
 	return []state{next}
 }
 
 func (l *linter) setExact(st state, sym symbol, value scalar, why evidence) (state, bool) {
 	out := st.clone()
+
 	f := out.facts[sym.key].clone()
 	if f.exact != nil {
 		if f.exact.value != value {
 			return state{}, false
 		}
+
 		return out, true
 	}
+
 	if _, bad := f.not[value.key()]; bad {
 		return state{}, false
 	}
+
 	f.exact = &exactFact{value: value, why: why}
 	f.not = nil
 	out.facts[sym.key] = f
+
 	return out, true
 }
 
 func (l *linter) addNot(st state, sym symbol, value scalar, why evidence) (state, bool) {
 	out := st.clone()
+
 	f := out.facts[sym.key].clone()
 	if f.exact != nil {
 		return out, f.exact.value != value
 	}
+
 	if f.not == nil {
 		f.not = make(map[string]evidence)
 	}
+
 	f.not[value.key()] = why
 	if isBoolType(sym.typ) {
 		if value.kind == scalarBool {
-			other := scalar{kind: scalarBool, text: "true"}
-			if value.text == "true" {
-				other.text = "false"
+			other := scalar{kind: scalarBool, text: boolTrueText}
+			if value.text == boolTrueText {
+				other.text = boolFalseText
 			}
+
 			f.exact = &exactFact{value: other, why: why}
 			f.not = nil
 		}
 	}
+
 	out.facts[sym.key] = f
+
 	return out, true
 }
 
-func (l *linter) truthAcrossCase(states []state, tag ast.Expr, list []ast.Expr) (triState, *evidence) {
+func (l *linter) truthAcrossCase(
+	states []state,
+	tag ast.Expr,
+	list []ast.Expr,
+) (triState, *evidence) {
 	if len(states) == 0 {
 		return triUnknown, nil
 	}
+
 	allTrue := true
 	allFalse := true
+
 	var because *evidence
+
 	for _, st := range states {
 		tri, ev := l.truthCase(st, tag, list)
 		if tri != triTrue {
 			allTrue = false
 		}
+
 		if tri != triFalse {
 			allFalse = false
 		}
+
 		if because == nil && ev != nil {
 			copyEv := *ev
 			because = &copyEv
 		}
 	}
+
 	if allTrue {
 		return triTrue, because
 	}
+
 	if allFalse {
 		return triFalse, because
 	}
+
 	return triUnknown, nil
 }
 
@@ -960,30 +1170,41 @@ func (l *linter) truthCase(st state, tag ast.Expr, list []ast.Expr) (triState, *
 	if len(list) == 0 {
 		return triTrue, nil
 	}
+
 	allFalse := true
+
 	var firstFalse *evidence
+
 	for _, expr := range list {
-		var tri triState
-		var ev *evidence
+		var (
+			tri triState
+			ev  *evidence
+		)
+
 		if tag == nil {
 			tri, ev = l.truth(st, expr)
 		} else {
 			tri, ev = l.truthSyntheticCompare(st, tag, expr)
 		}
+
 		if tri == triTrue {
 			return triTrue, ev
 		}
+
 		if tri == triFalse && firstFalse == nil && ev != nil {
 			copyEv := *ev
 			firstFalse = &copyEv
 		}
+
 		if tri != triFalse {
 			allFalse = false
 		}
 	}
+
 	if allFalse {
 		return triFalse, firstFalse
 	}
+
 	return triUnknown, nil
 }
 
@@ -991,31 +1212,43 @@ func (l *linter) truthSyntheticCompare(st state, lhs, rhs ast.Expr) (triState, *
 	if sym, scalar, ok := l.symbolScalar(lhs, rhs); ok {
 		return l.truthSymbolScalar(st, sym, scalar, true)
 	}
+
 	if sym, scalar, ok := l.symbolScalar(rhs, lhs); ok {
 		return l.truthSymbolScalar(st, sym, scalar, true)
 	}
+
 	if ls, ok := l.scalarOf(lhs); ok {
 		if rs, ok := l.scalarOf(rhs); ok {
 			if ls == rs {
 				return triTrue, nil
 			}
+
 			return triFalse, nil
 		}
 	}
+
 	return triUnknown, nil
 }
 
-func (l *linter) refineStatesCase(states []state, tag ast.Expr, list []ast.Expr, wantMatch bool) []state {
+func (l *linter) refineStatesCase(
+	states []state,
+	tag ast.Expr,
+	list []ast.Expr,
+	wantMatch bool,
+) []state {
 	if len(list) == 0 {
 		if wantMatch {
 			return l.normalizeStates(states)
 		}
+
 		return nil
 	}
+
 	out := make([]state, 0)
 	for _, st := range states {
 		out = append(out, l.refineStateCase(st, tag, list, wantMatch)...)
 	}
+
 	return l.normalizeStates(out)
 }
 
@@ -1028,6 +1261,7 @@ func (l *linter) refineStateCase(st state, tag ast.Expr, list []ast.Expr, wantMa
 	for _, item := range list {
 		branches = append(branches, &ast.BinaryExpr{X: tag, Op: token.EQL, Y: item})
 	}
+
 	return l.refineStateListAsOr(st, branches, wantMatch)
 }
 
@@ -1036,22 +1270,28 @@ func (l *linter) refineStateListAsOr(st state, exprs []ast.Expr, wantTrue bool) 
 		if wantTrue {
 			return []state{st}
 		}
+
 		return nil
 	}
+
 	if wantTrue {
 		var out []state
+
 		currentFalse := []state{st}
 		for _, expr := range exprs {
 			matched := l.refineStates(currentFalse, expr, true)
 			out = append(out, matched...)
 			currentFalse = l.refineStates(currentFalse, expr, false)
 		}
+
 		return l.normalizeStates(out)
 	}
+
 	current := []state{st}
 	for _, expr := range exprs {
 		current = l.refineStates(current, expr, false)
 	}
+
 	return l.normalizeStates(current)
 }
 
@@ -1062,27 +1302,48 @@ func (l *linter) checkBooleanSubexpressions(states []state, expr ast.Expr) {
 			l.checkBooleanSubexpressions(states, expr.X)
 		}
 	case *ast.BinaryExpr:
+		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
 		switch expr.Op {
 		case token.LAND:
 			l.checkBooleanSubexpressions(states, expr.X)
+
 			leftTrue := l.refineStates(states, expr.X, true)
 			if len(leftTrue) > 0 {
 				if tri, because := l.truthAcross(leftTrue, expr.Y); tri == triTrue {
-					l.reportRedundantSubexpr(expr.Y, "right side of && is always true after the left side", because)
+					l.reportRedundantSubexpr(
+						expr.Y,
+						"right side of && is always true after the left side",
+						because,
+					)
 				} else if tri == triFalse {
-					l.reportRedundantSubexpr(expr.Y, "right side of && is always false after the left side", because)
+					l.reportRedundantSubexpr(
+						expr.Y,
+						"right side of && is always false after the left side",
+						because,
+					)
 				}
+
 				l.checkBooleanSubexpressions(leftTrue, expr.Y)
 			}
 		case token.LOR:
 			l.checkBooleanSubexpressions(states, expr.X)
+
 			leftFalse := l.refineStates(states, expr.X, false)
 			if len(leftFalse) > 0 {
 				if tri, because := l.truthAcross(leftFalse, expr.Y); tri == triTrue {
-					l.reportRedundantSubexpr(expr.Y, "right side of || is always true after the left side", because)
+					l.reportRedundantSubexpr(
+						expr.Y,
+						"right side of || is always true after the left side",
+						because,
+					)
 				} else if tri == triFalse {
-					l.reportRedundantSubexpr(expr.Y, "right side of || is always false after the left side", because)
+					l.reportRedundantSubexpr(
+						expr.Y,
+						"right side of || is always false after the left side",
+						because,
+					)
 				}
+
 				l.checkBooleanSubexpressions(leftFalse, expr.Y)
 			}
 		}
@@ -1090,10 +1351,15 @@ func (l *linter) checkBooleanSubexpressions(states []state, expr ast.Expr) {
 }
 
 func (l *linter) reportCondition(expr ast.Expr, alwaysTrue bool, because *evidence) {
-	msg := fmt.Sprintf("condition %q is always %s here", l.render(expr), map[bool]string{true: "true", false: "false"}[alwaysTrue])
+	msg := fmt.Sprintf(
+		"condition %q is always %s here",
+		l.render(expr),
+		map[bool]string{true: boolTrueText, false: boolFalseText}[alwaysTrue],
+	)
 	if because != nil {
 		msg += "; " + l.becauseText(*because)
 	}
+
 	l.report(expr.Pos(), msg)
 }
 
@@ -1102,6 +1368,7 @@ func (l *linter) reportCase(clause *ast.CaseClause, because *evidence) {
 	if because != nil {
 		msg += "; " + l.becauseText(*because)
 	}
+
 	l.report(clause.Case, msg)
 }
 
@@ -1110,36 +1377,48 @@ func (l *linter) reportRedundantSubexpr(expr ast.Expr, headline string, because 
 	if because != nil {
 		msg += "; " + l.becauseText(*because)
 	}
+
 	l.report(expr.Pos(), msg)
 }
 
 func (l *linter) becauseText(ev evidence) string {
 	pos := l.pkg.FSet.Position(ev.pos)
 	if pos.IsValid() {
-		return fmt.Sprintf("reachable paths already establish %q at %s:%d", ev.text, pos.Filename, pos.Line)
+		return fmt.Sprintf(
+			"reachable paths already establish %q at %s:%d",
+			ev.text,
+			pos.Filename,
+			pos.Line,
+		)
 	}
+
 	return fmt.Sprintf("reachable paths already establish %q", ev.text)
 }
 
 func (l *linter) report(pos token.Pos, msg string) {
 	p := l.pkg.FSet.Position(pos)
+
 	key := fmt.Sprintf("%s:%d:%d:%s", p.Filename, p.Line, p.Column, msg)
 	if _, dup := l.reported[key]; dup {
 		return
 	}
+
 	l.reported[key] = struct{}{}
-	l.issues = append(l.issues, Issue{Pos: p, Message: msg})
+	l.issues = append(l.issues, Issue{Pos: pos, Message: msg})
 }
 
 func (l *linter) render(node ast.Node) string {
 	if node == nil {
 		return ""
 	}
+
 	if s, ok := l.renderCache[node]; ok {
 		return s
 	}
+
 	s := renderNode(l.pkg.FSet, node)
 	l.renderCache[node] = s
+
 	return s
 }
 
@@ -1147,10 +1426,12 @@ func (l *linter) renderCaseClauseHeader(clause *ast.CaseClause) string {
 	if len(clause.List) == 0 {
 		return "default"
 	}
+
 	parts := make([]string, 0, len(clause.List))
 	for _, expr := range clause.List {
 		parts = append(parts, l.render(expr))
 	}
+
 	return strings.Join(parts, ", ")
 }
 
@@ -1163,10 +1444,12 @@ func (l *linter) symbolScalar(symExpr, scalarExpr ast.Expr) (symbol, scalar, boo
 	if !ok {
 		return symbol{}, scalar{}, false
 	}
+
 	value, ok := l.scalarOf(scalarExpr)
 	if !ok {
 		return symbol{}, scalar{}, false
 	}
+
 	return sym, value, true
 }
 
@@ -1175,14 +1458,17 @@ func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
 	if id, ok := expr.(*ast.Ident); ok && id.Name == "nil" {
 		return scalar{kind: scalarNil, text: "nil"}, true
 	}
+
 	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok {
 		if tv.Value != nil {
 			return scalarFromConstantValue(tv.Value)
 		}
+
 		if tv.IsNil() {
 			return scalar{kind: scalarNil, text: "nil"}, true
 		}
 	}
+
 	return scalar{}, false
 }
 
@@ -1194,19 +1480,23 @@ func (l *linter) symbolOf(expr ast.Expr) (symbol, bool) {
 		if obj == nil {
 			return symbol{}, false
 		}
+
 		if _, ok := obj.(*types.Var); !ok {
 			return symbol{}, false
 		}
+
 		return symbolForObject(obj), true
 	case *ast.SelectorExpr:
 		sel := l.pkg.TypesInfo.Selections[expr]
 		if sel == nil || sel.Kind() != types.FieldVal {
 			return symbol{}, false
 		}
+
 		base, ok := l.symbolOf(expr.X)
 		if !ok {
 			return symbol{}, false
 		}
+
 		return base.child(expr.Sel.Name, sel.Type()), true
 	default:
 		return symbol{}, false
@@ -1219,6 +1509,7 @@ func (l *linter) unparen(expr ast.Expr) ast.Expr {
 		if !ok {
 			return expr
 		}
+
 		expr = p.X
 	}
 }

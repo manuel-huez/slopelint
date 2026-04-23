@@ -61,6 +61,61 @@ func f(r *Req) {
 	}
 }
 
+func TestSyncOnceClosureWriteInvalidatesLocalFact(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "sync"
+
+func f() {
+	sendStop := false
+	var once sync.Once
+	once.Do(func() {
+		sendStop = true
+	})
+	if sendStop { println("ok") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `condition "sendStop" is always false here`) {
+		t.Fatalf("sync.Once closure write should invalidate local bool fact, got:\n%s", joined)
+	}
+}
+
+func TestGoFuncClosureWriteInvalidatesOuterFact(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "sync"
+
+func f() {
+	ready := false
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		once.Do(func() {
+			ready = true
+		})
+		close(done)
+	}()
+	<-done
+	if ready { println("ok") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `condition "ready" is always false here`) {
+		t.Fatalf("goroutine closure write should invalidate outer bool fact, got:\n%s", joined)
+	}
+}
+
 func TestDetectsUnreachableSwitchCases(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

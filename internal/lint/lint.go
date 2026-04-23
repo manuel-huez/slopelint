@@ -1036,6 +1036,44 @@ func (l *linter) invalidateForCall(states []state, call *ast.CallExpr) []state {
 	return l.normalizeStates(out)
 }
 
+func (l *linter) invalidateForFuncLitEffectsOne(st state, lit *ast.FuncLit) state {
+	if lit == nil || lit.Body == nil {
+		return st
+	}
+
+	out := st.clone()
+
+	ast.Inspect(lit.Body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.AssignStmt:
+			for _, lhs := range n.Lhs {
+				l.invalidateLHS(&out, lhs)
+			}
+		case *ast.IncDecStmt:
+			l.invalidateLHS(&out, n.X)
+		case *ast.RangeStmt:
+			if n.Key != nil {
+				l.invalidateLHS(&out, n.Key)
+			}
+
+			if n.Value != nil {
+				l.invalidateLHS(&out, n.Value)
+			}
+		case *ast.CallExpr:
+			out = l.invalidateForCallOne(out, n)
+		case *ast.SendStmt:
+			out = l.invalidateForExprSideEffectsOne(out, n.Chan)
+			out = l.invalidateForExprSideEffectsOne(out, n.Value)
+		}
+
+		return true
+	})
+
+	return out
+}
+
 //nolint:cyclop,gocognit // Side-effect invalidation must branch by call shape and argument semantics.
 func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 	if tv, ok := l.pkg.TypesInfo.Types[call.Fun]; ok && tv.IsType() {
@@ -1054,6 +1092,10 @@ func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 		}
 	}
 
+	if lit, ok := l.unparen(call.Fun).(*ast.FuncLit); ok {
+		out = l.invalidateForFuncLitEffectsOne(out, lit)
+	}
+
 	if sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr); ok {
 		if s := l.pkg.TypesInfo.Selections[sel]; s != nil {
 			if s.Kind() == types.MethodVal && isPointerLike(s.Recv()) {
@@ -1063,6 +1105,11 @@ func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 	}
 
 	for _, arg := range call.Args {
+		if lit, ok := l.unparen(arg).(*ast.FuncLit); ok {
+			out = l.invalidateForFuncLitEffectsOne(out, lit)
+			continue
+		}
+
 		if u, ok := l.unparen(arg).(*ast.UnaryExpr); ok && u.Op == token.AND {
 			addFull(u.X)
 			continue

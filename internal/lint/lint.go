@@ -22,17 +22,7 @@ type Options struct {
 
 // LintPackage runs the analyzer on one loaded package.
 func LintPackage(pkg *LoadedPackage, opts Options) []Issue {
-	if opts.MaxStates <= 0 {
-		opts.MaxStates = 32
-	}
-
-	l := &linter{
-		pkg:         pkg,
-		maxStates:   opts.MaxStates,
-		reported:    make(map[string]struct{}),
-		issues:      make([]Issue, 0),
-		renderCache: make(map[ast.Node]string),
-	}
+	l := newLinter(pkg, opts)
 	l.run()
 	sortIssues(pkg.FSet, l.issues)
 
@@ -40,23 +30,87 @@ func LintPackage(pkg *LoadedPackage, opts Options) []Issue {
 }
 
 type linter struct {
-	pkg         *LoadedPackage
-	maxStates   int
-	issues      []Issue
-	reported    map[string]struct{}
-	renderCache map[ast.Node]string
-	contracts   map[string][]guardContract
+	pkg             *LoadedPackage
+	maxStates       int
+	issues          []Issue
+	reported        map[string]struct{}
+	renderCache     map[ast.Node]string
+	explicitFacts   map[string][]guardContract
+	inferredFacts   map[string]callSummary
+	externalSummary func(*types.Func) (callSummary, bool)
 }
 
 type flowResult struct {
 	next      []state
 	breaks    []state
 	continues []state
+	returns   []returnState
+}
+
+type returnKind uint8
+
+const (
+	returnUnspecified returnKind = iota
+	returnBoolTrue
+	returnBoolFalse
+	returnNil
+	returnNonNil
+)
+
+type returnState struct {
+	state state
+	kinds map[int]returnKind
+}
+
+func newLinter(pkg *LoadedPackage, opts Options) *linter {
+	if opts.MaxStates <= 0 {
+		opts.MaxStates = 32
+	}
+
+	return &linter{
+		pkg:           pkg,
+		maxStates:     opts.MaxStates,
+		reported:      make(map[string]struct{}),
+		issues:        make([]Issue, 0),
+		renderCache:   make(map[ast.Node]string),
+		explicitFacts: make(map[string][]guardContract),
+		inferredFacts: make(map[string]callSummary),
+	}
+}
+
+func (ret returnState) kindAt(index int) returnKind {
+	if ret.kinds == nil {
+		return returnUnspecified
+	}
+
+	kind, ok := ret.kinds[index]
+	if !ok {
+		return returnUnspecified
+	}
+
+	return kind
+}
+
+func cloneReturnKinds(in map[int]returnKind) map[int]returnKind {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[int]returnKind, len(in))
+	for index, kind := range in {
+		out[index] = kind
+	}
+
+	return out
 }
 
 func (l *linter) run() {
 	l.collectContracts()
+	l.inferCallSummaries()
+	l.analyzeFiles()
+}
 
+func (l *linter) analyzeFiles() {
 	for _, file := range l.pkg.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch fn := n.(type) {
@@ -119,6 +173,7 @@ func (l *linter) execBlock(stmts []ast.Stmt, states []state) flowResult {
 		res.next = step.next
 		res.breaks = append(res.breaks, step.breaks...)
 		res.continues = append(res.continues, step.continues...)
+		res.returns = append(res.returns, step.returns...)
 	}
 
 	res.next = l.normalizeStates(res.next)
@@ -148,7 +203,7 @@ func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 	case *ast.IncDecStmt:
 		return flowResult{next: l.execIncDecStmt(stmt, states)}
 	case *ast.ReturnStmt:
-		return flowResult{}
+		return l.execReturnStmt(stmt, states)
 	case *ast.BranchStmt:
 		//exhaustive:ignore token.Token includes many non-branch values irrelevant here.
 		switch stmt.Tok {
@@ -184,11 +239,45 @@ func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 }
 
 func (l *linter) execExprStmt(stmt *ast.ExprStmt, states []state) []state {
+	if call, ok := l.unparen(stmt.X).(*ast.CallExpr); ok && l.callNeverReturns(call) {
+		l.invalidateForExprSideEffects(states, stmt.X)
+		return nil
+	}
+
 	return l.invalidateForExprSideEffects(states, stmt.X)
 }
 
 func (l *linter) execGoStmt(stmt *ast.GoStmt, states []state) []state {
 	return l.invalidateForCall(states, stmt.Call)
+}
+
+func (l *linter) callNeverReturns(call *ast.CallExpr) bool {
+	id, ok := l.unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return false
+	}
+
+	obj, ok := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin)
+	if !ok || obj == nil {
+		return false
+	}
+
+	return obj.Name() == "panic"
+}
+
+func (l *linter) execReturnStmt(stmt *ast.ReturnStmt, states []state) flowResult {
+	out := make([]returnState, 0, len(states))
+	for _, st0 := range states {
+		st := st0
+		for _, result := range stmt.Results {
+			st = l.invalidateForExprSideEffectsOne(st, result)
+		}
+
+		returns := l.classifyReturnStates(st, stmt.Results)
+		out = append(out, returns...)
+	}
+
+	return flowResult{returns: out}
 }
 
 func (l *linter) execSendStmt(stmt *ast.SendStmt, states []state) []state {
@@ -230,6 +319,16 @@ func (l *linter) execDeclStmt(stmt *ast.DeclStmt, states []state) []state {
 				st = l.invalidateForExprSideEffectsOne(st, value)
 			}
 
+			if call, ok := l.singleCall(vs.Values); ok {
+				next, ok := l.applyCallEffects(st, call)
+				if !ok {
+					continue
+				}
+
+				st = next
+				l.bindCallResultsToIdents(&st, call, vs.Names)
+			}
+
 			for idx, name := range vs.Names {
 				if name.Name == "_" {
 					continue
@@ -266,6 +365,55 @@ func (l *linter) execDeclStmt(stmt *ast.DeclStmt, states []state) []state {
 	return l.normalizeStates(out)
 }
 
+func (l *linter) singleCall(exprs []ast.Expr) (*ast.CallExpr, bool) {
+	if len(exprs) != 1 {
+		return nil, false
+	}
+
+	call, ok := l.unparen(exprs[0]).(*ast.CallExpr)
+	if !ok {
+		return nil, false
+	}
+
+	return call, true
+}
+
+func (l *linter) applyCallEffects(st state, call *ast.CallExpr) (state, bool) {
+	nextStates := l.applySummaryContracts(st, call, l.summaryForCall(call).always)
+	if len(nextStates) == 0 {
+		return state{}, false
+	}
+
+	return nextStates[0], true
+}
+
+func (l *linter) bindCallResultsToExprs(st *state, call *ast.CallExpr, exprs []ast.Expr) {
+	for idx, expr := range exprs {
+		sym, ok := l.symbolOf(expr)
+		if !ok {
+			continue
+		}
+
+		if binding, ok := l.instantiateBindingForCall(call, idx); ok {
+			st.bindings[sym.key] = binding
+		}
+	}
+}
+
+func (l *linter) bindCallResultsToIdents(st *state, call *ast.CallExpr, names []*ast.Ident) {
+	for idx, name := range names {
+		sym, ok := l.symbolOf(name)
+		if !ok {
+			continue
+		}
+
+		if binding, ok := l.instantiateBindingForCall(call, idx); ok {
+			st.bindings[sym.key] = binding
+		}
+	}
+}
+
+//nolint:cyclop,gocognit // Assignment flow needs explicit invalidation and tuple handling for precision.
 func (l *linter) execAssignStmt(stmt *ast.AssignStmt, states []state) []state {
 	out := make([]state, 0, len(states))
 	for _, st0 := range states {
@@ -276,6 +424,16 @@ func (l *linter) execAssignStmt(stmt *ast.AssignStmt, states []state) []state {
 
 		for _, lhs := range stmt.Lhs {
 			l.invalidateLHS(&st, lhs)
+		}
+
+		if call, ok := l.singleCall(stmt.Rhs); ok {
+			next, ok := l.applyCallEffects(st, call)
+			if !ok {
+				continue
+			}
+
+			st = next
+			l.bindCallResultsToExprs(&st, call, stmt.Lhs)
 		}
 
 		if len(stmt.Lhs) == len(stmt.Rhs) {
@@ -298,6 +456,11 @@ func (l *linter) execAssignStmt(stmt *ast.AssignStmt, states []state) []state {
 func (l *linter) assignValue(dst state, lhs symbol, rhs ast.Expr, rhsState state) state {
 	if rhsSym, ok := l.valueSymbolOf(rhs); ok {
 		l.copyFacts(&dst, lhs, rhsSym, rhsState)
+
+		if binding, ok := rhsState.bindings[rhsSym.key]; ok {
+			dst.bindings[lhs.key] = binding.clone()
+		}
+
 		return linkAlias(dst, lhs.key, rhsSym.key)
 	}
 
@@ -351,6 +514,7 @@ func (l *linter) execIfStmt(stmt *ast.IfStmt, states []state) flowResult {
 		next:      l.normalizeStates(append(thenRes.next, elseRes.next...)),
 		breaks:    l.normalizeStates(append(thenRes.breaks, elseRes.breaks...)),
 		continues: l.normalizeStates(append(thenRes.continues, elseRes.continues...)),
+		returns:   append(thenRes.returns, elseRes.returns...),
 	}
 }
 
@@ -410,7 +574,7 @@ func (l *linter) execForStmt(stmt *ast.ForStmt, states []state) flowResult {
 		afterLoop = append(afterLoop, l.refineStates(widened, stmt.Cond, false)...)
 	}
 
-	return flowResult{next: l.normalizeStates(afterLoop)}
+	return flowResult{next: l.normalizeStates(afterLoop), returns: bodyRes.returns}
 }
 
 func (l *linter) execRangeStmt(stmt *ast.RangeStmt, states []state) flowResult {
@@ -439,6 +603,7 @@ func (l *linter) execRangeStmt(stmt *ast.RangeStmt, states []state) flowResult {
 	return flowResult{
 		next:      l.normalizeStates(out),
 		continues: l.normalizeStates(bodyRes.continues),
+		returns:   bodyRes.returns,
 	}
 }
 
@@ -455,6 +620,7 @@ func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult
 	remaining := states
 	out := make([]state, 0)
 	conts := make([]state, 0)
+	returns := make([]returnState, 0)
 	defaultSeen := false
 
 	for _, raw := range stmt.Body.List {
@@ -490,13 +656,18 @@ func (l *linter) execSwitchStmt(stmt *ast.SwitchStmt, states []state) flowResult
 		out = append(out, caseRes.next...)
 		out = append(out, caseRes.breaks...)
 		conts = append(conts, caseRes.continues...)
+		returns = append(returns, caseRes.returns...)
 	}
 
 	if !defaultSeen {
 		out = append(out, remaining...)
 	}
 
-	return flowResult{next: l.normalizeStates(out), continues: l.normalizeStates(conts)}
+	return flowResult{
+		next:      l.normalizeStates(out),
+		continues: l.normalizeStates(conts),
+		returns:   returns,
+	}
 }
 
 func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) flowResult {
@@ -515,6 +686,7 @@ func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) fl
 
 	out := make([]state, 0)
 	conts := make([]state, 0)
+	returns := make([]returnState, 0)
 	defaultSeen := false
 
 	for _, raw := range stmt.Body.List {
@@ -527,6 +699,7 @@ func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) fl
 		out = append(out, caseRes.next...)
 		out = append(out, caseRes.breaks...)
 		conts = append(conts, caseRes.continues...)
+		returns = append(returns, caseRes.returns...)
 	}
 
 	if !defaultSeen {
@@ -536,6 +709,7 @@ func (l *linter) execTypeSwitchStmt(stmt *ast.TypeSwitchStmt, states []state) fl
 	return flowResult{
 		next:      l.normalizeStates(out),
 		continues: l.normalizeStates(conts),
+		returns:   returns,
 	}
 }
 
@@ -547,6 +721,7 @@ func (l *linter) execSelectStmt(stmt *ast.SelectStmt, states []state) flowResult
 
 	out := make([]state, 0)
 	conts := make([]state, 0)
+	returns := make([]returnState, 0)
 
 	for _, raw := range stmt.Body.List {
 		clause := raw.(*ast.CommClause)
@@ -560,11 +735,13 @@ func (l *linter) execSelectStmt(stmt *ast.SelectStmt, states []state) flowResult
 		out = append(out, caseRes.next...)
 		out = append(out, caseRes.breaks...)
 		conts = append(conts, caseRes.continues...)
+		returns = append(returns, caseRes.returns...)
 	}
 
 	return flowResult{
 		next:      l.normalizeStates(out),
 		continues: l.normalizeStates(conts),
+		returns:   returns,
 	}
 }
 
@@ -587,6 +764,7 @@ func (l *linter) invalidatePrefix(st *state, prefix string) {
 	}
 
 	removeAliasPrefix(st, prefix, false)
+	removeBindingsForPrefix(st, prefix)
 }
 
 func (l *linter) invalidateDescendants(st *state, prefix string) {
@@ -597,6 +775,7 @@ func (l *linter) invalidateDescendants(st *state, prefix string) {
 	}
 
 	removeAliasPrefix(st, prefix, true)
+	removeBindingsForPrefix(st, prefix)
 }
 
 func (l *linter) wipeFacts(states []state) []state {
@@ -701,7 +880,9 @@ func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 		}
 	}
 
-	nextStates := l.applyCallContracts(out, call)
+	summary := l.summaryForCall(call)
+
+	nextStates := l.applySummaryContracts(out, call, summary.always)
 	if len(nextStates) == 0 {
 		return newState()
 	}
@@ -789,6 +970,7 @@ func (l *linter) mergeStates(states []state) state {
 	}
 
 	out.aliases = intersectAliases(states)
+	out.bindings = l.intersectBindings(states)
 
 	return out
 }
@@ -812,6 +994,37 @@ func (l *linter) joinFacts(a, b fact) fact {
 		if len(out.not) == 0 {
 			out.not = nil
 		}
+	}
+
+	return out
+}
+
+func (l *linter) intersectBindings(states []state) map[string]resultBinding {
+	if len(states) == 0 {
+		return nil
+	}
+
+	out := make(map[string]resultBinding)
+
+	for key, binding := range states[0].bindings {
+		hash := bindingHash(binding)
+		same := true
+
+		for i := 1; i < len(states); i++ {
+			other, ok := states[i].bindings[key]
+			if !ok || bindingHash(other) != hash {
+				same = false
+				break
+			}
+		}
+
+		if same {
+			out[key] = binding.clone()
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
 	}
 
 	return out
@@ -1106,6 +1319,10 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 		if expr.Op == token.NOT {
 			return l.refineState(st, expr.X, !wantTrue)
 		}
+	case *ast.CallExpr:
+		if next, ok := l.refineCallExpr(st, expr, wantTrue); ok {
+			return next
+		}
 	case *ast.BinaryExpr:
 		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
 		switch expr.Op {
@@ -1132,6 +1349,10 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 
 			return l.normalizeStates(out)
 		case token.EQL:
+			if next, ok := l.refineCallScalar(st, expr.X, expr.Y, wantTrue); ok {
+				return next
+			}
+
 			if sym, scalar, ok := l.symbolScalar(expr.X, expr.Y); ok {
 				return l.refineSymbolScalar(st, sym, scalar, wantTrue, expr.Pos())
 			}
@@ -1140,6 +1361,10 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 				return l.refineSymbolScalar(st, sym, scalar, wantTrue, expr.Pos())
 			}
 		case token.NEQ:
+			if next, ok := l.refineCallScalar(st, expr.X, expr.Y, !wantTrue); ok {
+				return next
+			}
+
 			if sym, scalar, ok := l.symbolScalar(expr.X, expr.Y); ok {
 				return l.refineSymbolScalar(st, sym, scalar, !wantTrue, expr.Pos())
 			}
@@ -1180,7 +1405,10 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 				return nil
 			}
 
-			return []state{next}
+			return l.applyBindingCondition(next, sym, map[bool]returnKind{
+				true:  returnBoolTrue,
+				false: returnBoolFalse,
+			}[wantTrue])
 		}
 	}
 
@@ -1245,7 +1473,7 @@ func (l *linter) refineSymbolScalar(
 			return nil
 		}
 
-		return []state{next}
+		return l.applyBindingForScalar(next, sym, value, true)
 	}
 
 	next, ok := l.addNot(st, sym, value, evidence{pos: pos, text: l.relationText(sym, "!=", value)})
@@ -1253,7 +1481,7 @@ func (l *linter) refineSymbolScalar(
 		return nil
 	}
 
-	return []state{next}
+	return l.applyBindingForScalar(next, sym, value, false)
 }
 
 func (l *linter) setExact(st state, sym symbol, value scalar, why evidence) (state, bool) {
@@ -1699,16 +1927,20 @@ func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {
 		return symbol{}, false
 	}
 
-	return symbol{
-		key:  base.key + "|#len",
-		root: base.root,
-		name: "len(" + l.render(call.Args[0]) + ")",
-		typ:  types.Typ[types.Int],
-	}, true
+	return lenSymbolForBase(base), true
 }
 
 func isLenSymbol(sym symbol) bool {
 	return strings.HasSuffix(sym.key, "|#len")
+}
+
+func lenSymbolForBase(base symbol) symbol {
+	return symbol{
+		key:  base.key + "|" + lenPathSegment,
+		root: base.root,
+		name: "len(" + base.name + ")",
+		typ:  types.Typ[types.Int],
+	}
 }
 
 func scalarIntValue(value scalar) (int64, bool) {

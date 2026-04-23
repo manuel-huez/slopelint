@@ -93,21 +93,24 @@ func (f fact) empty() bool {
 }
 
 type state struct {
-	facts   map[string]fact
-	aliases map[string]map[string]struct{}
+	facts    map[string]fact
+	aliases  map[string]map[string]struct{}
+	bindings map[string]resultBinding
 }
 
 func newState() state {
 	return state{
-		facts:   make(map[string]fact),
-		aliases: make(map[string]map[string]struct{}),
+		facts:    make(map[string]fact),
+		aliases:  make(map[string]map[string]struct{}),
+		bindings: make(map[string]resultBinding),
 	}
 }
 
 func (s state) clone() state {
 	out := state{
-		facts:   make(map[string]fact, len(s.facts)),
-		aliases: make(map[string]map[string]struct{}, len(s.aliases)),
+		facts:    make(map[string]fact, len(s.facts)),
+		aliases:  make(map[string]map[string]struct{}, len(s.aliases)),
+		bindings: make(map[string]resultBinding, len(s.bindings)),
 	}
 	for k, v := range s.facts {
 		out.facts[k] = v.clone()
@@ -120,6 +123,10 @@ func (s state) clone() state {
 		}
 
 		out.aliases[key] = outPeers
+	}
+
+	for key, binding := range s.bindings {
+		out.bindings[key] = binding.clone()
 	}
 
 	return out
@@ -139,6 +146,17 @@ func (s state) hash() string {
 
 		for _, edge := range sortedAliasEdges(s.aliases) {
 			b.WriteString(edge)
+			b.WriteByte(';')
+		}
+	}
+
+	if len(s.bindings) != 0 {
+		b.WriteByte('|')
+
+		for _, key := range sortedBindingKeys(s.bindings) {
+			b.WriteString(key)
+			b.WriteByte(':')
+			b.WriteString(bindingHash(s.bindings[key]))
 			b.WriteByte(';')
 		}
 	}

@@ -1,7 +1,6 @@
 package defenselint
 
 import (
-	"path/filepath"
 	"reflect"
 
 	"example.com/defenselint/internal/lint"
@@ -18,6 +17,7 @@ var maxStates = defaultMaxStates
 var Analyzer = &analysis.Analyzer{
 	Name:       "defenselint",
 	Doc:        "report defensive checks that are already impossible or guaranteed",
+	FactTypes:  lint.AnalysisFactTypes(),
 	Run:        run,
 	ResultType: reflect.TypeFor[analysisResult](),
 }
@@ -32,17 +32,12 @@ func init() {
 }
 
 func run(pass *analysis.Pass) (any, error) {
-	pkg := &lint.LoadedPackage{
-		ImportPath: pass.Pkg.Path(),
-		Name:       pass.Pkg.Name(),
-		Dir:        packageDir(pass),
-		FSet:       pass.Fset,
-		Files:      pass.Files,
-		TypesPkg:   pass.Pkg,
-		TypesInfo:  pass.TypesInfo,
+	issues, err := lint.RunAnalysis(pass, lint.Options{MaxStates: maxStates})
+	if err != nil {
+		return nil, err
 	}
 
-	for _, issue := range lint.LintPackage(pkg, lint.Options{MaxStates: maxStates}) {
+	for _, issue := range issues {
 		pass.Report(analysis.Diagnostic{
 			Pos:      issue.Pos,
 			Message:  issue.Message,
@@ -51,15 +46,4 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	return analysisResult{}, nil
-}
-
-func packageDir(pass *analysis.Pass) string {
-	for _, file := range pass.Files {
-		pos := pass.Fset.Position(file.Package)
-		if pos.Filename != "" {
-			return filepath.Dir(pos.Filename)
-		}
-	}
-
-	return ""
 }

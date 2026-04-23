@@ -12,7 +12,7 @@ AI-generated Go code, for example:
 - switch cases that can no longer match on the current path
 - redundant right-hand sides of `&&` and `||` expressions
 - struct-field checks that are already filtered by earlier conditions
-- post-guard defensive checks after helper calls with explicit contracts
+- post-guard defensive checks after helper calls, including same-repo package boundaries
 
 ## What it does
 
@@ -28,6 +28,41 @@ small fact set for local variables and selector chains such as:
 It also preserves equivalence across simple copies such as `name := req.Name`, so a
 later guard on `name` can still make a repeated `req.Name` check redundant.
 
+For helper calls, the analyzer now infers summaries automatically. That lets
+facts flow across call boundaries, through result variables, and across
+same-repo package boundaries for patterns such as:
+
+```go
+func valid(req *Req) bool {
+    if req == nil { return false }
+    if req.Name == "" { return false }
+    return true
+}
+
+func handle(req *Req) {
+    if !valid(req) { return }
+    if req == nil { println("redundant") }    // reported
+    if req.Name == "" { println("redundant") } // reported
+}
+```
+
+It also handles result-variable flow:
+
+```go
+func check(req *Req) error {
+    if req == nil { return errors.New("bad") }
+    if req.Name == "" { return errors.New("bad") }
+    return nil
+}
+
+func handle(req *Req) {
+    err := check(req)
+    if err != nil { return }
+    if req == nil { println("redundant") }    // reported
+    if req.Name == "" { println("redundant") } // reported
+}
+```
+
 For helper-style guard functions, you can add opt-in contracts in doc comments:
 
 ```go
@@ -38,6 +73,9 @@ func requireReq(req *Req) {}
 
 After `requireReq(req)`, the analyzer will treat those facts as established on the
 reachable return path.
+
+Contracts are now optional. They are mainly useful for helpers whose bodies are not
+available to the analyzer or for making intended guarantees explicit.
 
 When later control flow contradicts or duplicates those facts, it reports the
 condition.
@@ -86,6 +124,9 @@ cause the most noisy defensive code:
 - path-sensitive `if` handling
 - expression switches
 - statement-local `select` and `type switch` fallback
+- automatic call summaries for helper functions and boolean predicates
+- same-repo cross-package summary import/export via `go/analysis` object facts
+- result-variable propagation for boolean and nil/error-style helpers
 - single-pass loop analysis with widening
 - copy propagation for simple assignments like `name := req.Name`
 - alias-aware fact propagation for simple symbol copies

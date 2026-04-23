@@ -29,7 +29,9 @@ type contractBinding struct {
 }
 
 func (l *linter) collectContracts() {
-	l.contracts = make(map[string][]guardContract)
+	if l.explicitFacts == nil {
+		l.explicitFacts = make(map[string][]guardContract)
+	}
 
 	for _, file := range l.pkg.Files {
 		for _, decl := range file.Decls {
@@ -38,7 +40,7 @@ func (l *linter) collectContracts() {
 				continue
 			}
 
-			obj, ok := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
+			obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
 			if !ok || obj == nil {
 				continue
 			}
@@ -56,7 +58,7 @@ func (l *linter) collectContracts() {
 					continue
 				}
 
-				l.contracts[key] = append(l.contracts[key], contract)
+				l.explicitFacts[key] = append(l.explicitFacts[key], contract)
 			}
 		}
 	}
@@ -185,63 +187,14 @@ func parseContractScalar(text string) (scalar, bool) {
 }
 
 func funcObjectKey(obj *types.Func) string {
+	obj = obj.Origin()
+
 	pkgPath := ""
 	if obj.Pkg() != nil {
 		pkgPath = obj.Pkg().Path()
 	}
 
-	return fmt.Sprintf("%s:%s:%d", pkgPath, obj.Name(), obj.Pos())
-}
-
-func (l *linter) applyCallContracts(st state, call *ast.CallExpr) []state {
-	key, ok := l.calledFuncKey(call)
-	if !ok {
-		return []state{st}
-	}
-
-	contracts := l.contracts[key]
-	if len(contracts) == 0 {
-		return []state{st}
-	}
-
-	current := []state{st}
-	for _, contract := range contracts {
-		nextStates := make([]state, 0, len(current))
-		for _, currentState := range current {
-			sym, ok := l.symbolForContractTarget(call, contract.target)
-			if !ok {
-				nextStates = append(nextStates, currentState)
-				continue
-			}
-
-			ev := evidence{
-				pos:  call.Pos(),
-				text: l.contractEvidenceText(sym, contract, call),
-			}
-
-			var (
-				next state
-				ok2  bool
-			)
-
-			if contract.wantEq {
-				next, ok2 = l.setExact(currentState, sym, contract.value, ev)
-			} else {
-				next, ok2 = l.addNot(currentState, sym, contract.value, ev)
-			}
-
-			if ok2 {
-				nextStates = append(nextStates, next)
-			}
-		}
-
-		current = l.normalizeStates(nextStates)
-		if len(current) == 0 {
-			return nil
-		}
-	}
-
-	return current
+	return pkgPath + "|" + obj.FullName()
 }
 
 func (l *linter) contractEvidenceText(
@@ -263,30 +216,30 @@ func (l *linter) contractEvidenceText(
 	)
 }
 
-func (l *linter) calledFuncKey(call *ast.CallExpr) (string, bool) {
+func (l *linter) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
 	switch fun := l.unparen(call.Fun).(type) {
 	case *ast.Ident:
 		obj, ok := l.pkg.TypesInfo.ObjectOf(fun).(*types.Func)
 		if !ok || obj == nil {
-			return "", false
+			return nil, "", false
 		}
 
-		return funcObjectKey(obj), true
+		return obj, funcObjectKey(obj), true
 	case *ast.SelectorExpr:
 		if sel := l.pkg.TypesInfo.Selections[fun]; sel != nil {
 			if obj, ok := sel.Obj().(*types.Func); ok && obj != nil {
-				return funcObjectKey(obj), true
+				return obj, funcObjectKey(obj), true
 			}
 		}
 
 		obj, ok := l.pkg.TypesInfo.ObjectOf(fun.Sel).(*types.Func)
 		if !ok || obj == nil {
-			return "", false
+			return nil, "", false
 		}
 
-		return funcObjectKey(obj), true
+		return obj, funcObjectKey(obj), true
 	default:
-		return "", false
+		return nil, "", false
 	}
 }
 
@@ -318,7 +271,13 @@ func (l *linter) symbolForContractTarget(call *ast.CallExpr, target contractTarg
 
 func (l *linter) symbolForPath(base symbol, path []string) (symbol, bool) {
 	current := base
+
 	for _, field := range path {
+		if field == lenPathSegment {
+			current = lenSymbolForBase(current)
+			continue
+		}
+
 		fieldType, ok := l.lookupFieldType(current.typ, field)
 		if !ok {
 			return symbol{}, false

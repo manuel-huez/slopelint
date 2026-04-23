@@ -5,15 +5,20 @@ rule backlog for `slopelint`.
 
 Current status in this worktree:
 
-- shipped: `redundant_post_success_check`
-- shipped: `redundant_bool_return`
-- shipped: `identical_branch_body`
-- shipped: `exhaustive_defensive_default` for exhaustive `bool` switches
-- shipped: `single_use_temp_alias` for immediate one-read cheap aliases
-- experimental: `trivial_forwarder` for docless same-package private wrappers
-  with one production callsite
-- experimental: `restatement_comment` for one-line private declaration docs that
-  only restate identifier words
+- proof lane shipped: `redundant_post_success_check`
+- proof lane shipped: `redundant_bool_return`
+- proof lane shipped: `identical_branch_body` for `if` / `else` and adjacent
+  `switch` arms with identical bodies
+- proof lane shipped: `exhaustive_defensive_default` for exhaustive `bool`
+  switches
+- proof lane shipped: `single_use_temp_alias` for immediate one-read cheap
+  aliases
+- smell lane experimental: `trivial_forwarder` for docless same-package private
+  wrappers with one production callsite
+- smell lane experimental: `restatement_comment` for one-line private
+  declaration docs that only restate identifier words
+- next backlog: `duplicate_validation_ladder`, `single_use_private_helper`,
+  broader exhaustive-default support for closed const sets
 
 ## Rule lanes
 
@@ -26,12 +31,13 @@ Ship rules in two lanes:
 
 ## Priorities
 
-### P0: ship first
+### P0: proof rules already delivered
 
-These fit `slopelint`'s current model and should stay low-noise.
+These are implemented and enabled by default.
 
 #### `redundant_post_success_check`
 
+- Status: shipped
 - Lane: `proof`
 - Goal: flag repeated checks after helper success already guarantees the same
   fact.
@@ -47,6 +53,7 @@ These fit `slopelint`'s current model and should stay low-noise.
 
 #### `redundant_bool_return`
 
+- Status: shipped
 - Lane: `proof`
 - Goal: flag bool-return ceremony such as:
   - `if cond { return true }; return false`
@@ -60,12 +67,13 @@ These fit `slopelint`'s current model and should stay low-noise.
 
 #### `identical_branch_body`
 
+- Status: shipped
 - Lane: `proof`
 - Goal: flag `if`/`else` or `switch` branches that do the same thing.
 - Examples:
   - both branches `return nil`
   - both branches call same function with same args
-  - all remaining `switch` arms return same value
+  - adjacent `switch` arms return same value
 - Why: this is high-signal dead structure; AI often keeps stale branch shells.
 - Guardrails:
   - require exact AST equivalence after stripping formatting noise
@@ -75,6 +83,8 @@ These fit `slopelint`'s current model and should stay low-noise.
 
 #### `exhaustive_defensive_default`
 
+- Status: shipped for exhaustive `bool` switches; planned extension for named
+  types with closed in-package const sets
 - Lane: `proof`
 - Goal: flag `default` arms kept "for safety" when switch is already exhaustive.
 - Examples:
@@ -91,10 +101,12 @@ These fit `slopelint`'s current model and should stay low-noise.
 
 ### P1: structural simplifiers
 
-These are still useful, but need stronger repo-local evidence.
+Mixed state: one proof rule shipped, one smell rule experimental, remaining
+items still need stronger repo-local evidence.
 
 #### `single_use_temp_alias`
 
+- Status: shipped
 - Lane: `proof`
 - Goal: flag locals that only rename a cheap expression one time.
 - Examples:
@@ -110,6 +122,7 @@ These are still useful, but need stronger repo-local evidence.
 
 #### `single_use_private_helper`
 
+- Status: planned
 - Lane: `smell`
 - Goal: flag unexported helpers with one callsite and tiny bodies.
 - Why: AI often splits straightforward logic into helpers that add indirection
@@ -124,6 +137,7 @@ These are still useful, but need stronger repo-local evidence.
 
 #### `trivial_forwarder`
 
+- Status: experimental
 - Lane: `smell`
 - Goal: flag wrappers that only forward args/results to another function.
 - Examples:
@@ -139,6 +153,7 @@ These are still useful, but need stronger repo-local evidence.
 
 #### `duplicate_validation_ladder`
 
+- Status: planned
 - Lane: `smell`
 - Goal: flag repeated validation sequences that should become one helper or
   constructor.
@@ -159,6 +174,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `single_impl_interface`
 
+- Status: planned
 - Lane: `smell`
 - Goal: flag internal interfaces with one implementation and no real
   substitution pressure.
@@ -173,6 +189,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `options_overkill`
 
+- Status: planned
 - Lane: `smell`
 - Goal: flag functional options or builder-style setup around tiny private APIs.
 - Why: this pattern is expensive when the call surface is small and stable.
@@ -185,6 +202,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `internal_result_wrapper`
 
+- Status: planned
 - Lane: `smell`
 - Goal: flag private result structs that only carry `(value, ok)` or `(value,
   err)` style data without extra behavior.
@@ -199,6 +217,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `restatement_comment`
 
+- Status: experimental
 - Lane: `smell`
 - Goal: flag comments that only restate names or obvious code.
 - Examples:
@@ -213,6 +232,7 @@ Useful, but likely too subjective for default-on mode. Keep behind
 
 #### `generic_name`
 
+- Status: planned
 - Lane: `smell`
 - Goal: flag weak names such as `Helper`, `Manager`, `Processor`, `Util`,
   `Base`, or `Impl` when body behavior is still generic.
@@ -224,17 +244,15 @@ Useful, but likely too subjective for default-on mode. Keep behind
   - do not emit on its own
 - Suggested category: `generic_naming`
 
-## Suggested implementation order
+## Suggested remaining implementation order
 
-1. `redundant_post_success_check`
-2. `redundant_bool_return`
-3. `identical_branch_body`
-4. `exhaustive_defensive_default`
-5. `single_use_temp_alias`
-6. `duplicate_validation_ladder`
-7. `single_use_private_helper`
-8. `trivial_forwarder`
-9. everything else behind an experimental flag
+1. `duplicate_validation_ladder`
+2. `single_use_private_helper`
+3. extend `exhaustive_defensive_default` beyond `bool` to named types with
+   closed const sets
+4. graduate `trivial_forwarder` from experimental if corpus stays clean
+5. graduate `restatement_comment` from experimental if corpus stays clean
+6. everything else behind an experimental or style flag
 
 ## Non-goals
 

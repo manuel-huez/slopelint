@@ -122,6 +122,11 @@ Useful env vars:
 - `SLOPELINT_CACHE=0`
 - `SLOPELINT_CACHE_DIR=/path/to/cache`
 
+Legacy aliases still work:
+
+- `DEFENSELINT_CACHE=0`
+- `DEFENSELINT_CACHE_DIR=/path/to/cache`
+
 Default cache location: `os.UserCacheDir()/slopelint/analysis-v*`
 
 ## Current limits

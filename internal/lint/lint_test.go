@@ -787,8 +787,40 @@ func f(ok bool) int {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if !strings.Contains(joined, `switch case "false" duplicates case "true"; merge case lists`) {
+	if !strings.Contains(
+		joined,
+		`switch case "false" has identical body as previous case "true"; merge case lists`,
+	) {
 		t.Fatalf("expected identical switch branch finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsNonAdjacentPredicateSwitchBodies(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(x int) int {
+	switch {
+	case x < 0:
+		return -1
+	case x == 0:
+		return 0
+	case x < 10:
+		return -1
+	}
+	return 1
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `has identical body as previous case`) {
+		t.Fatalf(
+			"unexpected identical switch branch finding for non-adjacent predicate cases, got:\n%s",
+			joined,
+		)
 	}
 }
 
@@ -849,6 +881,98 @@ func f(ok bool) {
 		`default case is redundant; bool switch already covers true and false`,
 	) {
 		t.Fatalf("unexpected redundant default finding for panic default, got:\n%s", joined)
+	}
+}
+
+func TestDetectsSingleUseTempAlias(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Req struct { Name string }
+
+func f(req Req) {
+	name := req.Name
+	if name == "" { println("bad") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`local "name" only renames cheap expression "req.Name" for one use; inline expression`,
+	) {
+		t.Fatalf("expected temp alias finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "temp_alias") {
+		t.Fatalf("expected temp_alias kind, got %#v", issues)
+	}
+}
+
+func TestSkipsTempAliasWhenNameAddsMeaning(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Req struct { Name string }
+
+func f(req Req) {
+	customerName := req.Name
+	if customerName == "" { println("bad") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only renames cheap expression "req.Name"`) {
+		t.Fatalf("unexpected temp alias finding for meaningful name, got:\n%s", joined)
+	}
+}
+
+func TestSkipsTempAliasWhenDeclarationHasComment(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Req struct { Name string }
+
+func f(req Req) {
+	name := req.Name // keep local for nearby label
+	if name == "" { println("bad") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only renames cheap expression "req.Name"`) {
+		t.Fatalf("unexpected temp alias finding with declaration comment, got:\n%s", joined)
+	}
+}
+
+func TestSkipsTempAliasWhenValueReadMultipleTimes(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Req struct { Name string }
+
+func f(req Req) {
+	name := req.Name
+	if name == "" { println("bad") }
+	println(name)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only renames cheap expression "req.Name"`) {
+		t.Fatalf("unexpected temp alias finding with multiple reads, got:\n%s", joined)
 	}
 }
 

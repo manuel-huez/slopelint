@@ -160,7 +160,7 @@ at **type-level semantic inference**.
 
 When consumed through `go/analysis`, findings also carry machine-readable
 categories such as `redundant_condition`, `boolean_ceremony`,
-`control_flow_merge`, `redundant_default`, `redundant_subexpression`, and
+`control_flow_merge`, `redundant_default`, `temp_alias`, `redundant_subexpression`, and
 `unreachable_case`.
 
 ## Next checks

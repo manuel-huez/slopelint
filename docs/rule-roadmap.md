@@ -9,6 +9,7 @@ Current status in this worktree:
 - shipped: `redundant_bool_return`
 - shipped: `identical_branch_body`
 - shipped: `exhaustive_defensive_default` for exhaustive `bool` switches
+- shipped: `single_use_temp_alias` for immediate one-read cheap aliases
 
 ## Rule lanes
 

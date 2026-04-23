@@ -1156,6 +1156,108 @@ func f(req Req) {
 	}
 }
 
+func TestDetectsTrivialForwarderExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(name string) bool { return name != "" }
+
+func run(name string) bool {
+	return execute(name)
+}
+
+func use(name string) bool {
+	return run(name)
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "run" only forwards to "execute" at one callsite; inline or merge names`,
+	) {
+		t.Fatalf("expected trivial forwarder finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "trivial_wrapper") {
+		t.Fatalf("expected trivial_wrapper kind, got %#v", issues)
+	}
+}
+
+func TestSkipsTrivialForwarderWithMultipleCallsites(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(name string) bool { return name != "" }
+
+func run(name string) bool {
+	return execute(name)
+}
+
+func a(name string) bool { return run(name) }
+func b(name string) bool { return run(name) }
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only forwards to "execute"`) {
+		t.Fatalf("unexpected trivial forwarder finding with multiple callsites, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRestatementCommentExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+// Validate user
+func validateUser(name string) bool {
+	return name != ""
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`comment only restates private declaration "validateUser"; remove or explain intent`,
+	) {
+		t.Fatalf("expected restatement-comment finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "comment_noise") {
+		t.Fatalf("expected comment_noise kind, got %#v", issues)
+	}
+}
+
+func TestSkipsRestatementCommentWhenIntentAdded(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+// Validate user before cache warmup.
+func validateUser(name string) bool {
+	return name != ""
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `comment only restates private declaration "validateUser"`) {
+		t.Fatalf(
+			"unexpected restatement-comment finding when comment adds intent, got:\n%s",
+			joined,
+		)
+	}
+}
+
 func TestSkipsTempAliasWhenNameAddsMeaning(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
@@ -1244,6 +1346,12 @@ func f(s string) {
 func lintInDir(t *testing.T, dir string) []Issue {
 	t.Helper()
 
+	return lintInDirWithOptions(t, dir, Options{MaxStates: 32})
+}
+
+func lintInDirWithOptions(t *testing.T, dir string, opts Options) []Issue {
+	t.Helper()
+
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -1264,7 +1372,7 @@ func lintInDir(t *testing.T, dir string) []Issue {
 		t.Fatalf("load packages: %v", err)
 	}
 
-	return LintPackages(pkgs, Options{MaxStates: 32})
+	return LintPackages(pkgs, opts)
 }
 
 func writeFile(t *testing.T, path string, contents string) {

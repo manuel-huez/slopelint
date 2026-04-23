@@ -20,6 +20,7 @@ type Options struct {
 	MaxStates    int
 	CacheEnabled bool
 	CacheDir     string
+	Experimental bool
 }
 
 type linter struct {
@@ -33,6 +34,7 @@ type linter struct {
 	inferredFacts   map[string]callSummary
 	localFuncLits   map[types.Object]*ast.FuncLit
 	externalSummary func(*types.Func) (callSummary, bool)
+	experimental    bool
 }
 
 type flowResult struct {
@@ -73,6 +75,7 @@ func newLinter(pkg *LoadedPackage, opts Options) *linter {
 		renderCache:   make(map[ast.Node]string),
 		explicitFacts: make(map[string][]guardContract),
 		inferredFacts: make(map[string]callSummary),
+		experimental:  opts.Experimental,
 	}
 }
 
@@ -126,6 +129,10 @@ func (l *linter) analyzeFiles() {
 				return true
 			}
 		})
+	}
+
+	if l.experimental {
+		l.scanExperimentalPackage()
 	}
 }
 

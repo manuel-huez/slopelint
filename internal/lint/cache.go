@@ -49,6 +49,7 @@ type analysisCacheFingerprint struct {
 	Schema        int                         `json:"schema"`
 	Package       string                      `json:"package"`
 	MaxStates     int                         `json:"max_states"`
+	Experimental  bool                        `json:"experimental,omitempty"`
 	Executable    analysisCacheExecutable     `json:"executable"`
 	Files         []analysisCacheFile         `json:"files"`
 	ImportedFacts []analysisCacheImportedFact `json:"imported_facts"`
@@ -121,6 +122,7 @@ func analysisCacheKey(
 		Schema:        analysisCacheSchema,
 		Package:       pkg.ImportPath,
 		MaxStates:     maxStates,
+		Experimental:  opts.Experimental,
 		Executable:    analysisCacheExecutableStamp(),
 		ImportedFacts: analysisCacheImportedFacts(pass, pkg),
 	}

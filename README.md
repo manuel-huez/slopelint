@@ -101,6 +101,112 @@ func handle(req Request) {
 }
 ```
 
+## Rule examples
+
+These snippets show the finding categories emitted today.
+
+### `redundant_condition`
+
+```go
+func handle(name string) {
+    if name == "" { return }
+    if name == "" { println("dead") } // reported
+}
+```
+
+### `redundant_subexpression`
+
+```go
+func handle(name string) {
+    if name != "" && name != "" { println(name) } // reported
+}
+```
+
+### `unreachable_case`
+
+```go
+func handle(name string) {
+    switch {
+    case name == "":
+        return
+    case name != "":
+        return
+    case len(name) > 3:
+        println("dead") // reported
+    }
+}
+```
+
+### `boolean_ceremony`
+
+```go
+func ok(name string) bool {
+    if name != "" {
+        return true
+    }
+    return false // reported
+}
+```
+
+### `control_flow_merge`
+
+```go
+func handle(ok bool) error {
+    if ok {
+        return nil
+    } else {
+        return nil // reported
+    }
+}
+```
+
+### `redundant_default`
+
+```go
+func handle(ok bool) {
+    switch ok {
+    case true:
+        println("yes")
+    case false:
+        println("no")
+    default:
+        println("dead") // reported
+    }
+}
+```
+
+### `temp_alias`
+
+```go
+type Req struct{ Name string }
+
+func handle(req Req) {
+    name := req.Name // reported
+    if name == "" {
+        println("bad")
+    }
+}
+```
+
+### `trivial_wrapper` (`-experimental`)
+
+```go
+func execute(name string) bool { return name != "" }
+
+func run(name string) bool {
+    return execute(name) // reported when run has one production callsite
+}
+```
+
+### `comment_noise` (`-experimental`)
+
+```go
+// Validate user
+func validateUser(name string) bool { // reported
+    return name != ""
+}
+```
+
 ## Build
 
 ```bash
@@ -113,6 +219,7 @@ go build ./cmd/defenselint
 ./defenselint ./...
 ./defenselint ./internal/...
 ./defenselint -max-states=64 ./...
+./defenselint -experimental ./...
 go vet -vettool=$(which defenselint) ./...
 ```
 
@@ -123,6 +230,10 @@ Direct runs now cache per-package diagnostics and exported summaries on disk, so
 unchanged follow-up runs can skip the symbolic walk. Cache is enabled by default.
 Use `-cache=false` or `DEFENSELINT_CACHE=0` to disable it, and `-cache-dir` or
 `DEFENSELINT_CACHE_DIR` to choose a different cache location.
+
+Experimental smell rules are off by default. Enable them with `-experimental`.
+Current experimental checks cover one-callsite same-package trivial forwarders
+and one-line private doc comments that only restate declaration names.
 
 ## Current model
 
@@ -161,7 +272,8 @@ at **type-level semantic inference**.
 When consumed through `go/analysis`, findings also carry machine-readable
 categories such as `redundant_condition`, `boolean_ceremony`,
 `control_flow_merge`, `redundant_default`, `temp_alias`, `redundant_subexpression`, and
-`unreachable_case`.
+`unreachable_case`. With `-experimental`, that set also includes
+`trivial_wrapper` and `comment_noise`.
 
 ## Next checks
 

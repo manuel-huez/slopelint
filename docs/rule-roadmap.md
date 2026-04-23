@@ -10,6 +10,10 @@ Current status in this worktree:
 - shipped: `identical_branch_body`
 - shipped: `exhaustive_defensive_default` for exhaustive `bool` switches
 - shipped: `single_use_temp_alias` for immediate one-read cheap aliases
+- experimental: `trivial_forwarder` for docless same-package private wrappers
+  with one production callsite
+- experimental: `restatement_comment` for one-line private declaration docs that
+  only restate identifier words
 
 ## Rule lanes
 

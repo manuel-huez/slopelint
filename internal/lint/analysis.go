@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"path/filepath"
 
 	"go/types"
@@ -47,6 +48,19 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 		TypesInfo:  pass.TypesInfo,
 	}
 
+	cache, err := newAnalysisCache(pass, pkg, opts)
+	if err == nil {
+		if entry, ok := cache.load(); ok {
+			if issues, ok := replayAnalysisCache(pass, pkg, entry); ok {
+				sortIssues(pkg.FSet, issues)
+
+				return issues, nil
+			}
+		}
+	} else if !errors.Is(err, errAnalysisCacheDisabled) {
+		cache = nil
+	}
+
 	l := newLinter(pkg, opts)
 	l.externalSummary = func(obj *types.Func) (callSummary, bool) {
 		fact := new(callSummaryFact)
@@ -60,6 +74,10 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 	l.run()
 	l.exportAnalysisFacts(pass)
 	sortIssues(pkg.FSet, l.issues)
+
+	if cache != nil {
+		_ = cache.store(pass, pkg, l, l.issues)
+	}
 
 	return l.issues, nil
 }

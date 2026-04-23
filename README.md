@@ -116,6 +116,11 @@ go vet -vettool=$(which defenselint) ./...
 The standalone binary now uses Go's `go/analysis` driver, so the same executable
 works directly, under multicheckers, or as a `go vet` tool via `-vettool`.
 
+Direct runs now cache per-package diagnostics and exported summaries on disk, so
+unchanged follow-up runs can skip the symbolic walk. Cache is enabled by default.
+Use `-cache=false` or `DEFENSELINT_CACHE=0` to disable it, and `-cache-dir` or
+`DEFENSELINT_CACHE_DIR` to choose a different cache location.
+
 ## Current model
 
 The first version is intentionally conservative and focuses on the patterns that

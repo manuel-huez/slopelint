@@ -17,16 +17,9 @@ const (
 
 // Options controls linter behavior.
 type Options struct {
-	MaxStates int
-}
-
-// LintPackage runs the analyzer on one loaded package.
-func LintPackage(pkg *LoadedPackage, opts Options) []Issue {
-	l := newLinter(pkg, opts)
-	l.run()
-	sortIssues(pkg.FSet, l.issues)
-
-	return l.issues
+	MaxStates    int
+	CacheEnabled bool
+	CacheDir     string
 }
 
 type linter struct {

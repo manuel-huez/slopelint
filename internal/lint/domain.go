@@ -93,17 +93,33 @@ func (f fact) empty() bool {
 }
 
 type state struct {
-	facts map[string]fact
+	facts   map[string]fact
+	aliases map[string]map[string]struct{}
 }
 
 func newState() state {
-	return state{facts: make(map[string]fact)}
+	return state{
+		facts:   make(map[string]fact),
+		aliases: make(map[string]map[string]struct{}),
+	}
 }
 
 func (s state) clone() state {
-	out := state{facts: make(map[string]fact, len(s.facts))}
+	out := state{
+		facts:   make(map[string]fact, len(s.facts)),
+		aliases: make(map[string]map[string]struct{}, len(s.aliases)),
+	}
 	for k, v := range s.facts {
 		out.facts[k] = v.clone()
+	}
+
+	for key, peers := range s.aliases {
+		outPeers := make(map[string]struct{}, len(peers))
+		for peer := range peers {
+			outPeers[peer] = struct{}{}
+		}
+
+		out.aliases[key] = outPeers
 	}
 
 	return out
@@ -114,44 +130,98 @@ func (s state) hash() string {
 		return "{}"
 	}
 
-	keys := make([]string, 0, len(s.facts))
-	for k := range s.facts {
-		keys = append(keys, k)
+	var b strings.Builder
+
+	appendFactsHash(&b, s.facts)
+
+	if len(s.aliases) != 0 {
+		b.WriteByte('|')
+
+		for _, edge := range sortedAliasEdges(s.aliases) {
+			b.WriteString(edge)
+			b.WriteByte(';')
+		}
+	}
+
+	return b.String()
+}
+
+func appendFactsHash(b *strings.Builder, facts map[string]fact) {
+	for _, key := range sortedFactKeys(facts) {
+		appendFactHash(b, key, facts[key])
+	}
+}
+
+func sortedFactKeys(facts map[string]fact) []string {
+	keys := make([]string, 0, len(facts))
+	for key := range facts {
+		keys = append(keys, key)
 	}
 
 	sort.Strings(keys)
 
-	var b strings.Builder
+	return keys
+}
 
-	for _, k := range keys {
-		f := s.facts[k]
-		b.WriteString(k)
-		b.WriteByte(':')
+func appendFactHash(b *strings.Builder, key string, f fact) {
+	b.WriteString(key)
+	b.WriteByte(':')
 
-		if f.exact != nil {
-			b.WriteString("=")
-			b.WriteString(f.exact.value.key())
-		}
-
-		if len(f.not) != 0 {
-			notKeys := make([]string, 0, len(f.not))
-			for nk := range f.not {
-				notKeys = append(notKeys, nk)
-			}
-
-			sort.Strings(notKeys)
-			b.WriteByte('!')
-
-			for _, nk := range notKeys {
-				b.WriteString(nk)
-				b.WriteByte(',')
-			}
-		}
-
-		b.WriteByte(';')
+	if f.exact != nil {
+		b.WriteString("=")
+		b.WriteString(f.exact.value.key())
 	}
 
-	return b.String()
+	if len(f.not) != 0 {
+		b.WriteByte('!')
+
+		for _, notKey := range sortedEvidenceKeys(f.not) {
+			b.WriteString(notKey)
+			b.WriteByte(',')
+		}
+	}
+
+	b.WriteByte(';')
+}
+
+func sortedEvidenceKeys(values map[string]evidence) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+func sortedAliasEdges(aliases map[string]map[string]struct{}) []string {
+	edges := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	for key, peers := range aliases {
+		for peer := range peers {
+			edge := aliasEdgeName(key, peer)
+			if _, ok := seen[edge]; ok {
+				continue
+			}
+
+			seen[edge] = struct{}{}
+			edges = append(edges, edge)
+		}
+	}
+
+	sort.Strings(edges)
+
+	return edges
+}
+
+func aliasEdgeName(left, right string) string {
+	if left > right {
+		left, right = right, left
+	}
+
+	return left + "=" + right
 }
 
 type symbol struct {

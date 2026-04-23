@@ -44,8 +44,9 @@ func run(pass *analysis.Pass) (any, error) {
 
 	for _, issue := range lint.LintPackage(pkg, lint.Options{MaxStates: maxStates}) {
 		pass.Report(analysis.Diagnostic{
-			Pos:     issue.Pos,
-			Message: issue.Message,
+			Pos:      issue.Pos,
+			Message:  issue.Message,
+			Category: issue.Kind,
 		})
 	}
 

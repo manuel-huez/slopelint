@@ -8,9 +8,11 @@ AI-generated Go code, for example:
 
 - repeated `nil` checks after an early return
 - repeated empty-string / zero-value checks after a guard clause
+- repeated `len(...)` checks after an earlier emptiness or non-emptiness guard
 - switch cases that can no longer match on the current path
 - redundant right-hand sides of `&&` and `||` expressions
 - struct-field checks that are already filtered by earlier conditions
+- post-guard defensive checks after helper calls with explicit contracts
 
 ## What it does
 
@@ -19,8 +21,23 @@ small fact set for local variables and selector chains such as:
 
 - `x == nil` / `x != nil`
 - `name == ""` / `name != ""`
+- `len(items) == 0` / `len(items) > 0`
 - `ok == true` / `ok == false`
 - `req.User.Role == Admin` / `req.User.Role != Admin`
+
+It also preserves equivalence across simple copies such as `name := req.Name`, so a
+later guard on `name` can still make a repeated `req.Name` check redundant.
+
+For helper-style guard functions, you can add opt-in contracts in doc comments:
+
+```go
+//defenselint:ensures req != nil
+//defenselint:ensures req.Name != ""
+func requireReq(req *Req) {}
+```
+
+After `requireReq(req)`, the analyzer will treat those facts as established on the
+reachable return path.
 
 When later control flow contradicts or duplicates those facts, it reports the
 condition.
@@ -68,9 +85,13 @@ cause the most noisy defensive code:
 
 - path-sensitive `if` handling
 - expression switches
+- statement-local `select` and `type switch` fallback
 - single-pass loop analysis with widening
 - copy propagation for simple assignments like `name := req.Name`
+- alias-aware fact propagation for simple symbol copies
 - field tracking for selector chains like `req.User.Role`
+- derived `len(...)` facts for empty vs non-empty guards
+- opt-in call contracts via `//defenselint:ensures ...`
 - conservative invalidation across calls and writes
 
 ## Current limits
@@ -81,8 +102,6 @@ control flow that would require a more global CFG model:
 - `goto`
 - labeled `break` / `continue`
 - `fallthrough`
-- `select`
-- `type switch`
 
 It also does **not** try to infer semantic guarantees from named types alone.
 For example, a type like `type SanitizedString string` is still just a string to
@@ -90,3 +109,7 @@ this analyzer unless earlier control flow already filtered its possible values.
 
 That means the tool is strong at **path-based filtering** and intentionally weak
 at **type-level semantic inference**.
+
+When consumed through `go/analysis`, findings also carry machine-readable
+categories such as `redundant_condition`, `redundant_subexpression`, and
+`unreachable_case`.

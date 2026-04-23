@@ -8,6 +8,7 @@ import (
 // Issue is one linter finding.
 type Issue struct {
 	Pos     token.Pos
+	Kind    string
 	Message string
 }
 

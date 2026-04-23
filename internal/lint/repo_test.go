@@ -20,6 +20,7 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 		l := newLinter(pkg, opts)
 		l.explicitFacts = explicitFacts
 		l.inferredFacts = inferredFacts
+		l.collectLocalFuncLits()
 		l.analyzeFiles()
 		sortIssues(pkg.FSet, l.issues)
 		issues = append(issues, l.issues...)
@@ -43,6 +44,7 @@ func inferRepoSummaries(
 	for _, pkg := range pkgs {
 		l := newLinter(pkg, opts)
 		l.explicitFacts = explicitFacts
+		l.collectLocalFuncLits()
 
 		l.collectContracts()
 	}
@@ -50,6 +52,7 @@ func inferRepoSummaries(
 	for _, pkg := range pkgs {
 		l := newLinter(pkg, opts)
 		l.explicitFacts = explicitFacts
+		l.collectLocalFuncLits()
 
 		for _, fn := range l.collectSummarizableFuncs() {
 			funcs = append(funcs, repoSummarizableFunc{
@@ -67,6 +70,7 @@ func inferRepoSummaries(
 			l := newLinter(item.pkg, opts)
 			l.explicitFacts = explicitFacts
 			l.inferredFacts = summaries
+			l.collectLocalFuncLits()
 
 			summary := l.summarizeFunc(item.fn)
 

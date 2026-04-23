@@ -27,9 +27,11 @@ type linter struct {
 	maxStates       int
 	issues          []Issue
 	reported        map[string]struct{}
+	suppressReports int
 	renderCache     map[ast.Node]string
 	explicitFacts   map[string][]guardContract
 	inferredFacts   map[string]callSummary
+	localFuncLits   map[types.Object]*ast.FuncLit
 	externalSummary func(*types.Func) (callSummary, bool)
 }
 
@@ -102,6 +104,7 @@ func cloneReturnKinds(in map[int]returnKind) map[int]returnKind {
 
 func (l *linter) run() {
 	l.collectContracts()
+	l.collectLocalFuncLits()
 	l.inferCallSummaries()
 	l.analyzeFiles()
 }
@@ -651,7 +654,11 @@ func (l *linter) execForStmtWithLabel(stmt *ast.ForStmt, label string, states []
 		exitStates = l.refineStates(states, stmt.Cond, false)
 	}
 
-	bodyRes := l.execBlock(stmt.Body.List, enterStates)
+	loopInvalidations := l.loopInvalidationsForLoop(stmt.Body.List, stmt.Post)
+	bodyRes := l.execBlock(
+		stmt.Body.List,
+		l.applyPrefixInvalidations(enterStates, loopInvalidations),
+	)
 
 	iterStates := l.normalizeStates(append(bodyRes.next, bodyRes.continues...))
 	iterStates = append(iterStates, consumeLabeledStates(bodyRes.labeledContinues, label)...)
@@ -693,6 +700,8 @@ func (l *linter) execRangeStmtWithLabel(
 ) flowResult {
 	states = l.invalidateForExprSideEffects(states, stmt.X)
 	enterStates := l.normalizeStates(states)
+	loopInvalidations := l.loopInvalidationsForLoop(stmt.Body.List, nil)
+	enterStates = l.applyPrefixInvalidations(enterStates, loopInvalidations)
 
 	bodyStart := make([]state, 0, len(enterStates))
 	for _, st0 := range enterStates {
@@ -709,11 +718,15 @@ func (l *linter) execRangeStmtWithLabel(
 	}
 
 	bodyRes := l.execBlock(stmt.Body.List, bodyStart)
+	iterStates := l.normalizeStates(append(bodyRes.next, bodyRes.continues...))
+	iterStates = append(iterStates, consumeLabeledStates(bodyRes.labeledContinues, label)...)
+	iterStates = l.applyPrefixInvalidations(iterStates, loopInvalidations)
+
 	// A range loop may execute zero times, so the incoming state is always an exit state.
 	out := append([]state{}, states...)
 	out = append(out, bodyRes.breaks...)
 	out = append(out, consumeLabeledStates(bodyRes.labeledBreaks, label)...)
-	_ = consumeLabeledStates(bodyRes.labeledContinues, label)
+	out = append(out, iterStates...)
 
 	return flowResult{
 		next:             l.normalizeStates(out),
@@ -1036,36 +1049,29 @@ func (l *linter) invalidateForCall(states []state, call *ast.CallExpr) []state {
 	return l.normalizeStates(out)
 }
 
-func (l *linter) invalidateForFuncLitEffectsOne(st state, lit *ast.FuncLit) state {
+func (l *linter) invalidateForFuncLitEffectsSeen(
+	st state,
+	lit *ast.FuncLit,
+	seen map[*ast.FuncLit]struct{},
+) state {
 	if lit == nil || lit.Body == nil {
 		return st
 	}
 
+	if _, ok := seen[lit]; ok {
+		return st
+	}
+
+	seen[lit] = struct{}{}
 	out := st.clone()
 
 	ast.Inspect(lit.Body, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.FuncLit:
+		if _, ok := n.(*ast.FuncLit); ok {
 			return false
-		case *ast.AssignStmt:
-			for _, lhs := range n.Lhs {
-				l.invalidateLHS(&out, lhs)
-			}
-		case *ast.IncDecStmt:
-			l.invalidateLHS(&out, n.X)
-		case *ast.RangeStmt:
-			if n.Key != nil {
-				l.invalidateLHS(&out, n.Key)
-			}
+		}
 
-			if n.Value != nil {
-				l.invalidateLHS(&out, n.Value)
-			}
-		case *ast.CallExpr:
-			out = l.invalidateForCallOne(out, n)
-		case *ast.SendStmt:
-			out = l.invalidateForExprSideEffectsOne(out, n.Chan)
-			out = l.invalidateForExprSideEffectsOne(out, n.Value)
+		if !l.invalidateForFuncLitNode(&out, n, seen) {
+			return false
 		}
 
 		return true
@@ -1074,8 +1080,51 @@ func (l *linter) invalidateForFuncLitEffectsOne(st state, lit *ast.FuncLit) stat
 	return out
 }
 
+func (l *linter) invalidateForFuncLitNode(
+	out *state,
+	node ast.Node,
+	seen map[*ast.FuncLit]struct{},
+) bool {
+	switch n := node.(type) {
+	case *ast.AssignStmt:
+		for _, lhs := range n.Lhs {
+			l.invalidateLHS(out, lhs)
+		}
+	case *ast.IncDecStmt:
+		l.invalidateLHS(out, n.X)
+	case *ast.RangeStmt:
+		l.invalidateRangeLoopTargets(out, n)
+	case *ast.CallExpr:
+		*out = l.invalidateForCallOneSeen(*out, n, seen)
+	case *ast.SendStmt:
+		*out = l.invalidateForExprSideEffectsOne(*out, n.Chan)
+		*out = l.invalidateForExprSideEffectsOne(*out, n.Value)
+	}
+
+	return true
+}
+
+func (l *linter) invalidateRangeLoopTargets(out *state, stmt *ast.RangeStmt) {
+	if stmt.Key != nil {
+		l.invalidateLHS(out, stmt.Key)
+	}
+
+	if stmt.Value != nil {
+		l.invalidateLHS(out, stmt.Value)
+	}
+}
+
 //nolint:cyclop,gocognit // Side-effect invalidation must branch by call shape and argument semantics.
 func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
+	return l.invalidateForCallOneSeen(st, call, make(map[*ast.FuncLit]struct{}))
+}
+
+//nolint:cyclop,gocognit // Side-effect invalidation must branch by call shape and argument semantics.
+func (l *linter) invalidateForCallOneSeen(
+	st state,
+	call *ast.CallExpr,
+	seen map[*ast.FuncLit]struct{},
+) state {
 	if tv, ok := l.pkg.TypesInfo.Types[call.Fun]; ok && tv.IsType() {
 		return st
 	}
@@ -1093,7 +1142,9 @@ func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 	}
 
 	if lit, ok := l.unparen(call.Fun).(*ast.FuncLit); ok {
-		out = l.invalidateForFuncLitEffectsOne(out, lit)
+		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
+	} else if lit, ok := l.localFuncLitForExpr(call.Fun); ok {
+		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
 	}
 
 	if sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr); ok {
@@ -1106,7 +1157,7 @@ func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 
 	for _, arg := range call.Args {
 		if lit, ok := l.unparen(arg).(*ast.FuncLit); ok {
-			out = l.invalidateForFuncLitEffectsOne(out, lit)
+			out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
 			continue
 		}
 
@@ -2079,6 +2130,10 @@ func (l *linter) becauseText(ev evidence) string {
 }
 
 func (l *linter) report(pos token.Pos, kind, msg string) {
+	if l.suppressReports > 0 {
+		return
+	}
+
 	p := l.pkg.FSet.Position(pos)
 
 	key := fmt.Sprintf("%s:%d:%d:%s:%s", p.Filename, p.Line, p.Column, kind, msg)
@@ -2088,6 +2143,16 @@ func (l *linter) report(pos token.Pos, kind, msg string) {
 
 	l.reported[key] = struct{}{}
 	l.issues = append(l.issues, Issue{Pos: pos, Kind: kind, Message: msg})
+}
+
+func (l *linter) withReportsSuppressed(fn func()) {
+	l.suppressReports++
+
+	defer func() {
+		l.suppressReports--
+	}()
+
+	fn()
 }
 
 func (l *linter) render(node ast.Node) string {

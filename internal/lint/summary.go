@@ -150,7 +150,11 @@ func (l *linter) summarizeFunc(fn summarizableFunc) callSummary {
 		return callSummary{}
 	}
 
-	res := l.execBlock(fn.decl.Body.List, []state{newState()})
+	var res flowResult
+
+	l.withReportsSuppressed(func() {
+		res = l.execBlock(fn.decl.Body.List, []state{newState()})
+	})
 
 	returns := append([]returnState{}, res.returns...)
 	for _, st := range res.next {

@@ -16,7 +16,6 @@ type analysisResult struct{}
 var maxStates = defaultMaxStates
 var cacheEnabled = true
 var cacheDir string
-var experimental bool
 
 // Analyzer reports path-proven redundancy and other low-signal code structure.
 var Analyzer = &analysis.Analyzer{
@@ -46,12 +45,6 @@ func init() {
 		"",
 		"directory for persistent analysis cache",
 	)
-	Analyzer.Flags.BoolVar(
-		&experimental,
-		"experimental",
-		false,
-		"enable experimental smell rules",
-	)
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -59,7 +52,6 @@ func run(pass *analysis.Pass) (any, error) {
 		MaxStates:    maxStates,
 		CacheEnabled: cacheEnabled && cacheEnvEnabled(),
 		CacheDir:     resolvedCacheDir(),
-		Experimental: experimental,
 	})
 	if err != nil {
 		return nil, err

@@ -1600,7 +1600,7 @@ func IsReady() int {
 	}
 }
 
-func TestDetectsTrivialForwarderExperimental(t *testing.T) {
+func TestDetectsTrivialForwarder(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1616,7 +1616,7 @@ func use(name string) bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -1631,7 +1631,7 @@ func use(name string) bool {
 	}
 }
 
-func TestDetectsTrivialForwarderAssignReturnExperimental(t *testing.T) {
+func TestDetectsTrivialForwarderAssignReturn(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1648,7 +1648,7 @@ func use(name string) bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -1659,7 +1659,7 @@ func use(name string) bool {
 	}
 }
 
-func TestDetectsTrivialForwarderVarReturnExperimental(t *testing.T) {
+func TestDetectsTrivialForwarderVarReturn(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1677,7 +1677,7 @@ func use(name string) bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -1688,7 +1688,7 @@ func use(name string) bool {
 	}
 }
 
-func TestDetectsTrivialForwarderWithParamMethodAdapterExperimental(t *testing.T) {
+func TestDetectsTrivialForwarderWithParamMethodAdapter(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1711,7 +1711,7 @@ func use(scope CacheScope) error {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -1722,7 +1722,7 @@ func use(scope CacheScope) error {
 	}
 }
 
-func TestDetectsTrivialForwarderWithParamFieldAndConversionAdaptersExperimental(t *testing.T) {
+func TestDetectsTrivialForwarderWithParamFieldAndConversionAdapters(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1747,7 +1747,7 @@ func use(req request, code CurrencyCode) error {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -1783,7 +1783,7 @@ func use(req request, code CurrencyCode) error {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `only forwards to "convertScope"`) {
@@ -1812,7 +1812,7 @@ func use(name string) bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `only forwards to "execute"`) {
@@ -1843,7 +1843,7 @@ func use(name string) bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `only forwards to "execute"`) {
@@ -1869,7 +1869,7 @@ func a(name string) bool { return run(name) }
 func b(name string) bool { return run(name) }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `only forwards to "execute"`) {
@@ -1877,7 +1877,7 @@ func b(name string) bool { return run(name) }
 	}
 }
 
-func TestDetectsRestatementCommentExperimental(t *testing.T) {
+func TestDetectsRestatementComment(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1888,7 +1888,7 @@ func validateUser(name string) bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -1914,7 +1914,7 @@ func validateUser(name string) bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `comment only restates private declaration "validateUser"`) {
@@ -1925,7 +1925,7 @@ func validateUser(name string) bool {
 	}
 }
 
-func TestDetectsDuplicateValidationLadderExperimental(t *testing.T) {
+func TestDetectsDuplicateValidationLadder(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1965,7 +1965,7 @@ func update(value req) error {
 var errBad error
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -1980,7 +1980,7 @@ var errBad error
 	}
 }
 
-func TestDetectsSingleUsePrivateHelperExperimental(t *testing.T) {
+func TestDetectsSingleUsePrivateHelper(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -1996,7 +1996,7 @@ func run() {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -2014,7 +2014,7 @@ func run() {
 	}
 }
 
-func TestSkipsSingleUsePrivateHelperWithComplexBodyExperimental(t *testing.T) {
+func TestSkipsSingleUsePrivateHelperWithComplexBody(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -2032,7 +2032,7 @@ func run(values []int) {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `has one production callsite and a tiny body`) {
@@ -2040,7 +2040,7 @@ func run(values []int) {
 	}
 }
 
-func TestDetectsSingleImplInterfaceExperimental(t *testing.T) {
+func TestDetectsSingleImplInterface(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -2062,7 +2062,7 @@ func run() {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -2073,7 +2073,7 @@ func run() {
 	}
 }
 
-func TestDetectsOptionsOverkillExperimental(t *testing.T) {
+func TestDetectsOptionsOverkill(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -2098,7 +2098,7 @@ func run() int {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(
@@ -2134,7 +2134,7 @@ func run() int {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `private API "newsThing" uses functional options`) {
@@ -2145,7 +2145,7 @@ func run() int {
 	}
 }
 
-func TestDetectsInternalResultWrapperExperimental(t *testing.T) {
+func TestDetectsInternalResultWrapper(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -2164,7 +2164,7 @@ func run() bool {
 }
 `)
 
-	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
 	if !strings.Contains(

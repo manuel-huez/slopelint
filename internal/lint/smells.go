@@ -52,7 +52,7 @@ func (l *linter) scanDefaultSmells() {
 	l.checkPredicateReturnSignatures()
 }
 
-func (l *linter) scanExperimentalPackage() {
+func (l *linter) scanPackageSmells() {
 	l.checkDuplicateValidationLadders()
 	l.checkSingleUsePrivateHelpers()
 	l.checkSingleImplInterfaces()

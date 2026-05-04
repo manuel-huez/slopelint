@@ -1,7 +1,7 @@
 # slopelint
 
 > [!WARNING]
-> `slopelint` is still **experimental**. Expect rough edges, breaking changes, and incomplete docs.
+> `slopelint` is still **early-stage**. Expect rough edges, breaking changes, and incomplete docs.
 
 `slopelint` is a Go analyzer for preventing code slop in Go codebases.
 
@@ -36,9 +36,6 @@ Shipped rules:
 - `IsX` predicates that do not return `bool` or `(bool, error)`
 - redundant `MarshalJSON` methods covered by `MarshalText`
 - repeated normalization calls like duplicate `strings.TrimSpace(name)`
-
-Experimental rules behind `-experimental`:
-
 - duplicate validation ladders
 - single-use private helpers with tiny bodies
 - single-implementation private interfaces
@@ -149,7 +146,6 @@ go build -o slopelint ./cmd/slopelint
 ./slopelint ./...
 ./slopelint ./internal/...
 ./slopelint -max-states=64 ./...
-./slopelint -experimental ./...
 go vet -vettool=$(pwd)/slopelint ./...
 ```
 
@@ -164,7 +160,6 @@ Useful flags:
 - `-max-states`: widening cap for symbolic paths
 - `-cache=false`: disable persistent cache
 - `-cache-dir=/path/to/cache`: override cache location
-- `-experimental`: turn on smell checks
 
 Useful env vars:
 
@@ -184,7 +179,7 @@ Default cache location: `os.UserCacheDir()/slopelint/analysis-v*`
 - skips functions containing `goto`
 - conservative around writes, unknown calls, loops, `select`, `type switch`,
   labeled control flow
-- strongest today on path-based proof; broader smell rules stay experimental
+- strongest today on path-based proof; broader smell rules stay conservative
 - weak at type-level semantic meaning
 - report-only today; no custom autofix implementation yet
 
@@ -206,9 +201,6 @@ Machine-readable categories emitted today:
 - `comment_noise`
 - `serialization_ceremony`
 - `normalization_ceremony`
-
-Experimental categories:
-
 - `duplicate_validation`
 - `abstraction_overkill`
 - `api_overkill`

@@ -71,10 +71,6 @@ func run(pass *analysis.Pass) (any, error) {
 func cacheEnvEnabled() bool {
 	value := strings.TrimSpace(os.Getenv("SLOPELINT_CACHE"))
 	if value == "" {
-		value = strings.TrimSpace(os.Getenv("DEFENSELINT_CACHE"))
-	}
-
-	if value == "" {
 		return true
 	}
 
@@ -91,10 +87,5 @@ func resolvedCacheDir() string {
 		return cacheDir
 	}
 
-	dir := strings.TrimSpace(os.Getenv("SLOPELINT_CACHE_DIR"))
-	if dir != "" {
-		return dir
-	}
-
-	return strings.TrimSpace(os.Getenv("DEFENSELINT_CACHE_DIR"))
+	return strings.TrimSpace(os.Getenv("SLOPELINT_CACHE_DIR"))
 }

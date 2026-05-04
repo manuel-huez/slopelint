@@ -167,11 +167,6 @@ Useful env vars:
 - `SLOPELINT_CACHE=0`: disable cache
 - `SLOPELINT_CACHE_DIR=/path/to/cache`: override cache root
 
-Legacy aliases still work:
-
-- `DEFENSELINT_CACHE=0`
-- `DEFENSELINT_CACHE_DIR=/path/to/cache`
-
 Default cache location: `os.UserCacheDir()/slopelint/analysis-v2`
 
 ## Development
@@ -240,5 +235,4 @@ Contract form:
 ```
 
 Supported scalars: `nil`, `true`, `false`, quoted strings, and base-10 ints.
-Receiver contracts work on named receivers. Legacy `//defenselint:ensures`
-comments still work.
+Receiver contracts work on named receivers.

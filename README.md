@@ -1,36 +1,40 @@
 # slopelint
 
 > [!WARNING]
-> `slopelint` is still **early-stage**. Expect rough edges, breaking changes, and incomplete docs.
+> `slopelint` is still **early-stage**. Expect rough edges, breaking changes, and
+> conservative misses.
 
-`slopelint` is a Go analyzer for preventing code slop in Go codebases.
+`slopelint` is a Go analyzer for catching code slop: code that gets longer,
+noisier, or more ceremonial without carrying more meaning.
 
-It targets code that keeps getting longer, noisier, and more ceremonial without
-adding meaning: redundant guards, dead branches, copied validation, trivial
-wrappers, and comments that only restate code.
+It targets redundant guards, unreachable branches, copied validation, trivial
+wrappers, overbuilt private APIs, and comments that only restate names. LLM
+output is one source of that slop, not the only one; the same patterns show up
+after rushed refactors, defensive copy-paste, and cargo-cult abstractions.
 
-LLM output is one source of that slop, not the only one. The same patterns show
-up after rushed refactors, cargo-cult defensive programming, and copy-paste
-maintenance.
+## What It Catches
 
-## Current focus
-
-Today `slopelint` is strongest at path-sensitive redundancy and a small set of
-structural simplifications.
-
-Shipped rules:
+Path-proven redundancy:
 
 - repeated `nil`, empty-string, boolean, enum, or `len(...)` checks after guard
   clauses
-- redundant right-hand side of `&&` / `||`
-- repeated `IsX()` predicate checks after guard clauses
-- unreachable `switch` cases on already-filtered path
-- boolean-return ceremony like `if cond { return true }; return false`
-- identical `if` / `else` or adjacent `switch` branch bodies
-- adjacent `range` loops that repeat the same body
-- redundant `default` in exhaustive `bool` and closed const-set switches
+- redundant left or right sides of `&&` / `||`
+- repeated no-arg `IsX()` predicate checks after guard clauses
+- unreachable `switch` cases on already-filtered paths
+
+Structural ceremony:
+
+- boolean-return or boolean-assignment ceremony like
+  `if cond { return true }; return false`
+- identical `if` / `else` bodies
+- adjacent `switch` cases with identical bodies
+- redundant `default` clauses in exhaustive `bool` and closed const-set switches
 - redundant `len(src) > 0` guards before `append(dst, src...)`
+- adjacent `range` loops that repeat the same body
 - one-read temp aliases like `name := req.Name`
+
+Package-level smells:
+
 - trivial private wrappers with one production callsite
 - doc comments that only restate private declaration names
 - `IsX` predicates that do not return `bool` or `(bool, error)`
@@ -43,44 +47,33 @@ Shipped rules:
 - private result wrappers that only carry value plus status
 - generic helper names when paired with another smell
 
-## Why this exists
+## How It Works
 
-Classic Go linters already cover many syntax bugs, suspicious APIs, and generic
-style rules.
-
-`slopelint` goes after a different failure mode: code that looks cautious or
-structured, but no longer carries real information.
-
-Examples:
-
-- checks that are already proven true or false
-- branch structure that can be merged or deleted
-- helpers and locals that add indirection without meaning
-- comments that explain nothing
-
-## How it works
-
-`slopelint` runs on top of `go/analysis`.
-
-It parses and type-checks matched packages, then tracks small path facts for:
+`slopelint` runs on top of `go/analysis`. It parses and type-checks matched
+packages, then tracks small path facts for:
 
 - `x == nil` / `x != nil`
 - `name == ""` / `name != ""`
 - `len(items) == 0` / `len(items) > 0`
-- boolean facts
-- no-arg `IsX()` predicate facts
+- booleans
+- no-arg `IsX()` predicate results
 - selector chains like `req.User.Role == Admin`
 
 It also:
 
 - preserves simple aliases like `name := req.Name`
-- derives facts from helper return values
-- imports and exports summaries across same-repo package boundaries
+- invalidates facts conservatively after writes, unknown calls, loops, closures,
+  goroutines, `select`, and type switches
+- infers helper summaries for guard-like functions
+- exports `go/analysis` facts so imported helpers can carry summaries across
+  package boundaries
 - propagates boolean and `error`/`nil`-style result facts
 - supports opt-in contracts via `//slopelint:ensures ...`
 - caches diagnostics and exported summaries on disk for faster reruns
 
-## Example
+## Examples
+
+Path redundancy:
 
 ```go
 func valid(req *Req) bool {
@@ -107,7 +100,7 @@ func handle(req *Req) {
 }
 ```
 
-Wrapper example:
+Trivial wrapper:
 
 ```go
 func execute(name string) bool { return name != "" }
@@ -122,7 +115,7 @@ func use(name string) bool {
 }
 ```
 
-Normalization example:
+Repeated normalization:
 
 ```go
 func defaultName(name string) string {
@@ -134,58 +127,78 @@ func defaultName(name string) string {
 }
 ```
 
+## Requirements
+
+- Go 1.22+
+- For full repo health checks: `golangci-lint`, `deadcode`, Node.js, and `npx`
+
 ## Build
 
 ```bash
-go build -o slopelint ./cmd/slopelint
+go build -o ./bin/slopelint ./cmd/slopelint
 ```
 
 ## Run
 
 ```bash
-./slopelint ./...
-./slopelint ./internal/...
-./slopelint -max-states=64 ./...
-go vet -vettool=$(pwd)/slopelint ./...
+go run ./cmd/slopelint ./...
+go run ./cmd/slopelint -json ./...
+go run ./cmd/slopelint -max-states=64 ./...
+
+./bin/slopelint ./...
+go vet -vettool=$(pwd)/bin/slopelint ./...
 ```
 
-Repo code-health checks run `slopelint` on this repo itself:
+Useful `slopelint` flags:
 
-```bash
-./scripts/check-code-health.sh
-```
+- `-max-states`: maximum symbolic states before widening, default `32`
+- `-cache`: reuse cached analysis for unchanged packages, default `true`
+- `-cache-dir=/path/to/cache`: override persistent cache location
 
-Useful flags:
+Useful inherited `singlechecker` flags:
 
-- `-max-states`: widening cap for symbolic paths
-- `-cache=false`: disable persistent cache
-- `-cache-dir=/path/to/cache`: override cache location
+- `-json`: emit machine-readable diagnostics
+- `-test=false`: skip test files
+- `-c=N`: show source context around diagnostics
+- `-flags`: print analyzer flags as JSON
 
 Useful env vars:
 
-- `SLOPELINT_CACHE=0`
-- `SLOPELINT_CACHE_DIR=/path/to/cache`
+- `SLOPELINT_CACHE=0`: disable cache
+- `SLOPELINT_CACHE_DIR=/path/to/cache`: override cache root
 
 Legacy aliases still work:
 
 - `DEFENSELINT_CACHE=0`
 - `DEFENSELINT_CACHE_DIR=/path/to/cache`
 
-Default cache location: `os.UserCacheDir()/slopelint/analysis-v*`
+Default cache location: `os.UserCacheDir()/slopelint/analysis-v2`
 
-## Current limits
+## Development
+
+```bash
+go test ./...
+./scripts/format-code.sh
+./scripts/check-code-health.sh
+```
+
+`check-code-health.sh` runs `go vet`, `slopelint` on this repo, `go test`,
+`golangci-lint run`, `deadcode`, and `jscpd` with production-code clone
+threshold `0`.
+
+## Current Limits
 
 - not a general style or architecture linter
-- skips functions containing `goto`
-- conservative around writes, unknown calls, loops, `select`, `type switch`,
-  labeled control flow
-- strongest today on path-based proof; broader smell rules stay conservative
+- skips path analysis for functions containing `goto`
+- conservative around writes, unknown calls, loops, closures, goroutines,
+  `select`, type switches, and labeled control flow
+- strongest on small path facts and local/private API smells
 - weak at type-level semantic meaning
-- report-only today; no custom autofix implementation yet
+- reports only; no custom autofix implementation yet
 
 ## Rule IDs
 
-Machine-readable categories emitted today:
+Machine-readable diagnostic categories emitted today:
 
 - `redundant_condition`
 - `redundant_subexpression`
@@ -209,7 +222,7 @@ Machine-readable categories emitted today:
 
 ## Contracts
 
-Use contracts when helper body is unavailable or when you want guarantees to be
+Use contracts when a helper body is unavailable, or when a guarantee should be
 explicit:
 
 ```go
@@ -218,8 +231,14 @@ explicit:
 func requireReq(req *Req) {}
 ```
 
-After `requireReq(req)`, reachable path inherits those facts.
+After `requireReq(req)`, reachable paths inherit those facts.
 
-## Roadmap
+Contract form:
 
-Planned checks, rule lanes, priorities: [docs/rule-roadmap.md](docs/rule-roadmap.md)
+```text
+//slopelint:ensures <param-or-receiver>[.<field>...] ==|!= <scalar>
+```
+
+Supported scalars: `nil`, `true`, `false`, quoted strings, and base-10 ints.
+Receiver contracts work on named receivers. Legacy `//defenselint:ensures`
+comments still work.

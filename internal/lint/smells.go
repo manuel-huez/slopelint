@@ -473,7 +473,7 @@ func forwardedCallMatchesParams(
 	}
 
 	for idx, arg := range call.Args {
-		if !identRefersToObject(info, arg, params[idx]) {
+		if !exprForwardsParam(info, arg, params[idx]) {
 			return false
 		}
 	}
@@ -481,8 +481,68 @@ func forwardedCallMatchesParams(
 	return true
 }
 
+func exprForwardsParam(info *types.Info, expr ast.Expr, obj types.Object) bool {
+	if identRefersToObject(info, expr, obj) {
+		return true
+	}
+
+	return fieldSelectorOnObject(info, expr, obj) ||
+		typeConversionOfObject(info, expr, obj) ||
+		zeroArgMethodCallOnObject(info, expr, obj)
+}
+
+func fieldSelectorOnObject(info *types.Info, expr ast.Expr, obj types.Object) bool {
+	sel, ok := ast.Unparen(expr).(*ast.SelectorExpr)
+	if !ok || !identRefersToObject(info, sel.X, obj) {
+		return false
+	}
+
+	selection := info.Selections[sel]
+
+	return selection != nil && selection.Kind() == types.FieldVal
+}
+
+func typeConversionOfObject(info *types.Info, expr ast.Expr, obj types.Object) bool {
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 || call.Ellipsis != token.NoPos {
+		return false
+	}
+
+	tv, ok := info.Types[call.Fun]
+	if !ok {
+		tv, ok = info.Types[ast.Unparen(call.Fun)]
+	}
+
+	if !ok || !tv.IsType() {
+		return false
+	}
+
+	return identRefersToObject(info, call.Args[0], obj)
+}
+
+func zeroArgMethodCallOnObject(info *types.Info, expr ast.Expr, obj types.Object) bool {
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 || call.Ellipsis != token.NoPos {
+		return false
+	}
+
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok || !identRefersToObject(info, sel.X, obj) {
+		return false
+	}
+
+	selection := info.Selections[sel]
+	if selection == nil || selection.Kind() != types.MethodVal {
+		return false
+	}
+
+	_, ok = selection.Obj().(*types.Func)
+
+	return ok
+}
+
 func identRefersToObject(info *types.Info, expr ast.Expr, obj types.Object) bool {
-	ident, ok := expr.(*ast.Ident)
+	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok || ident == nil {
 		return false
 	}

@@ -1688,6 +1688,112 @@ func use(name string) bool {
 	}
 }
 
+func TestDetectsTrivialForwarderWithParamMethodAdapterExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type CacheScope map[string]string
+
+func (s CacheScope) StringMap() map[string]string { return s }
+
+func fxScopeCurrencies(scope map[string]string) (string, string, error) {
+	return scope["from"], scope["to"], nil
+}
+
+func fxCacheScopeCurrencies(scope CacheScope) (string, string, error) {
+	return fxScopeCurrencies(scope.StringMap())
+}
+
+func use(scope CacheScope) error {
+	_, _, err := fxCacheScopeCurrencies(scope)
+	return err
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "fxCacheScopeCurrencies" only forwards to "fxScopeCurrencies" at one callsite; inline or merge names`,
+	) {
+		t.Fatalf("expected trivial adapter forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsTrivialForwarderWithParamFieldAndConversionAdaptersExperimental(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type CurrencyCode string
+
+type request struct {
+	ID string
+}
+
+func convertScope(id string, code string) (string, error) {
+	return id + code, nil
+}
+
+func convertRequest(req request, code CurrencyCode) (string, error) {
+	return convertScope(req.ID, string(code))
+}
+
+func use(req request, code CurrencyCode) error {
+	_, err := convertRequest(req, code)
+	return err
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "convertRequest" only forwards to "convertScope" at one callsite; inline or merge names`,
+	) {
+		t.Fatalf("expected trivial field/conversion adapter forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsTrivialForwarderWithReorderedAdapterArgs(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type CurrencyCode string
+
+type request struct {
+	ID string
+}
+
+func convertScope(id string, code string) (string, error) {
+	return id + code, nil
+}
+
+func convertRequest(req request, code CurrencyCode) (string, error) {
+	return convertScope(string(code), req.ID)
+}
+
+func use(req request, code CurrencyCode) error {
+	_, err := convertRequest(req, code)
+	return err
+}
+`)
+
+	issues := lintInDirWithOptions(t, tmp, Options{MaxStates: 32, Experimental: true})
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only forwards to "convertScope"`) {
+		t.Fatalf(
+			"unexpected trivial adapter forwarder finding with reordered args, got:\n%s",
+			joined,
+		)
+	}
+}
+
 func TestSkipsTrivialForwarderWhenReturnOrderChanges(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

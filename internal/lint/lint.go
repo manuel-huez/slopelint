@@ -2287,6 +2287,10 @@ func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
 		return scalar{kind: scalarNil, text: nilText}, true
 	}
 
+	if l.isRuntimeTargetConstant(expr) {
+		return scalar{}, false
+	}
+
 	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok {
 		if tv.Value != nil {
 			return scalarFromConstantValue(tv.Value)
@@ -2298,6 +2302,20 @@ func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
 	}
 
 	return scalar{}, false
+}
+
+func (l *linter) isRuntimeTargetConstant(expr ast.Expr) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	obj, ok := l.pkg.TypesInfo.Uses[sel.Sel].(*types.Const)
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
+		return false
+	}
+
+	return obj.Name() == "GOOS" || obj.Name() == "GOARCH"
 }
 
 func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {

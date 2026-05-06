@@ -34,6 +34,31 @@ func f(s string, p *int) {
 	}
 }
 
+func TestRuntimeTargetConstantsDoNotBecomeRedundantConditions(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "runtime"
+
+func f() {
+	if runtime.GOOS != "windows" { println("ok") }
+	if runtime.GOARCH == "amd64" { println("ok") }
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `runtime.GOOS != "windows"`) ||
+		strings.Contains(joined, `runtime.GOARCH == "amd64"`) {
+		t.Fatalf(
+			"runtime target constants should not be folded into redundant conditions, got:\n%s",
+			joined,
+		)
+	}
+}
+
 func TestPointerCallsKeepRootNilnessButInvalidateFields(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

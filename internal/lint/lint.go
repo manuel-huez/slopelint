@@ -1403,7 +1403,8 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 		return triFalse, nil
 	}
 
-	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok && tv.Value != nil {
+	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok && tv.Value != nil &&
+		!l.containsRuntimeTargetConstant(expr) {
 		if scalar, ok := scalarFromConstantValue(tv.Value); ok && scalar.kind == scalarBool {
 			if scalar.text == boolTrueText {
 				return triTrue, nil
@@ -2293,6 +2294,10 @@ func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
 
 	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok {
 		if tv.Value != nil {
+			if l.containsRuntimeTargetConstant(expr) {
+				return scalar{}, false
+			}
+
 			return scalarFromConstantValue(tv.Value)
 		}
 
@@ -2316,6 +2321,30 @@ func (l *linter) isRuntimeTargetConstant(expr ast.Expr) bool {
 	}
 
 	return obj.Name() == "GOOS" || obj.Name() == "GOARCH"
+}
+
+func (l *linter) containsRuntimeTargetConstant(expr ast.Expr) bool {
+	found := false
+
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if found || n == nil {
+			return false
+		}
+
+		expr, ok := n.(ast.Expr)
+		if !ok {
+			return true
+		}
+
+		if l.isRuntimeTargetConstant(l.unparen(expr)) {
+			found = true
+			return false
+		}
+
+		return true
+	})
+
+	return found
 }
 
 func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {

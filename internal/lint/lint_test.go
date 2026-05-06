@@ -50,8 +50,9 @@ func f() {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `runtime.GOOS != "windows"`) ||
-		strings.Contains(joined, `runtime.GOARCH == "amd64"`) {
+	if strings.Contains(joined, `condition "runtime.GOOS != \"windows\"" is always true here`) ||
+		strings.Contains(joined, `condition "runtime.GOARCH == \"amd64\"" is always true here`) ||
+		strings.Contains(joined, `condition "runtime.GOARCH == \"amd64\"" is always false here`) {
 		t.Fatalf(
 			"runtime target constants should not be folded into redundant conditions, got:\n%s",
 			joined,

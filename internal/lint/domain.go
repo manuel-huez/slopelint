@@ -362,15 +362,6 @@ func isPointerLike(t types.Type) bool {
 	}
 }
 
-func isErrorType(t types.Type) bool {
-	errorObj := types.Universe.Lookup("error")
-	if errorObj == nil {
-		return false
-	}
-
-	return types.Identical(types.Unalias(t), errorObj.Type())
-}
-
 func isIsPredicateName(name string) bool {
 	if !strings.HasPrefix(name, "Is") || len(name) <= len("Is") {
 		return false

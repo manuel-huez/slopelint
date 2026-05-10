@@ -1,4 +1,4 @@
-package lint
+package smells
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 
 const repeatedNormalizationReportCount = 2
 
-func (l *linter) checkRepeatedNormalizationCallsPackage() {
+func (l *Runner) checkRepeatedNormalizationCallsPackage() {
 	for _, file := range l.pkg.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch fn := n.(type) {
@@ -24,7 +24,7 @@ func (l *linter) checkRepeatedNormalizationCallsPackage() {
 	}
 }
 
-func (l *linter) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
+func (l *Runner) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
 	if body == nil {
 		return
 	}
@@ -64,7 +64,7 @@ func (l *linter) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
 	})
 }
 
-func (l *linter) normalizationCall(call *ast.CallExpr) (*ast.CallExpr, bool) {
+func (l *Runner) normalizationCall(call *ast.CallExpr) (*ast.CallExpr, bool) {
 	fn, _, ok := l.calledFunc(call)
 	if !ok || fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != "strings" {
 		return nil, false
@@ -88,7 +88,7 @@ func (l *linter) normalizationCall(call *ast.CallExpr) (*ast.CallExpr, bool) {
 	}
 }
 
-func (l *linter) isTrimSpaceCall(expr ast.Expr) bool {
+func (l *Runner) isTrimSpaceCall(expr ast.Expr) bool {
 	call, ok := l.unparen(expr).(*ast.CallExpr)
 	if !ok {
 		return false

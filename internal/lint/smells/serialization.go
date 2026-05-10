@@ -1,4 +1,4 @@
-package lint
+package smells
 
 import (
 	"fmt"
@@ -10,9 +10,10 @@ const (
 	marshalJSONMethodName = "MarshalJSON"
 	marshalTextMethodName = "MarshalText"
 	stringMethodName      = "String"
+	encodingJSONPkgPath   = "encoding/json"
 )
 
-func (l *linter) checkRedundantJSONMarshalText() {
+func (l *Runner) checkRedundantJSONMarshalText() {
 	textMarshalers := l.valueTextMarshalerTypes()
 	if len(textMarshalers) == 0 {
 		return
@@ -43,7 +44,7 @@ func (l *linter) checkRedundantJSONMarshalText() {
 	}
 }
 
-func (l *linter) valueTextMarshalerTypes() map[string]struct{} {
+func (l *Runner) valueTextMarshalerTypes() map[string]struct{} {
 	out := make(map[string]struct{})
 
 	for _, file := range l.pkg.Files {
@@ -65,7 +66,7 @@ func (l *linter) valueTextMarshalerTypes() map[string]struct{} {
 	return out
 }
 
-func (l *linter) redundantJSONMarshalTextMethod(
+func (l *Runner) redundantJSONMarshalTextMethod(
 	fn *ast.FuncDecl,
 	textMarshalers map[string]struct{},
 ) (string, bool) {
@@ -121,7 +122,7 @@ func receiverVarObject(info *types.Info, fn *ast.FuncDecl) (*types.Var, bool) {
 	return obj, true
 }
 
-func (l *linter) marshalJSONOnlyMarshalsString(
+func (l *Runner) marshalJSONOnlyMarshalsString(
 	body *ast.BlockStmt,
 	recvObj *types.Var,
 ) bool {
@@ -139,23 +140,14 @@ func (l *linter) marshalJSONOnlyMarshalsString(
 		return false
 	}
 
-	if !l.isEncodingJSONMarshalCall(call) {
+	if !l.isPackageFuncCall(call, encodingJSONPkgPath, "Marshal") {
 		return false
 	}
 
 	return l.isReceiverStringCall(call.Args[0], recvObj)
 }
 
-func (l *linter) isEncodingJSONMarshalCall(call *ast.CallExpr) bool {
-	fn, _, ok := l.calledFunc(call)
-	if !ok || fn == nil || fn.Pkg() == nil {
-		return false
-	}
-
-	return fn.Pkg().Path() == "encoding/json" && fn.Name() == "Marshal"
-}
-
-func (l *linter) isReceiverStringCall(expr ast.Expr, recvObj *types.Var) bool {
+func (l *Runner) isReceiverStringCall(expr ast.Expr, recvObj *types.Var) bool {
 	call, ok := l.unparen(expr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 0 {
 		return false

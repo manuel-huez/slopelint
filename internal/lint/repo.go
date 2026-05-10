@@ -1,6 +1,10 @@
 package lint
 
-import "sort"
+import (
+	"sort"
+
+	deadcodecheck "example.com/slopelint/internal/lint/deadcode"
+)
 
 // LintPackages runs repo-aware analysis across loaded packages.
 func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
@@ -9,24 +13,48 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 	}
 
 	explicitFacts, inferredFacts := inferRepoSummaries(pkgs, opts)
+	repoDeadCode := hasMainPackage(pkgs)
+	repoOpts := opts
+	repoOpts.skipDeadCode = repoDeadCode
 
 	sort.Slice(pkgs, func(i, j int) bool {
 		return pkgs[i].ImportPath < pkgs[j].ImportPath
 	})
 
-	var issues []Issue
+	var (
+		deadPkgs = make([]*deadcodecheck.Package, 0, len(pkgs))
+		issues   []Issue
+	)
 
 	for _, pkg := range pkgs {
-		l := newLinter(pkg, opts)
+		l := newLinter(pkg, repoOpts)
 		l.explicitFacts = explicitFacts
 		l.inferredFacts = inferredFacts
 		l.collectLocalFuncLits()
 		l.analyzeFiles()
 		sortIssues(pkg.FSet, l.issues)
 		issues = append(issues, l.issues...)
+
+		if repoDeadCode {
+			deadPkgs = append(deadPkgs, l.deadCodePackage())
+		}
+	}
+
+	if repoDeadCode {
+		issues = append(issues, repoDeadCodeIssues(deadPkgs)...)
 	}
 
 	return issues
+}
+
+func hasMainPackage(pkgs []*LoadedPackage) bool {
+	for _, pkg := range pkgs {
+		if pkg != nil && pkg.Name == mainPkgName {
+			return true
+		}
+	}
+
+	return false
 }
 
 func inferRepoSummaries(

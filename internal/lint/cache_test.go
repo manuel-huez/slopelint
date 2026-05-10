@@ -43,16 +43,15 @@ func f(s string) {
 
 	var hits []string
 
-	setAnalysisCacheHitHook(t, func(importPath string) {
-		hits = append(hits, importPath)
-	})
-
 	pass2, state2 := newAnalysisTestPass(pkg, nil)
 
 	issues2, err := RunAnalysis(pass2, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
 		CacheDir:     cacheDir,
+		CacheHitHook: func(importPath string) {
+			hits = append(hits, importPath)
+		},
 	})
 	if err != nil {
 		t.Fatalf("second run: %v", err)
@@ -169,27 +168,20 @@ func Check(req *Req) error {
 		t.Fatalf("guard second run: %v", err)
 	}
 
-	useHits := 0
-
-	setAnalysisCacheHitHook(t, func(importPath string) {
-		if importPath == usePkg.ImportPath {
-			useHits++
-		}
-	})
-
 	usePass2, _ := newAnalysisTestPass(usePkg, guardState2.exported)
 
 	issues2, err := RunAnalysis(usePass2, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
 		CacheDir:     cacheDir,
+		CacheHitHook: func(importPath string) {
+			if importPath == usePkg.ImportPath {
+				t.Fatalf("expected imported-fact change to invalidate use cache")
+			}
+		},
 	})
 	if err != nil {
 		t.Fatalf("use second run: %v", err)
-	}
-
-	if useHits != 0 {
-		t.Fatalf("expected imported-fact change to invalidate use cache, got %d hits", useHits)
 	}
 
 	secondDigest := issuesDigest(usePkg.FSet, issues2)
@@ -437,14 +429,4 @@ func countCacheEntries(t *testing.T, dir string) int {
 	}
 
 	return count
-}
-
-func setAnalysisCacheHitHook(t *testing.T, hook func(string)) {
-	t.Helper()
-
-	analysisCacheHitHook = hook
-
-	t.Cleanup(func() {
-		analysisCacheHitHook = nil
-	})
 }

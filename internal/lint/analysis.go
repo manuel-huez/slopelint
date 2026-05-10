@@ -51,7 +51,7 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 	cache, err := newAnalysisCache(pass, pkg, opts)
 	if err == nil {
 		if entry, ok := cache.load(); ok {
-			if issues, ok := replayAnalysisCache(pass, pkg, entry); ok {
+			if issues, ok := replayAnalysisCache(pass, pkg, entry, opts.CacheHitHook); ok {
 				sortIssues(pkg.FSet, issues)
 
 				return issues, nil

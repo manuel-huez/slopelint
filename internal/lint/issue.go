@@ -10,6 +10,7 @@ type Issue struct {
 	Pos     token.Pos
 	Kind    string
 	Message string
+	fset    *token.FileSet
 }
 
 func sortIssues(fset *token.FileSet, issues []Issue) {
@@ -31,4 +32,18 @@ func sortIssues(fset *token.FileSet, issues []Issue) {
 
 		return issues[i].Message < issues[j].Message
 	})
+}
+
+// FormatIssuePosition returns a stable source position for an issue.
+func FormatIssuePosition(issue Issue) string {
+	if issue.fset == nil {
+		return unknownPos
+	}
+
+	position := issue.fset.Position(issue.Pos)
+	if !position.IsValid() {
+		return unknownPos
+	}
+
+	return position.String()
 }

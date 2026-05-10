@@ -1,4 +1,4 @@
-package lint
+package structure
 
 import (
 	"fmt"
@@ -18,7 +18,7 @@ type constSetCoverage struct {
 	covered       map[string]struct{}
 }
 
-func (l *linter) checkExhaustiveConstSetDefault(stmt *ast.SwitchStmt) {
+func (l *Runner) checkExhaustiveConstSetDefault(stmt *ast.SwitchStmt) {
 	coverage, ok := l.constSetSwitchCoverage(stmt)
 	if !ok || !coverage.exhaustive() {
 		return
@@ -46,7 +46,7 @@ func (l *linter) checkExhaustiveConstSetDefault(stmt *ast.SwitchStmt) {
 	)
 }
 
-func (l *linter) constSetSwitchCoverage(stmt *ast.SwitchStmt) (constSetCoverage, bool) {
+func (l *Runner) constSetSwitchCoverage(stmt *ast.SwitchStmt) (constSetCoverage, bool) {
 	named, ok := l.closedConstSetSwitchType(stmt)
 	if !ok {
 		return constSetCoverage{}, false
@@ -64,26 +64,18 @@ func (l *linter) constSetSwitchCoverage(stmt *ast.SwitchStmt) (constSetCoverage,
 		covered:  make(map[string]struct{}, len(universe)),
 	}
 
-	for _, raw := range stmt.Body.List {
-		clause, ok := raw.(*ast.CaseClause)
-		if !ok || clause == nil {
-			continue
-		}
-
-		if len(clause.List) == 0 {
-			coverage.defaultClause = clause
-			continue
-		}
-
-		if !l.addConstSetCaseCoverage(clause.List, &coverage) {
-			return constSetCoverage{}, false
-		}
+	if !forEachSwitchCase(stmt, func(clause *ast.CaseClause) {
+		coverage.defaultClause = clause
+	}, func(list []ast.Expr) bool {
+		return l.addConstSetCaseCoverage(list, &coverage)
+	}) {
+		return constSetCoverage{}, false
 	}
 
 	return coverage, true
 }
 
-func (l *linter) closedConstSetSwitchType(stmt *ast.SwitchStmt) (*types.Named, bool) {
+func (l *Runner) closedConstSetSwitchType(stmt *ast.SwitchStmt) (*types.Named, bool) {
 	named, ok := l.pkg.TypesInfo.TypeOf(stmt.Tag).(*types.Named)
 	if !ok || named == nil || named.Obj() == nil || named.Obj().Pkg() == nil {
 		return nil, false
@@ -96,7 +88,7 @@ func (l *linter) closedConstSetSwitchType(stmt *ast.SwitchStmt) (*types.Named, b
 	return named, true
 }
 
-func (l *linter) constSetValues(named *types.Named) (map[string]string, bool) {
+func (l *Runner) constSetValues(named *types.Named) (map[string]string, bool) {
 	values := make(map[string]string)
 
 	for _, file := range l.pkg.Files {
@@ -115,7 +107,7 @@ func (l *linter) constSetValues(named *types.Named) (map[string]string, bool) {
 	return values, len(values) >= minimumClosedConstSetSize
 }
 
-func (l *linter) addConstSetValuesFromDecl(
+func (l *Runner) addConstSetValuesFromDecl(
 	decl *ast.GenDecl,
 	named *types.Named,
 	values map[string]string,
@@ -149,7 +141,7 @@ func (l *linter) addConstSetValuesFromDecl(
 	return true
 }
 
-func (l *linter) addConstSetCaseCoverage(
+func (l *Runner) addConstSetCaseCoverage(
 	list []ast.Expr,
 	coverage *constSetCoverage,
 ) bool {
@@ -217,7 +209,7 @@ func zeroValueScalarForNamed(named *types.Named) (scalar, bool) {
 	}
 }
 
-func (l *linter) defaultHandlesInvalidConstSetValue(body []ast.Stmt) bool {
+func (l *Runner) defaultHandlesInvalidConstSetValue(body []ast.Stmt) bool {
 	text := strings.ToLower(l.renderStmtList(body))
 
 	return strings.Contains(text, "invalid") ||

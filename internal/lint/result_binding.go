@@ -206,21 +206,7 @@ func boundContractKey(contract boundContract) string {
 }
 
 func dedupeStates(states []state) []state {
-	if len(states) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]state, len(states))
-	for _, st := range states {
-		seen[st.hash()] = st
-	}
-
-	out := make([]state, 0, len(seen))
-	for _, st := range seen {
-		out = append(out, st)
-	}
-
-	return out
+	return dedupeStateSlice(states)
 }
 
 func instantiateResultBinding(

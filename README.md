@@ -46,6 +46,8 @@ Package-level smells:
 - functional options around tiny private APIs
 - private result wrappers that only carry value plus status
 - generic helper names when paired with another smell
+- unused private functions, methods, types, vars, consts, and struct fields in production code
+- exported functions, methods, types, vars, consts, and struct fields unreachable from repo entrypoints
 
 ## How It Works
 
@@ -130,7 +132,7 @@ func defaultName(name string) string {
 ## Requirements
 
 - Go 1.22+
-- For full repo health checks: `golangci-lint`, `deadcode`, Node.js, and `npx`
+- For full repo health checks: `golangci-lint`, Node.js, and `npx`
 
 ## Build
 
@@ -142,7 +144,6 @@ go build -o ./bin/slopelint ./cmd/slopelint
 
 ```bash
 go run ./cmd/slopelint ./...
-go run ./cmd/slopelint -json ./...
 go run ./cmd/slopelint -max-states=64 ./...
 
 ./bin/slopelint ./...
@@ -152,8 +153,6 @@ go vet -vettool=$(pwd)/bin/slopelint ./...
 Useful `slopelint` flags:
 
 - `-max-states`: maximum symbolic states before widening, default `32`
-- `-cache`: reuse cached analysis for unchanged packages, default `true`
-- `-cache-dir=/path/to/cache`: override persistent cache location
 
 Useful inherited `singlechecker` flags:
 
@@ -161,6 +160,8 @@ Useful inherited `singlechecker` flags:
 - `-test=false`: skip test files
 - `-c=N`: show source context around diagnostics
 - `-flags`: print analyzer flags as JSON
+- `-cache`: reuse cached analysis for unchanged packages, default `true`
+- `-cache-dir=/path/to/cache`: override persistent cache location
 
 Useful env vars:
 
@@ -178,8 +179,7 @@ go test ./...
 ```
 
 `check-code-health.sh` runs `go vet`, `slopelint` on this repo, `go test`,
-`golangci-lint run`, `deadcode`, and `jscpd` with production-code clone
-threshold `0`.
+`golangci-lint run`, and `jscpd` with production-code clone threshold `0`.
 
 ## Current Limits
 
@@ -188,6 +188,8 @@ threshold `0`.
 - conservative around writes, unknown calls, loops, closures, goroutines,
   `select`, type switches, and labeled control flow
 - strongest on small path facts and local/private API smells
+- repo-wide dead-code reachability runs in standalone `slopelint` mode when
+  loaded patterns include a `main` package; vettool mode stays package-scoped
 - weak at type-level semantic meaning
 - reports only; no custom autofix implementation yet
 
@@ -214,6 +216,12 @@ Machine-readable diagnostic categories emitted today:
 - `api_overkill`
 - `result_wrapper`
 - `generic_naming`
+- `dead_code`
+- `test_global_func_stub`
+- `bool_mode_param`
+- `optional_result_triple`
+- `prod_must_panic`
+- `sentinel_error_break`
 
 ## Contracts
 

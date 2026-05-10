@@ -1,0 +1,75 @@
+package smells
+
+import (
+	"go/types"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+func normalizeCommentText(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+func splitIdentifierWords(name string) []string {
+	var words []string
+
+	start := -1
+	runes := []rune(name)
+
+	flush := func(end int) {
+		if start < 0 || start >= end {
+			return
+		}
+
+		words = append(words, strings.ToLower(string(runes[start:end])))
+		start = -1
+	}
+
+	for idx, r := range runes {
+		if r == '_' {
+			flush(idx)
+			continue
+		}
+
+		if start < 0 {
+			start = idx
+			continue
+		}
+
+		prev := runes[idx-1]
+
+		nextLower := idx+1 < len(runes) && unicode.IsLower(runes[idx+1])
+		if unicode.IsLower(prev) && unicode.IsUpper(r) ||
+			unicode.IsUpper(prev) && unicode.IsUpper(r) && nextLower {
+			flush(idx)
+			start = idx
+		}
+	}
+
+	flush(len(runes))
+
+	return words
+}
+
+func isBoolType(t types.Type) bool {
+	basic, ok := types.Unalias(t).Underlying().(*types.Basic)
+
+	return ok && basic.Info()&types.IsBoolean != 0
+}
+
+func isErrorType(t types.Type) bool {
+	errorType := types.Universe.Lookup("error")
+
+	return errorType != nil && types.Identical(types.Unalias(t), errorType.Type())
+}
+
+func isIsPredicateName(name string) bool {
+	if strings.TrimPrefix(name, "Is") == name || len(name) == len("Is") {
+		return false
+	}
+
+	r, _ := utf8.DecodeRuneInString(name[len("Is"):])
+
+	return r == '_' || unicode.IsUpper(r) || unicode.IsDigit(r)
+}

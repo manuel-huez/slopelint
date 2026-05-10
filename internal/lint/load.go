@@ -22,6 +22,7 @@ type packageMeta struct {
 	Dir             string   `json:"Dir"`
 	ImportPath      string   `json:"ImportPath"`
 	Name            string   `json:"Name"`
+	ForTest         string   `json:"ForTest"`
 	Export          string   `json:"Export"`
 	GoFiles         []string `json:"GoFiles"`
 	CompiledGoFiles []string `json:"CompiledGoFiles"`
@@ -49,21 +50,17 @@ func LoadPackages(patterns []string) ([]*LoadedPackage, error) {
 
 	byImportPath := make(map[string]*packageMeta, len(metas))
 
-	var targets []*packageMeta
-
 	for _, meta := range metas {
 		byImportPath[meta.ImportPath] = meta
-		if len(meta.Match) > 0 {
-			targets = append(targets, meta)
-		}
 	}
 
+	targets := matchedPackageTargets(metas, byImportPath)
 	if len(targets) == 0 {
 		return nil, errors.New("no matched packages were returned by go list")
 	}
 
 	sort.Slice(targets, func(i, j int) bool {
-		return targets[i].ImportPath < targets[j].ImportPath
+		return targets[i].targetImportPath() < targets[j].targetImportPath()
 	})
 
 	loaded := make([]*LoadedPackage, 0, len(targets))
@@ -80,7 +77,7 @@ func LoadPackages(patterns []string) ([]*LoadedPackage, error) {
 }
 
 func goList(patterns []string) ([]*packageMeta, error) {
-	args := append([]string{"list", "-deps", "-export", "-compiled", "-json"}, patterns...)
+	args := append([]string{"list", "-deps", "-test", "-export", "-compiled", "-json"}, patterns...)
 	cmd := exec.Command("go", args...)
 
 	var (
@@ -125,6 +122,43 @@ func goList(patterns []string) ([]*packageMeta, error) {
 	}
 
 	return metas, nil
+}
+
+func matchedPackageTargets(
+	metas []*packageMeta,
+	byImportPath map[string]*packageMeta,
+) []*packageMeta {
+	targetsByImportPath := make(map[string]*packageMeta)
+
+	for _, meta := range metas {
+		if len(meta.Match) == 0 {
+			continue
+		}
+
+		targetImportPath := meta.ImportPath
+		if meta.ForTest != "" {
+			base := byImportPath[meta.ForTest]
+			if base == nil || meta.Name != base.Name {
+				continue
+			}
+
+			targetImportPath = meta.ForTest
+		}
+
+		if existing := targetsByImportPath[targetImportPath]; existing != nil &&
+			existing.ForTest != "" {
+			continue
+		}
+
+		targetsByImportPath[targetImportPath] = meta
+	}
+
+	targets := make([]*packageMeta, 0, len(targetsByImportPath))
+	for _, target := range targetsByImportPath {
+		targets = append(targets, target)
+	}
+
+	return targets
 }
 
 func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPackage, error) {
@@ -183,13 +217,15 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 		},
 	}
 
-	typesPkg, err := conf.Check(meta.ImportPath, fset, files, info)
+	importPath := meta.targetImportPath()
+
+	typesPkg, err := conf.Check(importPath, fset, files, info)
 	if err != nil {
-		return nil, fmt.Errorf("type-check %s: %w", meta.ImportPath, err)
+		return nil, fmt.Errorf("type-check %s: %w", importPath, err)
 	}
 
 	return &LoadedPackage{
-		ImportPath: meta.ImportPath,
+		ImportPath: importPath,
 		Name:       meta.Name,
 		Dir:        meta.Dir,
 		FSet:       fset,
@@ -197,4 +233,12 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 		TypesPkg:   typesPkg,
 		TypesInfo:  info,
 	}, nil
+}
+
+func (meta *packageMeta) targetImportPath() string {
+	if meta.ForTest != "" {
+		return meta.ForTest
+	}
+
+	return meta.ImportPath
 }

@@ -44,6 +44,7 @@ Package-level smells:
 - single-use private helpers with tiny bodies
 - single-implementation private interfaces
 - functional options around tiny private APIs
+- private parameters always passed as zero value by production callsites
 - private result wrappers that only carry value plus status
 - generic helper names when paired with another smell
 - unused private functions, methods, types, vars, consts, and struct fields in production code

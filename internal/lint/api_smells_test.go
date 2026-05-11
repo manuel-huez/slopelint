@@ -142,6 +142,94 @@ func run(final bool) {
 	}
 }
 
+func TestDetectsZeroValuePrivateArg(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Coverage struct {
+	Start string
+}
+
+func (coverage Coverage) IsZero() bool {
+	return coverage.Start == ""
+}
+
+func (coverage Coverage) ContainsDate(value string) bool {
+	return coverage.Start <= value
+}
+
+func encode(rows []string) []string {
+	return encodeInCoverage(rows, Coverage{})
+}
+
+func encodeInCoverage(rows []string, coverage Coverage) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if !coverageContainsDate(coverage, row) {
+			continue
+		}
+
+		out = append(out, row)
+	}
+
+	return out
+}
+
+func coverageContainsDate(coverage Coverage, date string) bool {
+	return coverage.IsZero() || coverage.ContainsDate(date)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private function "encodeInCoverage" parameter "coverage" is always called with zero value "Coverage{}"; remove the parameter or pass real variation`,
+	) {
+		t.Fatalf("expected zero-value-arg finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "api_overkill") {
+		t.Fatalf("expected api_overkill kind, got %#v", issues)
+	}
+}
+
+func TestSkipsZeroValuePrivateArgWithRealCallerValue(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Coverage struct {
+	Start string
+}
+
+func encode(rows []string) []string {
+	return encodeInCoverage(rows, Coverage{})
+}
+
+func encodeWindow(rows []string, coverage Coverage) []string {
+	return encodeInCoverage(rows, coverage)
+}
+
+func encodeInCoverage(rows []string, coverage Coverage) []string {
+	if coverage.Start == "" {
+		return rows
+	}
+
+	return rows[:0]
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `is always called with zero value`) {
+		t.Fatalf("unexpected zero-value-arg finding with real caller value, got:\n%s", joined)
+	}
+}
+
 func TestDetectsOptionalResultTriple(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

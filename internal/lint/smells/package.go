@@ -67,6 +67,7 @@ func RunPackage(pkg *Package) []Finding {
 	r.checkInternalResultWrappers()
 	r.checkTestGlobalFuncStubs()
 	r.checkBoolModeParams()
+	r.checkZeroValuePrivateArgs()
 	r.checkOptionalResultTriples()
 	r.checkProductionErrorPanics()
 	r.checkSentinelErrorBreaks()

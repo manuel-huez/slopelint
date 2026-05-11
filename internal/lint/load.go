@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"sync"
 )
 
 type packageMeta struct {
@@ -63,17 +64,7 @@ func LoadPackages(patterns []string) ([]*LoadedPackage, error) {
 		return targets[i].targetImportPath() < targets[j].targetImportPath()
 	})
 
-	loaded := make([]*LoadedPackage, 0, len(targets))
-	for _, meta := range targets {
-		pkg, err := loadOne(meta, byImportPath)
-		if err != nil {
-			return nil, err
-		}
-
-		loaded = append(loaded, pkg)
-	}
-
-	return loaded, nil
+	return loadPackageTargets(targets, byImportPath)
 }
 
 func goList(patterns []string) ([]*packageMeta, error) {
@@ -159,6 +150,66 @@ func matchedPackageTargets(
 	}
 
 	return targets
+}
+
+func loadPackageTargets(
+	targets []*packageMeta,
+	byImportPath map[string]*packageMeta,
+) ([]*LoadedPackage, error) {
+	loaded := make([]*LoadedPackage, len(targets))
+	errs := make([]error, len(targets))
+	jobs := make(chan int)
+
+	var wg sync.WaitGroup
+	for range loadWorkerCount(len(targets)) {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for idx := range jobs {
+				pkg, err := loadOne(targets[idx], byImportPath)
+				if err != nil {
+					errs[idx] = err
+					continue
+				}
+
+				loaded[idx] = pkg
+			}
+		}()
+	}
+
+	for idx := range targets {
+		jobs <- idx
+	}
+
+	close(jobs)
+	wg.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return loaded, nil
+}
+
+func loadWorkerCount(targetCount int) int {
+	if targetCount <= 1 {
+		return 1
+	}
+
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		return 1
+	}
+
+	if workers > targetCount {
+		return targetCount
+	}
+
+	return workers
 }
 
 func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPackage, error) {

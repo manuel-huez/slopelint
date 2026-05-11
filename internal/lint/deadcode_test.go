@@ -283,6 +283,348 @@ func Facts() []Fact {
 	}
 }
 
+func TestRepoDeadCodeKeepsStructFieldInterfaceMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Response()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"io"
+	"net/http"
+)
+
+type body struct{}
+
+func (*body) Read([]byte) (int, error) { return 0, io.EOF }
+func (*body) Close() error { return nil }
+func (*body) unusedPrivate() {}
+
+func Response() *http.Response {
+	return &http.Response{Body: &body{}}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "Read"`,
+		`method "Close"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf("interface method reported dead for %q, got:\n%s", unexpected, joined)
+		}
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsGenericConstraintMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+type rowMarker interface {
+	markRow()
+}
+
+type row struct{}
+
+func (row) markRow() {}
+func (row) unusedPrivate() {}
+
+func emit[T rowMarker](value T) {}
+
+func Live() {
+	emit(row{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "markRow"`) {
+		t.Fatalf("generic constraint method reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsCrossPackageGenericConstraintMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/source"
+
+func main() {
+	source.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "contract", "contract.go"), `package contract
+
+type Row interface {
+	processRow()
+}
+
+type DailyBar struct{}
+
+func (DailyBar) processRow() {}
+func (DailyBar) unusedPrivate() {}
+`)
+	writeFile(t, filepath.Join(tmp, "source", "source.go"), `package source
+
+import "example.com/sample/contract"
+
+func emit[T contract.Row](value T) {}
+
+func Live() {
+	emit(contract.DailyBar{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "processRow"`) {
+		t.Fatalf("cross-package generic constraint method reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsMarshalPrefixedMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save(lib.State{Status: lib.StatusReady, Name: "x"})
+	_, _ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+type Status int
+
+const StatusReady Status = 1
+
+func (status Status) MarshalJSON() ([]byte, error) {
+	return json.Marshal(statusName(status))
+}
+
+func (status *Status) UnmarshalJSON(body []byte) error {
+	var value string
+	if err := json.Unmarshal(body, &value); err != nil {
+		return err
+	}
+
+	parsed, err := parseStatus(value)
+	if err != nil {
+		return err
+	}
+
+	*status = parsed
+
+	return nil
+}
+
+func statusName(status Status) string {
+	if status == StatusReady {
+		return "ready"
+	}
+
+	return "unknown"
+}
+
+func parseStatus(value string) (Status, error) {
+	if value == "ready" {
+		return StatusReady, nil
+	}
+
+	return 0, fmt.Errorf("invalid status %q", value)
+}
+
+type State struct {
+	Status Status `+"`json:\"status\"`"+`
+	Name   string `+"`json:\"name\"`"+`
+	Extra  string `+"`json:\"extra\"`"+`
+}
+
+func Save(state State) ([]byte, error) {
+	return json.MarshalIndent(state, "", "  ")
+}
+
+func Load(body []byte) (State, error) {
+	var state State
+	err := json.Unmarshal(body, &state)
+
+	return state, err
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "MarshalJSON"`,
+		`method "UnmarshalJSON"`,
+		`function "parseStatus"`,
+		`field "State.Status"`,
+		`field "State.Name"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"marshal-prefixed declaration reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+
+	if !strings.Contains(
+		joined,
+		`exported field "State.Extra" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected unused reflected field finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsAllMarshalAndUnmarshalPrefixedMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+type Node struct{}
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+func Unmarshal([]byte, any) error { return nil }
+func (*Node) Decode(any) error { return nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	value := lib.Scalar("x")
+	_, _ = lib.Save(value)
+	_, _ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Scalar string
+
+func (value Scalar) MarshalYAML() (any, error) {
+	return string(value), nil
+}
+
+func (value Scalar) MarshalText() ([]byte, error) {
+	return []byte(value), nil
+}
+
+func (value *Scalar) UnmarshalText([]byte) error {
+	*value = "decoded"
+
+	return nil
+}
+
+type Manifest struct {
+	Value *Scalar `+"`yaml:\"value\"`"+`
+}
+
+func (manifest *Manifest) UnmarshalYAML(node *yaml.Node) error {
+	type rawManifest Manifest
+
+	var raw rawManifest
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+
+	*manifest = Manifest(raw)
+
+	return nil
+}
+
+func Save(value Scalar) ([]byte, error) {
+	return yaml.Marshal(Manifest{Value: &value})
+}
+
+func Load(body []byte) (Manifest, error) {
+	var manifest Manifest
+	err := yaml.Unmarshal(body, &manifest)
+
+	return manifest, err
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "MarshalYAML"`,
+		`method "MarshalText"`,
+		`method "UnmarshalYAML"`,
+		`method "UnmarshalText"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"YAML-reflected declaration reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
 func TestRepoDeadCodeDetectsExportedTypesVarsConstsFields(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

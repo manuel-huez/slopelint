@@ -75,17 +75,11 @@ func inferRepoSummaries(
 		l.collectLocalFuncLits()
 
 		l.collectContracts()
-	}
-
-	for _, pkg := range pkgs {
-		l := newLinter(pkg, opts)
-		l.explicitFacts = explicitFacts
-		l.collectLocalFuncLits()
 
 		for _, fn := range l.collectSummarizableFuncs() {
 			funcs = append(funcs, repoSummarizableFunc{
-				pkg: pkg,
-				fn:  fn,
+				l:  l,
+				fn: fn,
 			})
 		}
 	}
@@ -95,12 +89,9 @@ func inferRepoSummaries(
 		changed := false
 
 		for _, item := range funcs {
-			l := newLinter(item.pkg, opts)
-			l.explicitFacts = explicitFacts
-			l.inferredFacts = summaries
-			l.collectLocalFuncLits()
+			item.l.inferredFacts = summaries
 
-			summary := l.summarizeFunc(item.fn)
+			summary := item.l.summarizeFunc(item.fn)
 
 			prev := summaries[item.fn.key]
 			if callSummaryEqual(prev, summary) {
@@ -120,6 +111,6 @@ func inferRepoSummaries(
 }
 
 type repoSummarizableFunc struct {
-	pkg *LoadedPackage
-	fn  summarizableFunc
+	l  *linter
+	fn summarizableFunc
 }

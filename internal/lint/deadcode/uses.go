@@ -38,20 +38,22 @@ func (graph deadCodeGraph) usesFrom(
 		}
 
 		ident, ok := n.(*ast.Ident)
-		if !ok || ident == nil {
+		if !ok || ident == nil || graph.identIgnored(l.pkg, ident.Pos()) {
 			return true
 		}
 
-		if graph.identIgnored(l.pkg, ident.Pos()) {
-			return true
+		for key := range graph.genericInstanceInterfaceMethodUses(l, ident) {
+			out[key] = struct{}{}
 		}
 
 		obj := canonicalDeadCodeObject(l.pkg.TypesInfo.Uses[ident])
-		if obj != nil {
-			key := deadCodeObjectKey(obj)
-			if key != "" {
-				out[key] = struct{}{}
-			}
+		if obj == nil {
+			return true
+		}
+
+		key := deadCodeObjectKey(obj)
+		if key != "" {
+			out[key] = struct{}{}
 		}
 
 		return true

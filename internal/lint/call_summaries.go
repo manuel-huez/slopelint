@@ -89,10 +89,16 @@ func (l *linter) collectSummarizableFuncs() []summarizableFunc {
 			}
 
 			sig, _ := obj.Type().(*types.Signature)
+
+			bindings := l.summaryBindingsForFunc(fn)
+			if len(bindings) == 0 {
+				continue
+			}
+
 			out = append(out, summarizableFunc{
 				decl:        fn,
 				key:         funcObjectKey(obj),
-				bindings:    l.summaryBindingsForFunc(fn),
+				bindings:    bindings,
 				resultCount: signatureResultCount(sig),
 			})
 		}

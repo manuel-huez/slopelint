@@ -71,7 +71,12 @@ func (graph deadCodeGraph) addInterfaceMethodsForType(
 			continue
 		}
 
-		obj, _, _ := types.LookupFieldOrMethod(source, true, l.pkg.TypesPkg, method.Name())
+		obj, _, _ := types.LookupFieldOrMethod(
+			source,
+			true,
+			interfaceMethodLookupPackage(l.pkg.TypesPkg, method),
+			method.Name(),
+		)
 
 		fn, ok := obj.(*types.Func)
 		if !ok || fn == nil {
@@ -80,6 +85,14 @@ func (graph deadCodeGraph) addInterfaceMethodsForType(
 
 		out[deadCodeObjectKey(fn)] = struct{}{}
 	}
+}
+
+func interfaceMethodLookupPackage(current *types.Package, method *types.Func) *types.Package {
+	if method == nil || method.Exported() {
+		return current
+	}
+
+	return method.Pkg()
 }
 
 func typeIsInterface(typ types.Type) bool {

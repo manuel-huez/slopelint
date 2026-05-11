@@ -41,7 +41,11 @@ func (graph deadCodeGraph) funcDeclReturnInterfaceMethodUses(
 	l *packageLinter,
 	fn *ast.FuncDecl,
 ) map[string]struct{} {
-	if fn == nil || fn.Body == nil || fn.Name == nil {
+	if fn == nil || fn.Body == nil {
+		return nil
+	}
+
+	if fn.Name == nil {
 		return nil
 	}
 

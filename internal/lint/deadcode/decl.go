@@ -28,7 +28,10 @@ func (graph *deadCodeGraph) addFuncDecl(
 	obj, _ := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
 
 	if mode == deadCodePrivate {
-		if obj == nil || !l.reportableDeadCodeFunc(fn) || isMarshalHookMethod(fn) {
+		if obj == nil ||
+			!l.reportableDeadCodeFunc(fn) ||
+			isMarshalHookMethod(fn) ||
+			isErrorHookMethod(obj) {
 			graph.addRootUses(l, fn)
 			return
 		}
@@ -38,7 +41,10 @@ func (graph *deadCodeGraph) addFuncDecl(
 		return
 	}
 
-	if obj == nil || !l.reportableRepoDeadCodeFunc(fn) || isMarshalHookMethod(fn) {
+	if obj == nil ||
+		!l.reportableRepoDeadCodeFunc(fn) ||
+		isMarshalHookMethod(fn) ||
+		isErrorHookMethod(obj) {
 		graph.addRootUses(l, fn)
 		return
 	}
@@ -62,6 +68,117 @@ func isMarshalHookMethod(fn *ast.FuncDecl) bool {
 	name := fn.Name.Name
 
 	return strings.HasPrefix(name, "Marshal") || strings.HasPrefix(name, "Unmarshal")
+}
+
+func isErrorHookMethod(fn *types.Func) bool {
+	if fn == nil {
+		return false
+	}
+
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig == nil || sig.Recv() == nil {
+		return false
+	}
+
+	if !receiverCanBeError(sig.Recv().Type()) {
+		return false
+	}
+
+	switch fn.Name() {
+	case "Unwrap":
+		return unwrapHookSignature(sig)
+	case "Is":
+		return errorIsHookSignature(sig)
+	case "As":
+		return errorAsHookSignature(sig)
+	default:
+		return false
+	}
+}
+
+func receiverCanBeError(receiver types.Type) bool {
+	if receiver == nil {
+		return false
+	}
+
+	if typeAssignableToError(receiver) {
+		return true
+	}
+
+	if _, ok := receiver.(*types.Pointer); ok {
+		return false
+	}
+
+	return typeAssignableToError(types.NewPointer(receiver))
+}
+
+func typeAssignableToError(typ types.Type) bool {
+	obj := types.Universe.Lookup("error")
+	if obj == nil {
+		return false
+	}
+
+	return types.AssignableTo(typ, obj.Type())
+}
+
+func unwrapHookSignature(sig *types.Signature) bool {
+	if tupleLen(sig.Params()) != 0 || tupleLen(sig.Results()) != 1 {
+		return false
+	}
+
+	result := sig.Results().At(0).Type()
+	if typeIsError(result) {
+		return true
+	}
+
+	slice, ok := types.Unalias(result).Underlying().(*types.Slice)
+
+	return ok && typeIsError(slice.Elem())
+}
+
+func errorIsHookSignature(sig *types.Signature) bool {
+	return tupleLen(sig.Params()) == 1 &&
+		typeIsError(sig.Params().At(0).Type()) &&
+		tupleLen(sig.Results()) == 1 &&
+		typeIsBool(sig.Results().At(0).Type())
+}
+
+func errorAsHookSignature(sig *types.Signature) bool {
+	return tupleLen(sig.Params()) == 1 &&
+		typeIsAny(sig.Params().At(0).Type()) &&
+		tupleLen(sig.Results()) == 1 &&
+		typeIsBool(sig.Results().At(0).Type())
+}
+
+func tupleLen(tuple *types.Tuple) int {
+	if tuple == nil {
+		return 0
+	}
+
+	return tuple.Len()
+}
+
+func typeIsError(typ types.Type) bool {
+	return typeIsUniverseType(typ, "error")
+}
+
+func typeIsAny(typ types.Type) bool {
+	return typeIsUniverseType(typ, "any")
+}
+
+func typeIsBool(typ types.Type) bool {
+	basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
+
+	return ok && basic.Kind() == types.Bool
+}
+
+func typeIsUniverseType(typ types.Type, name string) bool {
+	obj := types.Universe.Lookup(name)
+	if obj == nil {
+		return false
+	}
+
+	return types.Identical(typ, obj.Type())
 }
 
 func (graph *deadCodeGraph) addFuncCandidate(

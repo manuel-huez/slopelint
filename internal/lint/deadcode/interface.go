@@ -11,6 +11,10 @@ func (graph deadCodeGraph) interfaceMethodUses(
 	switch node := node.(type) {
 	case *ast.CallExpr:
 		return graph.callInterfaceMethodUses(l, node)
+	case *ast.TypeSwitchStmt:
+		return graph.typeSwitchInterfaceMethodUses(l, node)
+	case *ast.TypeAssertExpr:
+		return graph.typeAssertInterfaceMethodUses(l, node)
 	case *ast.FuncDecl:
 		return graph.funcDeclReturnInterfaceMethodUses(l, node)
 	case *ast.FuncLit:

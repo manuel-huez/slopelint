@@ -424,6 +424,288 @@ func Live() {
 	}
 }
 
+func TestRepoDeadCodeKeepsErrorProtocolMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "errors"
+
+var errSentinel = errors.New("sentinel")
+
+type wrappedError struct {
+	err error
+}
+
+func (err wrappedError) Error() string {
+	return err.err.Error()
+}
+
+func (err wrappedError) Unwrap() error {
+	return err.err
+}
+
+func (err wrappedError) Is(target error) bool {
+	return target == errSentinel
+}
+
+func (err wrappedError) As(target any) bool {
+	return false
+}
+
+func (err wrappedError) unusedPrivate() {}
+
+func Live() {
+	err := wrappedError{err: errSentinel}
+	_ = errors.Is(err, errSentinel)
+
+	var target wrappedError
+	_ = errors.As(err, &target)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "Unwrap"`,
+		`method "Is"`,
+		`method "As"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf("error protocol method reported dead for %q, got:\n%s", unexpected, joined)
+		}
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeReportsErrorProtocolNamesOnNonErrors(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+type matcher struct{}
+
+func (matcher) Is(target error) bool {
+	return false
+}
+
+func Live() {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`exported method "Is" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected non-error Is method finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type phase uint8
+
+const phaseFetch phase = 1
+
+func (p phase) String() string {
+	return "fetch"
+}
+
+func (p phase) unusedPrivate() {}
+
+func Live() string {
+	return fmt.Sprintf("phase=%*s/%.*s", 8, phaseFetch, 3, phaseFetch)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt Stringer method reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsInterfaceAssertionMethods(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import (
+	"example.com/sample/engine"
+	"example.com/sample/ingester"
+)
+
+func main() {
+	engine.Run(ingester.New())
+}
+`)
+	writeFile(t, filepath.Join(tmp, "contract", "contract.go"), `package contract
+
+type Ingester interface {
+	NewProcessSink()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "engine", "engine.go"), `package engine
+
+import "example.com/sample/contract"
+
+type progressSnapshotProvider interface {
+	ProgressSnapshot() Snapshot
+}
+
+type dedupClusterReleaser interface {
+	ReleaseDedupCluster(string)
+}
+
+type snapshotFlusher interface {
+	FlushSnapshot()
+}
+
+type Snapshot struct {
+	Retained int
+}
+
+func Run(ingester contract.Ingester) {
+	ingester.NewProcessSink()
+
+	if provider, ok := ingester.(progressSnapshotProvider); ok {
+		_ = provider.ProgressSnapshot()
+	}
+
+	if releaser, ok := ingester.(dedupClusterReleaser); ok {
+		releaser.ReleaseDedupCluster("cluster")
+	}
+
+	switch flusher := ingester.(type) {
+	case snapshotFlusher:
+		flusher.FlushSnapshot()
+	}
+}
+`)
+	writeFile(t, filepath.Join(tmp, "ingester", "ingester.go"), `package ingester
+
+import "example.com/sample/engine"
+
+type rowAccumulator struct {
+	seen map[string]struct{}
+}
+
+func (a *rowAccumulator) retainedCount() int {
+	return len(a.seen)
+}
+
+type DuckDB struct {
+	rows rowAccumulator
+}
+
+func New() *DuckDB {
+	return &DuckDB{}
+}
+
+func (db *DuckDB) NewProcessSink() {}
+
+func (db *DuckDB) ProgressSnapshot() engine.Snapshot {
+	return engine.Snapshot{Retained: db.retainedCountsLocked()}
+}
+
+func (db *DuckDB) retainedCountsLocked() int {
+	return db.rows.retainedCount()
+}
+
+func (db *DuckDB) ReleaseDedupCluster(clusterKey string) {
+	releaseUniqueKeyCluster(db.rows.seen, clusterKey)
+}
+
+func (db *DuckDB) FlushSnapshot() {
+	flushRows(db.rows.seen)
+}
+
+func releaseUniqueKeyCluster(seen map[string]struct{}, clusterKey string) {
+	delete(seen, clusterKey)
+}
+
+func flushRows(seen map[string]struct{}) {
+	delete(seen, "snapshot")
+}
+
+func (db *DuckDB) unusedPrivate() {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "ProgressSnapshot"`,
+		`method "ReleaseDedupCluster"`,
+		`method "retainedCountsLocked"`,
+		`method "retainedCount"`,
+		`function "releaseUniqueKeyCluster"`,
+		`method "FlushSnapshot"`,
+		`function "flushRows"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"interface assertion dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
 func TestRepoDeadCodeKeepsMarshalPrefixedMethods(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

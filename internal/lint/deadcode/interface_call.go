@@ -2,7 +2,9 @@ package deadcode
 
 import (
 	"go/ast"
+	"go/constant"
 	"go/types"
+	"strings"
 )
 
 func (graph deadCodeGraph) callInterfaceMethodUses(
@@ -13,16 +15,22 @@ func (graph deadCodeGraph) callInterfaceMethodUses(
 		return nil
 	}
 
+	out := make(map[string]struct{})
 	if target := conversionTargetType(l.pkg.TypesInfo, call); target != nil {
-		return graph.interfaceMethodsForValue(l, call.Args[0], target)
+		graph.addInterfaceMethodsForValue(l, out, call.Args[0], target)
 	}
 
-	sig := callSignature(l.pkg.TypesInfo, call)
-	if sig == nil {
-		return nil
+	if sig := callSignature(l.pkg.TypesInfo, call); sig != nil {
+		for key := range graph.callArgInterfaceMethodUses(l, call, sig) {
+			out[key] = struct{}{}
+		}
 	}
 
-	return graph.callArgInterfaceMethodUses(l, call, sig)
+	for key := range graph.fmtStringerMethodUses(l, call) {
+		out[key] = struct{}{}
+	}
+
+	return out
 }
 
 func (graph deadCodeGraph) callArgInterfaceMethodUses(
@@ -107,4 +115,286 @@ func callSignature(info *types.Info, call *ast.CallExpr) *types.Signature {
 	}
 
 	return nil
+}
+
+func (graph deadCodeGraph) fmtStringerMethodUses(
+	l *packageLinter,
+	call *ast.CallExpr,
+) map[string]struct{} {
+	obj := calledFunc(l.pkg.TypesInfo, call)
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "fmt" {
+		return nil
+	}
+
+	argIndexes := fmtStringerArgIndexes(l.pkg.TypesInfo, call, obj.Name())
+	if len(argIndexes) == 0 {
+		return nil
+	}
+
+	out := make(map[string]struct{})
+
+	for argIndex := range argIndexes {
+		if argIndex < 0 || argIndex >= len(call.Args) {
+			continue
+		}
+
+		graph.addStringMethodsForValue(l, out, call.Args[argIndex])
+	}
+
+	return out
+}
+
+func calledFunc(info *types.Info, call *ast.CallExpr) *types.Func {
+	if call == nil {
+		return nil
+	}
+
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		obj, _ := info.Uses[fun].(*types.Func)
+
+		return obj
+	case *ast.SelectorExpr:
+		obj, _ := info.Uses[fun.Sel].(*types.Func)
+
+		return obj
+	default:
+		return nil
+	}
+}
+
+func fmtStringerArgIndexes(
+	info *types.Info,
+	call *ast.CallExpr,
+	name string,
+) map[int]struct{} {
+	if firstArg, ok := fmtUnformattedFirstArg(name); ok {
+		return argIndexRange(firstArg, len(call.Args))
+	}
+
+	formatIndex, ok := fmtFormatArgIndex(name)
+	if !ok || formatIndex >= len(call.Args) {
+		return nil
+	}
+
+	firstValueArg := formatIndex + 1
+
+	format, ok := constantStringValue(info, call.Args[formatIndex])
+	if !ok {
+		return argIndexRange(firstValueArg, len(call.Args))
+	}
+
+	return fmtStringerFormattedArgIndexes(format, firstValueArg, len(call.Args))
+}
+
+func fmtUnformattedFirstArg(name string) (int, bool) {
+	switch name {
+	case "Append", "Appendln", "Fprint", "Fprintln":
+		return 1, true
+	case "Print", "Println", "Sprint", "Sprintln":
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
+func fmtFormatArgIndex(name string) (int, bool) {
+	switch name {
+	case "Appendf", "Fprintf":
+		return 1, true
+	case "Errorf", "Printf", "Sprintf":
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
+func constantStringValue(info *types.Info, expr ast.Expr) (string, bool) {
+	value := info.Types[expr].Value
+	if value == nil || value.Kind() != constant.String {
+		return "", false
+	}
+
+	return constant.StringVal(value), true
+}
+
+func fmtStringerFormattedArgIndexes(
+	format string,
+	firstArg int,
+	argCount int,
+) map[int]struct{} {
+	if formatHasExplicitIndexes(format) {
+		return argIndexRange(firstArg, argCount)
+	}
+
+	out := make(map[int]struct{})
+	argIndex := firstArg
+
+	for index := 0; index < len(format); {
+		verb, sharp, valueArgIndex, nextArgIndex, ok := nextFmtDirective(
+			format,
+			&index,
+			argIndex,
+		)
+		if !ok {
+			index++
+			continue
+		}
+
+		if fmtVerbUsesStringer(verb, sharp) {
+			out[valueArgIndex] = struct{}{}
+		}
+
+		argIndex = nextArgIndex
+		index++
+	}
+
+	return out
+}
+
+func nextFmtDirective(
+	format string,
+	index *int,
+	argIndex int,
+) (byte, bool, int, int, bool) {
+	if format[*index] != '%' {
+		return 0, false, argIndex, argIndex, false
+	}
+
+	*index++
+	if *index >= len(format) || format[*index] == '%' {
+		return 0, false, argIndex, argIndex, false
+	}
+
+	sharp := false
+
+	for *index < len(format) && strings.ContainsRune("#+-0 ", rune(format[*index])) {
+		if format[*index] == '#' {
+			sharp = true
+		}
+
+		*index++
+	}
+
+	*index, argIndex = skipFmtWidthOrPrecision(format, *index, argIndex)
+	if *index < len(format) && format[*index] == '.' {
+		*index, argIndex = skipFmtWidthOrPrecision(format, *index+1, argIndex)
+	}
+
+	if *index >= len(format) {
+		return 0, false, argIndex, argIndex, false
+	}
+
+	return format[*index], sharp, argIndex, argIndex + 1, true
+}
+
+func formatHasExplicitIndexes(format string) bool {
+	for i := range len(format) - 1 {
+		if format[i] == '%' && format[i+1] == '[' {
+			return true
+		}
+	}
+
+	return false
+}
+
+func skipFmtWidthOrPrecision(format string, index int, argIndex int) (int, int) {
+	if index >= len(format) {
+		return index, argIndex
+	}
+
+	if format[index] == '*' {
+		return index + 1, argIndex + 1
+	}
+
+	for index < len(format) && format[index] >= '0' && format[index] <= '9' {
+		index++
+	}
+
+	return index, argIndex
+}
+
+func fmtVerbUsesStringer(verb byte, sharp bool) bool {
+	switch verb {
+	case 's', 'q', 'x', 'X':
+		return true
+	case 'v':
+		return !sharp
+	default:
+		return false
+	}
+}
+
+func argIndexRange(firstArg int, argCount int) map[int]struct{} {
+	out := make(map[int]struct{})
+	for index := firstArg; index < argCount; index++ {
+		out[index] = struct{}{}
+	}
+
+	return out
+}
+
+func (graph deadCodeGraph) addStringMethodsForValue(
+	l *packageLinter,
+	out map[string]struct{},
+	expr ast.Expr,
+) {
+	typ := l.pkg.TypesInfo.TypeOf(expr)
+	if tuple, ok := typ.(*types.Tuple); ok {
+		for index := range tuple.Len() {
+			graph.addStringMethodsForType(l, out, tuple.At(index).Type())
+		}
+
+		return
+	}
+
+	graph.addStringMethodsForType(l, out, typ)
+}
+
+func (graph deadCodeGraph) addStringMethodsForType(
+	l *packageLinter,
+	out map[string]struct{},
+	typ types.Type,
+) {
+	if typ == nil {
+		return
+	}
+
+	if typeIsInterface(typ) {
+		for _, receiver := range graph.candidateReceiverTypes() {
+			if types.AssignableTo(receiver, typ) {
+				addStringMethodForType(l, out, receiver)
+			}
+		}
+
+		return
+	}
+
+	addStringMethodForType(l, out, typ)
+}
+
+func addStringMethodForType(
+	l *packageLinter,
+	out map[string]struct{},
+	typ types.Type,
+) {
+	obj, _, _ := types.LookupFieldOrMethod(typ, false, l.pkg.TypesPkg, "String")
+
+	fn, ok := obj.(*types.Func)
+	if !ok || fn == nil || !stringMethodSignature(fn) {
+		return
+	}
+
+	out[deadCodeObjectKey(fn)] = struct{}{}
+}
+
+func stringMethodSignature(fn *types.Func) bool {
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig == nil || tupleLen(sig.Params()) != 0 || tupleLen(sig.Results()) != 1 {
+		return false
+	}
+
+	result, ok := types.Unalias(sig.Results().At(0).Type()).Underlying().(*types.Basic)
+
+	return ok && result.Kind() == types.String
 }

@@ -424,6 +424,74 @@ func Live() {
 	}
 }
 
+func TestDeadCodeKeepsPrivateMarkerMethodsWithoutLocalUse(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "contract", "contract.go"), `package contract
+
+type ProcessRow interface {
+	processRow()
+}
+
+type DailyBar struct{}
+
+func (DailyBar) processRow() {}
+func (DailyBar) unusedPrivate() {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "processRow"`) {
+		t.Fatalf("marker method reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
+func TestDeadCodeKeepsPrivateMarkerMethodsOnSealedInterfaces(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "contract", "contract.go"), `package contract
+
+type NamedRow interface {
+	Name() string
+}
+
+type ProcessRow interface {
+	NamedRow
+	processRow()
+	Shard() string
+}
+
+type DailyBar struct{}
+
+func (DailyBar) Name() string { return "daily" }
+func (DailyBar) Shard() string { return "default" }
+func (DailyBar) processRow() {}
+func (DailyBar) unusedPrivate() {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "processRow"`) {
+		t.Fatalf("sealed interface marker method reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`private method "unusedPrivate" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected unused private method finding, got:\n%s", joined)
+	}
+}
+
 func TestRepoDeadCodeKeepsErrorProtocolMethods(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
@@ -807,6 +875,46 @@ func Load(body []byte) (State, error) {
 		`exported field "State.Extra" is unreachable from repo entrypoints; remove it`,
 	) {
 		t.Fatalf("expected unused reflected field finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeReportsTaggedFieldsWithoutInRepoUse(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/report"
+
+func main() {
+	_, _ = report.Render()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "report", "report.go"), `package report
+
+import "encoding/json"
+
+type ProofSummary struct {
+	Verdict          string   `+"`json:\"verdict\"`"+`
+	BlockingFailures []string `+"`yaml:\"blocking_failures\"`"+`
+	LocalOnly        string
+}
+
+func Render() ([]byte, error) {
+	return json.Marshal(ProofSummary{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, want := range []string{
+		`exported field "ProofSummary.Verdict" is unreachable from repo entrypoints; remove it`,
+		`exported field "ProofSummary.BlockingFailures" is unreachable from repo entrypoints; remove it`,
+		`exported field "ProofSummary.LocalOnly" is unreachable from repo entrypoints; remove it`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected tagged field finding %q, got:\n%s", want, joined)
+		}
 	}
 }
 

@@ -27,29 +27,35 @@ func (graph *deadCodeGraph) addFuncDecl(
 
 	obj, _ := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
 
-	if mode == deadCodePrivate {
-		if obj == nil ||
-			!l.reportableDeadCodeFunc(fn) ||
-			isMarshalHookMethod(fn) ||
-			isErrorHookMethod(obj) {
-			graph.addRootUses(l, fn)
-			return
-		}
-
-		graph.addFuncCandidate(l.pkg, obj, fn, deadCodeFuncKind(fn))
-
-		return
-	}
-
-	if obj == nil ||
-		!l.reportableRepoDeadCodeFunc(fn) ||
-		isMarshalHookMethod(fn) ||
-		isErrorHookMethod(obj) {
+	if l.keepFuncLive(fn, obj, mode) {
 		graph.addRootUses(l, fn)
 		return
 	}
 
 	graph.addFuncCandidate(l.pkg, obj, fn, deadCodeFuncKind(fn))
+}
+
+func (l *packageLinter) keepFuncLive(
+	fn *ast.FuncDecl,
+	obj *types.Func,
+	mode deadCodeMode,
+) bool {
+	return obj == nil ||
+		!l.reportableFuncForMode(fn, mode) ||
+		isMarshalHookMethod(fn) ||
+		isErrorHookMethod(obj) ||
+		isMarkerMethod(l, fn, obj)
+}
+
+func (l *packageLinter) reportableFuncForMode(
+	fn *ast.FuncDecl,
+	mode deadCodeMode,
+) bool {
+	if mode == deadCodePrivate {
+		return l.reportableDeadCodeFunc(fn)
+	}
+
+	return l.reportableRepoDeadCodeFunc(fn)
 }
 
 func deadCodeFuncKind(fn *ast.FuncDecl) string {
@@ -266,12 +272,8 @@ func (graph *deadCodeGraph) addStructFieldCandidates(
 
 	for _, field := range structType.Fields.List {
 		for _, name := range field.Names {
-			if name == nil || !reportableDeadCodeNameForMode(name.Name, mode) {
-				continue
-			}
-
-			obj, _ := l.pkg.TypesInfo.Defs[name].(*types.Var)
-			if obj == nil || !obj.IsField() {
+			obj, ok := l.deadCodeStructFieldObject(name, mode)
+			if !ok {
 				continue
 			}
 
@@ -286,6 +288,20 @@ func (graph *deadCodeGraph) addStructFieldCandidates(
 			}
 		}
 	}
+}
+
+func (l *packageLinter) deadCodeStructFieldObject(
+	name *ast.Ident,
+	mode deadCodeMode,
+) (*types.Var, bool) {
+	if name == nil ||
+		!reportableDeadCodeNameForMode(name.Name, mode) {
+		return nil, false
+	}
+
+	obj, _ := l.pkg.TypesInfo.Defs[name].(*types.Var)
+
+	return obj, obj != nil && obj.IsField()
 }
 
 func (graph *deadCodeGraph) addValueSpec(

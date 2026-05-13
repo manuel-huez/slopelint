@@ -30,7 +30,7 @@ func (l *Runner) redundantAppendLenGuard(stmt ast.Stmt) (appendLenGuardMatch, bo
 		return appendLenGuardMatch{}, false
 	}
 
-	source, ok := l.nonEmptyLenGuardSource(ifStmt.Cond)
+	source, ok := l.lenGuardSource(ifStmt.Cond, lenCompareProvesNonEmpty)
 	if !ok {
 		return appendLenGuardMatch{}, false
 	}
@@ -90,6 +90,61 @@ func (l *Runner) redundantRangeGuard(stmt ast.Stmt) (rangeGuardMatch, bool) {
 	}, true
 }
 
+func (l *Runner) checkEmptyRangeReturnGuard(stmts []ast.Stmt, idx int, ctx blockContext) {
+	match, ok := l.emptyRangeReturnGuard(stmts, idx, ctx)
+	if !ok {
+		return
+	}
+
+	l.report(
+		match.pos,
+		"range_ceremony",
+		fmt.Sprintf(
+			`%s return guard before final range over %s is redundant; empty range already ends function`,
+			match.guard,
+			match.source,
+		),
+	)
+}
+
+func (l *Runner) emptyRangeReturnGuard(
+	stmts []ast.Stmt,
+	idx int,
+	ctx blockContext,
+) (emptyRangeGuardMatch, bool) {
+	if !ctx.functionBody || ctx.functionHasResults || idx+1 != len(stmts)-1 {
+		return emptyRangeGuardMatch{}, false
+	}
+
+	ifStmt, ok := l.plainIfStmt(stmts[idx])
+	if !ok || !singleNakedReturn(ifStmt.Body.List) {
+		return emptyRangeGuardMatch{}, false
+	}
+
+	loop, ok := singleRangeStmt(stmts[idx+1 : idx+2])
+	if !ok {
+		return emptyRangeGuardMatch{}, false
+	}
+
+	sourceExpr := l.unparen(loop.X)
+	if !l.isCheapTempAliasExpr(sourceExpr) {
+		return emptyRangeGuardMatch{}, false
+	}
+
+	guard, ok := l.emptyRangeGuardSource(ifStmt.Cond)
+	if !ok ||
+		guard.source != l.render(sourceExpr) ||
+		!l.rangeGuardSafeForExpr(guard, loop.X) {
+		return emptyRangeGuardMatch{}, false
+	}
+
+	return emptyRangeGuardMatch{
+		pos:    ifStmt.If,
+		source: guard.source,
+		guard:  guard.label(),
+	}, true
+}
+
 func (l *Runner) plainIfStmt(stmt ast.Stmt) (*ast.IfStmt, bool) {
 	ifStmt, ok := stmt.(*ast.IfStmt)
 	if !ok {
@@ -126,6 +181,16 @@ func singleRangeStmt(stmts []ast.Stmt) (*ast.RangeStmt, bool) {
 	return loop, true
 }
 
+func singleNakedReturn(stmts []ast.Stmt) bool {
+	if len(stmts) != 1 {
+		return false
+	}
+
+	ret, ok := stmts[0].(*ast.ReturnStmt)
+
+	return ok && len(ret.Results) == 0
+}
+
 func (l *Runner) assignAppendsGuardedSlice(assign *ast.AssignStmt, source string) bool {
 	call, ok := l.appendAssignCall(assign)
 	if !ok {
@@ -156,18 +221,21 @@ func (l *Runner) appendAssignCall(assign *ast.AssignStmt) (*ast.CallExpr, bool) 
 	return call, true
 }
 
-func (l *Runner) nonEmptyLenGuardSource(expr ast.Expr) (string, bool) {
+func (l *Runner) lenGuardSource(
+	expr ast.Expr,
+	proves func(token.Token, int64) bool,
+) (string, bool) {
 	binary, ok := l.unparen(expr).(*ast.BinaryExpr)
 	if !ok {
 		return "", false
 	}
 
 	if source, limit, ok := l.lenCompareOperand(binary.X, binary.Y); ok {
-		return source, lenCompareProvesNonEmpty(binary.Op, limit)
+		return source, proves(binary.Op, limit)
 	}
 
 	if source, limit, ok := l.lenCompareOperand(binary.Y, binary.X); ok {
-		return source, lenCompareProvesNonEmpty(reverseOrderedOp(binary.Op), limit)
+		return source, proves(reverseOrderedOp(binary.Op), limit)
 	}
 
 	return "", false
@@ -208,6 +276,22 @@ func lenCompareProvesNonEmpty(op token.Token, limit int64) bool {
 	}
 }
 
+func (l *Runner) emptyRangeGuardSource(expr ast.Expr) (rangeGuard, bool) {
+	return l.collectionGuardSource(expr, token.LOR, lenCompareProvesEmpty, token.EQL)
+}
+
+func lenCompareProvesEmpty(op token.Token, limit int64) bool {
+	//exhaustive:ignore token.Token includes operators irrelevant to len guards.
+	switch op {
+	case token.EQL, token.LEQ:
+		return limit == 0
+	case token.LSS:
+		return limit == 1
+	default:
+		return false
+	}
+}
+
 func (l *Runner) isBuiltinCall(call *ast.CallExpr, name string) bool {
 	id, ok := l.unparen(call.Fun).(*ast.Ident)
 	if !ok || id.Name != name {
@@ -220,12 +304,21 @@ func (l *Runner) isBuiltinCall(call *ast.CallExpr, name string) bool {
 }
 
 func (l *Runner) rangeGuardSource(expr ast.Expr) (rangeGuard, bool) {
+	return l.collectionGuardSource(expr, token.LAND, lenCompareProvesNonEmpty, token.NEQ)
+}
+
+func (l *Runner) collectionGuardSource(
+	expr ast.Expr,
+	mergeOp token.Token,
+	lenCheck func(token.Token, int64) bool,
+	nilOp token.Token,
+) (rangeGuard, bool) {
 	expr = l.unparen(expr)
 
-	if binary, ok := expr.(*ast.BinaryExpr); ok && binary.Op == token.LAND {
-		left, leftOK := l.rangeGuardSource(binary.X)
+	if binary, ok := expr.(*ast.BinaryExpr); ok && binary.Op == mergeOp {
+		left, leftOK := l.collectionGuardSource(binary.X, mergeOp, lenCheck, nilOp)
 
-		right, rightOK := l.rangeGuardSource(binary.Y)
+		right, rightOK := l.collectionGuardSource(binary.Y, mergeOp, lenCheck, nilOp)
 		if !leftOK || !rightOK || left.source != right.source {
 			return rangeGuard{}, false
 		}
@@ -237,14 +330,14 @@ func (l *Runner) rangeGuardSource(expr ast.Expr) (rangeGuard, bool) {
 		}, true
 	}
 
-	if source, ok := l.nonEmptyLenGuardSource(expr); ok {
+	if source, ok := l.lenGuardSource(expr, lenCheck); ok {
 		return rangeGuard{
 			source: source,
 			hasLen: true,
 		}, true
 	}
 
-	if source, ok := l.nonNilGuardSource(expr); ok {
+	if source, ok := l.nilComparisonGuardSource(expr, nilOp); ok {
 		return rangeGuard{
 			source: source,
 			hasNil: true,
@@ -254,9 +347,9 @@ func (l *Runner) rangeGuardSource(expr ast.Expr) (rangeGuard, bool) {
 	return rangeGuard{}, false
 }
 
-func (l *Runner) nonNilGuardSource(expr ast.Expr) (string, bool) {
+func (l *Runner) nilComparisonGuardSource(expr ast.Expr, op token.Token) (string, bool) {
 	binary, ok := l.unparen(expr).(*ast.BinaryExpr)
-	if !ok || binary.Op != token.NEQ {
+	if !ok || binary.Op != op {
 		return "", false
 	}
 

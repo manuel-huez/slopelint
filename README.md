@@ -27,11 +27,14 @@ Structural ceremony:
 - boolean-return or boolean-assignment ceremony like
   `if cond { return true }; return false`
 - identical `if` / `else` bodies
+- guard returns that duplicate the following fallback return
+- nested final `if` pyramids that can become guard clauses
 - adjacent `switch` cases with identical bodies
 - redundant `default` clauses in exhaustive `bool` and closed const-set switches
 - redundant `len(src) > 0` guards before `append(dst, src...)`
 - redundant `len(items) > 0`, `items != nil`, and combined guards before
   `range` loops
+- redundant empty-return guards before final `range` loops
 - adjacent `range` loops that repeat the same body
 - one-read temp aliases like `name := req.Name`
 

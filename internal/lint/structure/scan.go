@@ -66,17 +66,26 @@ type rangeGuardMatch struct {
 	guard  string
 }
 
+type emptyRangeGuardMatch struct {
+	pos    token.Pos
+	source string
+	guard  string
+}
+
 type objectUseSummary struct {
 	reads  int
 	unsafe bool
 }
 
-func (l *Runner) scanStructuralBlock(stmts []ast.Stmt) {
+func (l *Runner) scanStructuralBlock(stmts []ast.Stmt, ctx blockContext) {
 	for idx, stmt := range stmts {
 		l.checkRedundantBoolReturn(stmts, idx)
+		l.checkRedundantReturnGuardRun(stmts, idx)
 		l.checkSingleUseTempAlias(stmts, idx)
 		l.checkRedundantAppendLenGuard(stmt)
 		l.checkRedundantRangeGuard(stmt)
+		l.checkEmptyRangeReturnGuard(stmts, idx, ctx)
+		l.checkNestedFinalIfPyramid(stmts, idx, ctx)
 		l.checkDuplicateAdjacentRangeLoop(stmts, idx)
 		l.scanStructuralStmt(stmt)
 	}
@@ -85,13 +94,13 @@ func (l *Runner) scanStructuralBlock(stmts []ast.Stmt) {
 func (l *Runner) scanStructuralStmt(stmt ast.Stmt) {
 	switch stmt := stmt.(type) {
 	case *ast.BlockStmt:
-		l.scanStructuralBlock(stmt.List)
+		l.scanStructuralBlock(stmt.List, blockContext{})
 	case *ast.IfStmt:
 		l.scanStructuralIfStmt(stmt)
 	case *ast.ForStmt:
-		l.scanStructuralBlock(stmt.Body.List)
+		l.scanStructuralBlock(stmt.Body.List, blockContext{})
 	case *ast.RangeStmt:
-		l.scanStructuralBlock(stmt.Body.List)
+		l.scanStructuralBlock(stmt.Body.List, blockContext{})
 	case *ast.SwitchStmt:
 		l.scanStructuralSwitchStmt(stmt)
 	case *ast.TypeSwitchStmt:
@@ -105,7 +114,7 @@ func (l *Runner) scanStructuralStmt(stmt ast.Stmt) {
 
 func (l *Runner) scanStructuralIfStmt(stmt *ast.IfStmt) {
 	l.checkIdenticalIfBranches(stmt)
-	l.scanStructuralBlock(stmt.Body.List)
+	l.scanStructuralBlock(stmt.Body.List, blockContext{})
 
 	if stmt.Else != nil {
 		l.scanStructuralStmt(stmt.Else)
@@ -125,7 +134,7 @@ func (l *Runner) scanCaseClauseBodies(list []ast.Stmt) {
 			continue
 		}
 
-		l.scanStructuralBlock(clause.Body)
+		l.scanStructuralBlock(clause.Body, blockContext{})
 	}
 }
 
@@ -136,6 +145,6 @@ func (l *Runner) scanCommClauseBodies(list []ast.Stmt) {
 			continue
 		}
 
-		l.scanStructuralBlock(clause.Body)
+		l.scanStructuralBlock(clause.Body, blockContext{})
 	}
 }

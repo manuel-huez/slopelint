@@ -138,10 +138,6 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 		}
 	}
 
-	if wantTrue {
-		return []state{st}
-	}
-
 	return []state{st}
 }
 

@@ -6,8 +6,11 @@ import (
 	"go/ast"
 )
 
-func (l *linter) scanStructuralBlock(stmts []ast.Stmt) {
-	for _, finding := range l.structureScanner().ScanBlock(stmts) {
+func (l *linter) scanStructuralFunction(fnType *ast.FuncType, body *ast.BlockStmt) {
+	for _, finding := range l.structureScanner().ScanFunctionBody(
+		body,
+		funcTypeHasResults(fnType),
+	) {
 		l.report(finding.Pos, finding.Kind, finding.Message)
 	}
 }
@@ -23,4 +26,8 @@ func (l *linter) structureScanner() *structurecheck.Runner {
 	}
 
 	return l.structureRunner
+}
+
+func funcTypeHasResults(fnType *ast.FuncType) bool {
+	return fnType != nil && fnType.Results != nil && len(fnType.Results.List) != 0
 }

@@ -140,10 +140,6 @@ func bindingAffectedByPrefix(binding resultBinding, prefix string) bool {
 }
 
 func removeBindingsForPrefix(st *state, prefix string) {
-	if len(st.bindings) == 0 {
-		return
-	}
-
 	for key, binding := range st.bindings {
 		if isSameOrChild(key, prefix) || bindingAffectedByPrefix(binding, prefix) {
 			delete(st.bindings, key)

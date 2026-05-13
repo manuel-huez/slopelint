@@ -114,6 +114,170 @@ func f(ok bool) int {
 	}
 }
 
+func TestDetectsRedundantReturnGuardBeforeFallback(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(err error) error {
+	if err != nil {
+		return nil
+	}
+
+	return nil
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`1 guard return(s) duplicate following return "return nil"; drop redundant branch checks`,
+	) {
+		t.Fatalf("expected redundant return guard finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRedundantReturnGuardSetBeforeFallback(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(first bool, second bool) int {
+	if first {
+		return 0
+	}
+	if second {
+		return 0
+	}
+
+	return 0
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`2 guard return(s) duplicate following return "return 0"; drop redundant branch checks`,
+	) {
+		t.Fatalf("expected redundant return guard set finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsRedundantReturnGuardWhenConditionMayPanic(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type req struct { name string }
+
+func f(req *req) string {
+	if req.name == "" {
+		return ""
+	}
+
+	return ""
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `drop redundant branch checks`) {
+		t.Fatalf(
+			"unexpected redundant return guard finding for selector condition, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestSkipsRedundantReturnGuardWhenEqualityMayPanic(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type box struct { value any }
+
+func F(left any, right any) int {
+	if left == right {
+		return 0
+	}
+
+	return 0
+}
+
+func G(left box, right box) int {
+	if left == right {
+		return 0
+	}
+
+	return 0
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `drop redundant branch checks`) {
+		t.Fatalf(
+			"unexpected redundant return guard finding for equality that may panic, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestDetectsNestedFinalIfPyramid(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool, ready bool) {
+	if ok {
+		if ready {
+			println("run")
+		}
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`nested if pyramid has 2 levels at function end; invert conditions into guard clauses`,
+	) {
+		t.Fatalf("expected nested if pyramid finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsNestedIfPyramidWhenWorkFollows(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(ok bool, ready bool) {
+	if ok {
+		if ready {
+			println("run")
+		}
+	}
+
+	println("done")
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `nested if pyramid`) {
+		t.Fatalf("unexpected nested if pyramid finding with trailing work, got:\n%s", joined)
+	}
+}
+
 func TestDetectsIdenticalSwitchCaseBodies(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

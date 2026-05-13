@@ -42,6 +42,11 @@ type Runner struct {
 	renderCache map[ast.Node]string
 }
 
+type blockContext struct {
+	functionBody       bool
+	functionHasResults bool
+}
+
 // New creates a reusable structural checker.
 func New(pkg *Package) *Runner {
 	if pkg == nil {
@@ -56,10 +61,15 @@ func New(pkg *Package) *Runner {
 	}
 }
 
-// ScanBlock checks one statement block and returns findings added by this scan.
-func (l *Runner) ScanBlock(stmts []ast.Stmt) []Finding {
+// ScanFunctionBody checks one function body and returns findings added by this scan.
+func (l *Runner) ScanFunctionBody(body *ast.BlockStmt, hasResults bool) []Finding {
 	start := len(l.findings)
-	l.scanStructuralBlock(stmts)
+	if body != nil {
+		l.scanStructuralBlock(body.List, blockContext{
+			functionBody:       true,
+			functionHasResults: hasResults,
+		})
+	}
 
 	out := make([]Finding, len(l.findings)-start)
 	copy(out, l.findings[start:])

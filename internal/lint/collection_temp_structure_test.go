@@ -187,6 +187,86 @@ func f(items chan int) {
 	}
 }
 
+func TestDetectsEmptyReturnGuardBeforeFinalRange(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items []string) {
+	if len(items) == 0 {
+		return
+	}
+
+	for _, item := range items {
+		println(item)
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`len return guard before final range over items is redundant; empty range already ends function`,
+	) {
+		t.Fatalf("expected empty range return guard finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsNilLenReturnGuardBeforeFinalRange(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items []string) {
+	if items == nil || len(items) == 0 {
+		return
+	}
+
+	for _, item := range items {
+		println(item)
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`nil/len return guard before final range over items is redundant; empty range already ends function`,
+	) {
+		t.Fatalf("expected nil/len range return guard finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsEmptyReturnGuardBeforeRangeWhenFunctionReturnsValue(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items []string) int {
+	if len(items) == 0 {
+		return 0
+	}
+
+	for _, item := range items {
+		println(item)
+	}
+
+	return 1
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `empty range already ends function`) {
+		t.Fatalf("unexpected empty range return guard finding with result func, got:\n%s", joined)
+	}
+}
+
 func TestDetectsRepeatedIsPredicateSubexpression(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

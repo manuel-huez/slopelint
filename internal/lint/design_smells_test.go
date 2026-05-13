@@ -190,6 +190,188 @@ func run() int {
 	}
 }
 
+func TestDetectsLargeUngroupedConstChunk(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type state string
+
+const (
+	stateUnknown state = ""
+	statePending state = "pending"
+	stateRunning state = "running"
+	stateStopped state = "stopped"
+	stateFailed state = "failed"
+	stateSkipped state = "skipped"
+	stateQueued state = "queued"
+	stateBlocked state = "blocked"
+	stateReady state = "ready"
+	stateDone state = "done"
+	stateArchived state = "archived"
+	statePaused state = "paused"
+)
+
+func use(state) {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`const chunk has 12 consecutive items; split related constants with blank lines, group comments, or smaller const blocks`,
+	) {
+		t.Fatalf("expected const-grouping finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "const_grouping") {
+		t.Fatalf("expected const_grouping kind, got %#v", issues)
+	}
+}
+
+func TestSkipsLargeConstBlockWithGroupBreaks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type state string
+
+const (
+	stateUnknown state = ""
+	statePending state = "pending"
+	stateRunning state = "running"
+	stateStopped state = "stopped"
+	stateFailed state = "failed"
+	stateSkipped state = "skipped"
+
+	// terminal states
+	stateDone state = "done"
+	stateArchived state = "archived"
+	stateExpired state = "expired"
+	stateCancelled state = "cancelled"
+	stateFailedHard state = "failed_hard"
+)
+
+func use(state) {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `const chunk has`) {
+		t.Fatalf("unexpected const-grouping finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsLargeUngroupedConstChunkInTestFile(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func use(state) {}
+
+type state string
+`)
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+const (
+	stateUnknown state = ""
+	statePending state = "pending"
+	stateRunning state = "running"
+	stateStopped state = "stopped"
+	stateFailed state = "failed"
+	stateSkipped state = "skipped"
+	stateQueued state = "queued"
+	stateBlocked state = "blocked"
+	stateReady state = "ready"
+	stateDone state = "done"
+	stateArchived state = "archived"
+	statePaused state = "paused"
+)
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`const chunk has 12 consecutive items; split related constants with blank lines, group comments, or smaller const blocks`,
+	) {
+		t.Fatalf("expected const-grouping finding in test file, got:\n%s", joined)
+	}
+}
+
+func TestDetectsAdjacentUngroupedConstDecls(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type state string
+
+const stateUnknown state = ""
+const statePending state = "pending"
+const stateRunning state = "running"
+const stateStopped state = "stopped"
+const stateFailed state = "failed"
+const stateSkipped state = "skipped"
+const stateQueued state = "queued"
+const stateBlocked state = "blocked"
+const stateReady state = "ready"
+const stateDone state = "done"
+const stateArchived state = "archived"
+const statePaused state = "paused"
+
+func use(state) {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`const chunk has 12 consecutive items; split related constants with blank lines, group comments, or smaller const blocks`,
+	) {
+		t.Fatalf("expected const-grouping finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "const_grouping") {
+		t.Fatalf("expected const_grouping kind, got %#v", issues)
+	}
+}
+
+func TestSkipsAdjacentConstDeclsWithGroupBreaks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type state string
+
+const stateUnknown state = ""
+const statePending state = "pending"
+const stateRunning state = "running"
+const stateStopped state = "stopped"
+const stateFailed state = "failed"
+const stateSkipped state = "skipped"
+
+// terminal states
+const stateDone state = "done"
+const stateArchived state = "archived"
+const stateExpired state = "expired"
+const stateCancelled state = "cancelled"
+const stateFailedHard state = "failed_hard"
+
+func use(state) {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `const chunk has`) {
+		t.Fatalf("unexpected const-grouping finding, got:\n%s", joined)
+	}
+}
+
 func TestSkipsOptionsOverkillWhenPrefixIsNotConstructorWord(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

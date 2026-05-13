@@ -40,6 +40,7 @@ Package-level smells:
 - `IsX` predicates that do not return `bool` or `(bool, error)`
 - redundant `MarshalJSON` methods covered by `MarshalText`
 - repeated normalization calls like duplicate `strings.TrimSpace(name)`
+- large const chunks without blank/comment grouping
 - duplicate validation ladders
 - single-use private helpers with tiny bodies
 - single-implementation private interfaces
@@ -208,6 +209,7 @@ Machine-readable diagnostic categories emitted today:
 - `loop_ceremony`
 - `temp_alias`
 - `predicate_signature`
+- `const_grouping`
 - `trivial_wrapper`
 - `comment_noise`
 - `serialization_ceremony`

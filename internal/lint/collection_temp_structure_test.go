@@ -86,6 +86,107 @@ func f(dst []int, src []int) []int {
 	}
 }
 
+func TestDetectsRedundantRangeLenGuard(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items []string) {
+	if len(items) > 0 {
+		for _, item := range items {
+			println(item)
+		}
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`len guard before range over items is redundant; range has no iterations when guarded value is empty`,
+	) {
+		t.Fatalf("expected redundant range len guard finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "range_ceremony") {
+		t.Fatalf("expected range_ceremony kind, got %#v", issues)
+	}
+}
+
+func TestDetectsRedundantRangeNilLenGuard(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items []string) {
+	if items != nil && len(items) != 0 {
+		for _, item := range items {
+			println(item)
+		}
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`nil/len guard before range over items is redundant; range has no iterations when guarded value is empty`,
+	) {
+		t.Fatalf("expected redundant range nil/len guard finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRedundantRangeNilGuard(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items map[string]int) {
+	if items != nil {
+		for key, value := range items {
+			println(key, value)
+		}
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`nil guard before range over items is redundant; range has no iterations when guarded value is empty`,
+	) {
+		t.Fatalf("expected redundant range nil guard finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsRangeLenGuardForChannel(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(items chan int) {
+	if len(items) > 0 {
+		for item := range items {
+			println(item)
+		}
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `guard before range`) {
+		t.Fatalf("unexpected redundant range guard finding for channel, got:\n%s", joined)
+	}
+}
+
 func TestDetectsRepeatedIsPredicateSubexpression(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

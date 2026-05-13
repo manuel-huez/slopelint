@@ -30,6 +30,8 @@ Structural ceremony:
 - adjacent `switch` cases with identical bodies
 - redundant `default` clauses in exhaustive `bool` and closed const-set switches
 - redundant `len(src) > 0` guards before `append(dst, src...)`
+- redundant `len(items) > 0`, `items != nil`, and combined guards before
+  `range` loops
 - adjacent `range` loops that repeat the same body
 - one-read temp aliases like `name := req.Name`
 

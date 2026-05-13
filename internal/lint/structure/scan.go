@@ -54,6 +54,18 @@ type appendLenGuardMatch struct {
 	source string
 }
 
+type rangeGuard struct {
+	source string
+	hasLen bool
+	hasNil bool
+}
+
+type rangeGuardMatch struct {
+	pos    token.Pos
+	source string
+	guard  string
+}
+
 type objectUseSummary struct {
 	reads  int
 	unsafe bool
@@ -64,6 +76,7 @@ func (l *Runner) scanStructuralBlock(stmts []ast.Stmt) {
 		l.checkRedundantBoolReturn(stmts, idx)
 		l.checkSingleUseTempAlias(stmts, idx)
 		l.checkRedundantAppendLenGuard(stmt)
+		l.checkRedundantRangeGuard(stmt)
 		l.checkDuplicateAdjacentRangeLoop(stmts, idx)
 		l.scanStructuralStmt(stmt)
 	}

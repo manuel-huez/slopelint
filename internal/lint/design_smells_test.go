@@ -220,7 +220,7 @@ func use(state) {}
 
 	if !strings.Contains(
 		joined,
-		`const chunk has 12 consecutive items; split related constants with blank lines, group comments, or smaller const blocks`,
+		`const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
 	) {
 		t.Fatalf("expected const-grouping finding, got:\n%s", joined)
 	}
@@ -296,7 +296,7 @@ const (
 
 	if !strings.Contains(
 		joined,
-		`const chunk has 12 consecutive items; split related constants with blank lines, group comments, or smaller const blocks`,
+		`const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
 	) {
 		t.Fatalf("expected const-grouping finding in test file, got:\n%s", joined)
 	}
@@ -330,13 +330,218 @@ func use(state) {}
 
 	if !strings.Contains(
 		joined,
-		`const chunk has 12 consecutive items; split related constants with blank lines, group comments, or smaller const blocks`,
+		`const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
 	) {
 		t.Fatalf("expected const-grouping finding, got:\n%s", joined)
 	}
 
 	if !hasIssueKind(issues, "const_grouping") {
 		t.Fatalf("expected const_grouping kind, got %#v", issues)
+	}
+}
+
+func TestDetectsLargeUngroupedVarChunk(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+var (
+	cacheA = 1
+	cacheB = 2
+	cacheC = 3
+	cacheD = 4
+	cacheE = 5
+	cacheF = 6
+	cacheG = 7
+	cacheH = 8
+	cacheI = 9
+	cacheJ = 10
+	cacheK = 11
+	cacheL = 12
+)
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`var chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller var blocks`,
+	) {
+		t.Fatalf("expected var-grouping finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "var_grouping") {
+		t.Fatalf("expected var_grouping kind, got %#v", issues)
+	}
+}
+
+func TestDetectsAdjacentUngroupedTypeDecls(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type reqA struct{}
+type reqB struct{}
+type reqC struct{}
+type reqD struct{}
+type reqE struct{}
+type reqF struct{}
+type reqG struct{}
+type reqH struct{}
+type reqI struct{}
+type reqJ struct{}
+type reqK struct{}
+type reqL struct{}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`type chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller type blocks`,
+	) {
+		t.Fatalf("expected type-grouping finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "type_grouping") {
+		t.Fatalf("expected type_grouping kind, got %#v", issues)
+	}
+}
+
+func TestDetectsMixedConstPrefixes(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+const (
+	statusReady = "ready"
+	statusDone = "done"
+	phaseInit = "init"
+	phaseRun = "run"
+	modeFast = "fast"
+	modeSlow = "slow"
+)
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`const chunk mixes mode, phase, status prefixes without grouping; split unrelated const families with blank lines or group comments`,
+	) {
+		t.Fatalf("expected mixed-const-prefix finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "mixed_const_prefixes") {
+		t.Fatalf("expected mixed_const_prefixes kind, got %#v", issues)
+	}
+}
+
+func TestSkipsMixedConstPrefixesWithGroupBreaks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+const (
+	statusReady = "ready"
+	statusDone = "done"
+
+	phaseInit = "init"
+	phaseRun = "run"
+
+	modeFast = "fast"
+	modeSlow = "slow"
+)
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `const chunk mixes`) {
+		t.Fatalf("unexpected mixed-const-prefix finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsUnnamedLargeTableTest(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+import "testing"
+
+func TestParse(t *testing.T) {
+	cases := []struct {
+		input string
+		want string
+	}{
+		{input: "a", want: "a"},
+		{input: "b", want: "b"},
+		{input: "c", want: "c"},
+		{input: "d", want: "d"},
+		{input: "e", want: "e"},
+		{input: "f", want: "f"},
+		{input: "g", want: "g"},
+		{input: "h", want: "h"},
+		{input: "i", want: "i"},
+		{input: "j", want: "j"},
+		{input: "k", want: "k"},
+	}
+	_ = cases
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`table test has 11 cases without name/desc field; add case names so failures identify scenarios`,
+	) {
+		t.Fatalf("expected table-test-grouping finding, got:\n%s", joined)
+	}
+
+	if !hasIssueKind(issues, "table_test_grouping") {
+		t.Fatalf("expected table_test_grouping kind, got %#v", issues)
+	}
+}
+
+func TestSkipsNamedLargeTableTest(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+import "testing"
+
+func TestParse(t *testing.T) {
+	cases := []struct {
+		name string
+		input string
+		want string
+	}{
+		{name: "a", input: "a", want: "a"},
+		{name: "b", input: "b", want: "b"},
+		{name: "c", input: "c", want: "c"},
+		{name: "d", input: "d", want: "d"},
+		{name: "e", input: "e", want: "e"},
+		{name: "f", input: "f", want: "f"},
+		{name: "g", input: "g", want: "g"},
+		{name: "h", input: "h", want: "h"},
+		{name: "i", input: "i", want: "i"},
+		{name: "j", input: "j", want: "j"},
+		{name: "k", input: "k", want: "k"},
+	}
+	_ = cases
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `table test has`) {
+		t.Fatalf("unexpected table-test-grouping finding, got:\n%s", joined)
 	}
 }
 

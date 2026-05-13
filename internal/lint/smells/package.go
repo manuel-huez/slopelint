@@ -53,7 +53,8 @@ func RunDefault(pkg *Package) []Finding {
 	r.checkRedundantJSONMarshalText()
 	r.checkRestatementComments()
 	r.checkPredicateReturnSignatures()
-	r.checkLargeUngroupedConstChunks()
+	r.checkDeclarationGrouping()
+	r.checkUnnamedLargeTableTests()
 
 	return r.findings
 }

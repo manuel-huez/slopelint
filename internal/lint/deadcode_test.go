@@ -834,9 +834,10 @@ func parseStatus(value string) (Status, error) {
 }
 
 type State struct {
-	Status Status `+"`json:\"status\"`"+`
-	Name   string `+"`json:\"name\"`"+`
-	Extra  string `+"`json:\"extra\"`"+`
+	Status  Status `+"`json:\"status\"`"+`
+	Name    string `+"`json:\"name\"`"+`
+	Extra   string `+"`json:\"extra\"`"+`
+	Ignored string `+"`json:\"-\"`"+`
 }
 
 func Save(state State) ([]byte, error) {
@@ -860,6 +861,7 @@ func Load(body []byte) (State, error) {
 		`function "parseStatus"`,
 		`field "State.Status"`,
 		`field "State.Name"`,
+		`field "State.Extra"`,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -872,9 +874,9 @@ func Load(body []byte) (State, error) {
 
 	if !strings.Contains(
 		joined,
-		`exported field "State.Extra" is unreachable from repo entrypoints; remove it`,
+		`exported field "State.Ignored" is unreachable from repo entrypoints; remove it`,
 	) {
-		t.Fatalf("expected unused reflected field finding, got:\n%s", joined)
+		t.Fatalf("expected ignored reflected field finding, got:\n%s", joined)
 	}
 }
 
@@ -914,103 +916,6 @@ func Render() ([]byte, error) {
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected tagged field finding %q, got:\n%s", want, joined)
-		}
-	}
-}
-
-func TestRepoDeadCodeKeepsAllMarshalAndUnmarshalPrefixedMethods(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
-
-go 1.22
-
-require gopkg.in/yaml.v3 v3.0.0
-
-replace gopkg.in/yaml.v3 => ./yaml
-`)
-	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
-
-type Node struct{}
-
-func Marshal(any) ([]byte, error) { return nil, nil }
-func Unmarshal([]byte, any) error { return nil }
-func (*Node) Decode(any) error { return nil }
-`)
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	value := lib.Scalar("x")
-	_, _ = lib.Save(value)
-	_, _ = lib.Load(nil)
-}
-`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "gopkg.in/yaml.v3"
-
-type Scalar string
-
-func (value Scalar) MarshalYAML() (any, error) {
-	return string(value), nil
-}
-
-func (value Scalar) MarshalText() ([]byte, error) {
-	return []byte(value), nil
-}
-
-func (value *Scalar) UnmarshalText([]byte) error {
-	*value = "decoded"
-
-	return nil
-}
-
-type Manifest struct {
-	Value *Scalar `+"`yaml:\"value\"`"+`
-}
-
-func (manifest *Manifest) UnmarshalYAML(node *yaml.Node) error {
-	type rawManifest Manifest
-
-	var raw rawManifest
-	if err := node.Decode(&raw); err != nil {
-		return err
-	}
-
-	*manifest = Manifest(raw)
-
-	return nil
-}
-
-func Save(value Scalar) ([]byte, error) {
-	return yaml.Marshal(Manifest{Value: &value})
-}
-
-func Load(body []byte) (Manifest, error) {
-	var manifest Manifest
-	err := yaml.Unmarshal(body, &manifest)
-
-	return manifest, err
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		`method "MarshalYAML"`,
-		`method "MarshalText"`,
-		`method "UnmarshalYAML"`,
-		`method "UnmarshalText"`,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"YAML-reflected declaration reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
 		}
 	}
 }

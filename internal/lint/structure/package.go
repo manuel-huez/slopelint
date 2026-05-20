@@ -45,6 +45,8 @@ type Runner struct {
 type blockContext struct {
 	functionBody       bool
 	functionHasResults bool
+	functionResults    []types.Type
+	functionInputs     map[types.Object]struct{}
 }
 
 // New creates a reusable structural checker.
@@ -62,17 +64,92 @@ func New(pkg *Package) *Runner {
 }
 
 // ScanFunctionBody checks one function body and returns findings added by this scan.
-func (l *Runner) ScanFunctionBody(body *ast.BlockStmt, hasResults bool) []Finding {
+func (l *Runner) ScanFunctionBody(
+	fnType *ast.FuncType,
+	recv *ast.FieldList,
+	body *ast.BlockStmt,
+) []Finding {
 	start := len(l.findings)
+
 	if body != nil {
-		l.scanStructuralBlock(body.List, blockContext{
+		ctx := blockContext{
 			functionBody:       true,
-			functionHasResults: hasResults,
-		})
+			functionHasResults: funcTypeHasResults(fnType),
+			functionResults:    l.funcResultTypes(fnType),
+			functionInputs:     l.funcInputObjects(fnType, recv),
+		}
+
+		l.checkFunctionComplexity(body, ctx)
+		l.scanStructuralBlock(body.List, ctx)
 	}
 
 	out := make([]Finding, len(l.findings)-start)
 	copy(out, l.findings[start:])
+
+	return out
+}
+
+func (l *Runner) funcInputObjects(
+	fnType *ast.FuncType,
+	recv *ast.FieldList,
+) map[types.Object]struct{} {
+	out := make(map[types.Object]struct{})
+
+	l.addFieldListObjects(out, recv)
+
+	if fnType != nil {
+		l.addFieldListObjects(out, fnType.Params)
+	}
+
+	return out
+}
+
+func (l *Runner) addFieldListObjects(
+	out map[types.Object]struct{},
+	fields *ast.FieldList,
+) {
+	if fields == nil {
+		return
+	}
+
+	for _, field := range fields.List {
+		for _, name := range field.Names {
+			if name == nil || name.Name == "_" {
+				continue
+			}
+
+			if obj := l.pkg.TypesInfo.ObjectOf(name); obj != nil {
+				out[obj] = struct{}{}
+			}
+		}
+	}
+}
+
+func funcTypeHasResults(fnType *ast.FuncType) bool {
+	return fnType != nil && fnType.Results != nil && len(fnType.Results.List) != 0
+}
+
+func (l *Runner) funcResultTypes(fnType *ast.FuncType) []types.Type {
+	if fnType == nil || fnType.Results == nil {
+		return nil
+	}
+
+	out := make([]types.Type, 0, len(fnType.Results.List))
+	for _, field := range fnType.Results.List {
+		typ := l.pkg.TypesInfo.TypeOf(field.Type)
+		if typ == nil {
+			continue
+		}
+
+		count := 1
+		if len(field.Names) > 0 {
+			count = len(field.Names)
+		}
+
+		for range count {
+			out = append(out, typ)
+		}
+	}
 
 	return out
 }

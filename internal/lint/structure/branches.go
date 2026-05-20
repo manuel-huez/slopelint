@@ -28,28 +28,7 @@ type nestedIfPyramid struct {
 const nestedIfPyramidMinDepth = 2
 
 func (l *Runner) checkIdenticalIfBranches(stmt *ast.IfStmt) {
-	if stmt.Init != nil {
-		return
-	}
-
-	elseBlock, ok := stmt.Else.(*ast.BlockStmt)
-	if !ok {
-		return
-	}
-
-	if !stmtListsEqual(stmt.Body.List, elseBlock.List, l.renderStmtList) {
-		return
-	}
-
-	if !sameCommentTexts(
-		l.commentTextsInRange(stmt.Body.Pos(), stmt.Body.End()),
-		l.commentTextsInRange(elseBlock.Pos(), elseBlock.End()),
-	) {
-		return
-	}
-
-	if stmtListDefinesTopLevelNames(stmt.Body.List) ||
-		stmtListDefinesTopLevelNames(elseBlock.List) {
+	if !l.identicalIfBranches(stmt) {
 		return
 	}
 
@@ -58,6 +37,31 @@ func (l *Runner) checkIdenticalIfBranches(stmt *ast.IfStmt) {
 		"control_flow_merge",
 		"if and else branches are identical; drop condition or hoist shared body",
 	)
+}
+
+func (l *Runner) identicalIfBranches(stmt *ast.IfStmt) bool {
+	if stmt.Init != nil {
+		return false
+	}
+
+	elseBlock, ok := stmt.Else.(*ast.BlockStmt)
+	if !ok {
+		return false
+	}
+
+	if !stmtListsEqual(stmt.Body.List, elseBlock.List, l.renderStmtList) {
+		return false
+	}
+
+	if !sameCommentTexts(
+		l.commentTextsInRange(stmt.Body.Pos(), stmt.Body.End()),
+		l.commentTextsInRange(elseBlock.Pos(), elseBlock.End()),
+	) {
+		return false
+	}
+
+	return !stmtListDefinesTopLevelNames(stmt.Body.List) &&
+		!stmtListDefinesTopLevelNames(elseBlock.List)
 }
 
 func (l *Runner) checkIdenticalSwitchBranches(stmt *ast.SwitchStmt) {
@@ -273,7 +277,7 @@ func (l *Runner) safeGuardIdent(expr *ast.Ident) bool {
 }
 
 func (l *Runner) safeLenCall(expr *ast.CallExpr) bool {
-	if expr == nil || len(expr.Args) != 1 || !l.isBuiltinCall(expr, "len") {
+	if expr == nil || len(expr.Args) != 1 || !l.isBuiltinCall(expr, builtinLenName) {
 		return false
 	}
 

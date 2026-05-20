@@ -10,28 +10,9 @@ import (
 )
 
 func (l *Runner) checkSingleUseTempAlias(stmts []ast.Stmt, idx int) {
-	if idx+1 >= len(stmts) {
+	decl, ok := l.singleUseTempAlias(stmts, idx)
+	if !ok {
 		return
-	}
-
-	decl, ok := l.tempAliasDeclFromStmt(stmts[idx])
-	if !ok || l.hasAttachedComment(stmts[idx]) {
-		return
-	}
-
-	if !tempAliasNameLooksDisposable(decl.name.Name, decl.rhs) {
-		return
-	}
-
-	nextUse := l.objectUseSummary(stmts[idx+1], decl.obj)
-	if nextUse.unsafe || nextUse.reads != 1 {
-		return
-	}
-
-	for _, later := range stmts[idx+2:] {
-		if nodeUsesObject(later, decl.obj, l.pkg.TypesInfo) {
-			return
-		}
 	}
 
 	l.report(
@@ -43,6 +24,34 @@ func (l *Runner) checkSingleUseTempAlias(stmts []ast.Stmt, idx int) {
 			l.render(decl.rhs),
 		),
 	)
+}
+
+func (l *Runner) singleUseTempAlias(stmts []ast.Stmt, idx int) (tempAliasDecl, bool) {
+	if idx+1 >= len(stmts) {
+		return tempAliasDecl{}, false
+	}
+
+	decl, ok := l.tempAliasDeclFromStmt(stmts[idx])
+	if !ok || l.hasAttachedComment(stmts[idx]) {
+		return tempAliasDecl{}, false
+	}
+
+	if !tempAliasNameLooksDisposable(decl.name.Name, decl.rhs) {
+		return tempAliasDecl{}, false
+	}
+
+	nextUse := l.objectUseSummary(stmts[idx+1], decl.obj)
+	if nextUse.unsafe || nextUse.reads != 1 {
+		return tempAliasDecl{}, false
+	}
+
+	for _, later := range stmts[idx+2:] {
+		if nodeUsesObject(later, decl.obj, l.pkg.TypesInfo) {
+			return tempAliasDecl{}, false
+		}
+	}
+
+	return decl, true
 }
 
 func (l *Runner) tempAliasDeclFromStmt(stmt ast.Stmt) (tempAliasDecl, bool) {

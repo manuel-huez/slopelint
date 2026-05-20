@@ -21,21 +21,32 @@ func (l *Runner) checkRedundantBoolReturn(stmts []ast.Stmt, idx int) {
 }
 
 func (l *Runner) reportBoolIfElseCeremony(stmt *ast.IfStmt) bool {
-	elseBlock, ok := stmt.Else.(*ast.BlockStmt)
+	thenAction, elseAction, ok := l.boolIfElsePair(stmt)
 	if !ok {
-		return false
-	}
-
-	thenAction, elseAction, ok := l.boolBranchPair(stmt.Body.List, elseBlock.List)
-	if !ok {
-		return false
-	}
-
-	if !l.commentsMatch(stmt.Body.Pos(), stmt.Body.End(), elseBlock.Pos(), elseBlock.End()) {
 		return false
 	}
 
 	return l.reportBoolActionPair(stmt.If, stmt.Cond, thenAction, elseAction)
+}
+
+func (l *Runner) boolIfElsePair(
+	stmt *ast.IfStmt,
+) (boolBranchAction, boolBranchAction, bool) {
+	elseBlock, ok := stmt.Else.(*ast.BlockStmt)
+	if !ok {
+		return boolBranchAction{}, boolBranchAction{}, false
+	}
+
+	thenAction, elseAction, ok := l.boolBranchPair(stmt.Body.List, elseBlock.List)
+	if !ok {
+		return boolBranchAction{}, boolBranchAction{}, false
+	}
+
+	if !l.commentsMatch(stmt.Body.Pos(), stmt.Body.End(), elseBlock.Pos(), elseBlock.End()) {
+		return boolBranchAction{}, boolBranchAction{}, false
+	}
+
+	return thenAction, elseAction, true
 }
 
 func (l *Runner) reportBoolIfThenReturnCeremony(
@@ -43,30 +54,48 @@ func (l *Runner) reportBoolIfThenReturnCeremony(
 	idx int,
 	stmt *ast.IfStmt,
 ) bool {
-	if idx+1 >= len(stmts) {
+	match, ok := l.boolIfThenReturnMatch(stmts, idx, stmt)
+	if !ok {
 		return false
+	}
+
+	return l.reportBoolReturnCeremony(match.pos, match.cond, match.whenTrue, match.whenFalse)
+}
+
+func (l *Runner) boolIfThenReturnMatch(
+	stmts []ast.Stmt,
+	idx int,
+	stmt *ast.IfStmt,
+) (boolIfThenReturnMatch, bool) {
+	if idx+1 >= len(stmts) {
+		return boolIfThenReturnMatch{}, false
 	}
 
 	thenAction, ok := l.boolBranchAction(stmt.Body.List)
 	if !ok || thenAction.kind != boolBranchReturn {
-		return false
+		return boolIfThenReturnMatch{}, false
 	}
 
 	nextReturn, ok := stmts[idx+1].(*ast.ReturnStmt)
 	if !ok {
-		return false
+		return boolIfThenReturnMatch{}, false
 	}
 
 	nextValue, ok := l.singleBoolReturnValue(nextReturn)
 	if !ok {
-		return false
+		return boolIfThenReturnMatch{}, false
 	}
 
 	if !l.commentsMatch(stmt.Body.Pos(), stmt.Body.End(), nextReturn.Pos(), nextReturn.End()) {
-		return false
+		return boolIfThenReturnMatch{}, false
 	}
 
-	return l.reportBoolReturnCeremony(stmt.If, stmt.Cond, thenAction.value, nextValue)
+	return boolIfThenReturnMatch{
+		cond:      stmt.Cond,
+		whenTrue:  thenAction.value,
+		whenFalse: nextValue,
+		pos:       stmt.If,
+	}, true
 }
 
 func (l *Runner) boolBranchPair(

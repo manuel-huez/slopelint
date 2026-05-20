@@ -24,6 +24,10 @@ func (graph deadCodeGraph) callInterfaceMethodUses(
 		for key := range graph.callArgInterfaceMethodUses(l, call, sig) {
 			out[key] = struct{}{}
 		}
+
+		for key := range graph.knownOptionalInterfaceMethodUses(l, call, sig) {
+			out[key] = struct{}{}
+		}
 	}
 
 	for key := range graph.fmtStringerMethodUses(l, call) {
@@ -55,6 +59,84 @@ func (graph deadCodeGraph) callArgInterfaceMethodUses(
 	}
 
 	return out
+}
+
+func (graph deadCodeGraph) knownOptionalInterfaceMethodUses(
+	l *packageLinter,
+	call *ast.CallExpr,
+	sig *types.Signature,
+) map[string]struct{} {
+	if !knownOptionalByteReaderCall(calledFunc(l.pkg.TypesInfo, call)) {
+		return nil
+	}
+
+	out := make(map[string]struct{})
+
+	for index, arg := range call.Args {
+		target, ok := callParamTargetType(sig, index)
+		if !ok || !namedTypeMatches(target, "io", "Reader") {
+			continue
+		}
+
+		byteReader := siblingNamedInterface(target, "io", "Reader", "ByteReader")
+		if byteReader == nil {
+			continue
+		}
+
+		graph.addInterfaceMethodsForValue(l, out, arg, byteReader)
+	}
+
+	return out
+}
+
+func knownOptionalByteReaderCall(fn *types.Func) bool {
+	return fn != nil &&
+		fn.Pkg() != nil &&
+		fn.Pkg().Path() == "github.com/ulikunitz/xz/lzma" &&
+		fn.Name() == "NewReader"
+}
+
+func siblingNamedInterface(
+	typ types.Type,
+	pkgPath string,
+	sourceName string,
+	targetName string,
+) types.Type {
+	named, ok := namedType(typ)
+	if !ok || !namedTypeMatches(named, pkgPath, sourceName) {
+		return nil
+	}
+
+	obj, _ := named.Obj().Pkg().Scope().Lookup(targetName).(*types.TypeName)
+	if obj == nil {
+		return nil
+	}
+
+	target := obj.Type()
+	if _, ok := types.Unalias(target).Underlying().(*types.Interface); !ok {
+		return nil
+	}
+
+	return target
+}
+
+func namedTypeMatches(typ types.Type, pkgPath string, name string) bool {
+	named, ok := namedType(typ)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return false
+	}
+
+	return named.Obj().Pkg().Path() == pkgPath && named.Obj().Name() == name
+}
+
+func namedType(typ types.Type) (*types.Named, bool) {
+	if typ == nil {
+		return nil, false
+	}
+
+	named, ok := types.Unalias(typ).(*types.Named)
+
+	return named, ok
 }
 
 func callParamTargetType(sig *types.Signature, argIndex int) (types.Type, bool) {
@@ -149,15 +231,29 @@ func calledFunc(info *types.Info, call *ast.CallExpr) *types.Func {
 		return nil
 	}
 
-	switch fun := call.Fun.(type) {
+	return calledFuncExpr(info, call.Fun)
+}
+
+func calledFuncExpr(info *types.Info, expr ast.Expr) *types.Func {
+	switch fun := expr.(type) {
 	case *ast.Ident:
 		obj, _ := info.Uses[fun].(*types.Func)
 
 		return obj
 	case *ast.SelectorExpr:
+		if selection := info.Selections[fun]; selection != nil {
+			obj, _ := selection.Obj().(*types.Func)
+
+			return obj
+		}
+
 		obj, _ := info.Uses[fun.Sel].(*types.Func)
 
 		return obj
+	case *ast.IndexExpr:
+		return calledFuncExpr(info, fun.X)
+	case *ast.IndexListExpr:
+		return calledFuncExpr(info, fun.X)
 	default:
 		return nil
 	}

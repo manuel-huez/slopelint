@@ -8,6 +8,8 @@ import (
 	"slices"
 )
 
+const builtinLenName = "len"
+
 func (l *Runner) checkRedundantAppendLenGuard(stmt ast.Stmt) {
 	match, ok := l.redundantAppendLenGuard(stmt)
 	if !ok {
@@ -243,7 +245,7 @@ func (l *Runner) lenGuardSource(
 
 func (l *Runner) lenCompareOperand(lenExpr ast.Expr, limitExpr ast.Expr) (string, int64, bool) {
 	call, ok := l.unparen(lenExpr).(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 || !l.isBuiltinCall(call, "len") {
+	if !ok || len(call.Args) != 1 || !l.isBuiltinCall(call, builtinLenName) {
 		return "", 0, false
 	}
 
@@ -378,7 +380,7 @@ func (guard rangeGuard) label() string {
 	case guard.hasLen && guard.hasNil:
 		return "nil/len"
 	case guard.hasLen:
-		return "len"
+		return builtinLenName
 	case guard.hasNil:
 		return "nil"
 	default:
@@ -422,17 +424,8 @@ func (l *Runner) rangeNoopsWhenNil(expr ast.Expr) bool {
 }
 
 func (l *Runner) checkDuplicateAdjacentRangeLoop(stmts []ast.Stmt, idx int) {
-	if idx == 0 {
-		return
-	}
-
-	current, ok := l.rangeLoopShape(stmts[idx])
+	current, ok := l.duplicateAdjacentRangeLoop(stmts, idx)
 	if !ok {
-		return
-	}
-
-	prior, ok := l.rangeLoopShape(stmts[idx-1])
-	if !ok || current.key != prior.key {
 		return
 	}
 
@@ -441,6 +434,24 @@ func (l *Runner) checkDuplicateAdjacentRangeLoop(stmts []ast.Stmt, idx int) {
 		"loop_ceremony",
 		"adjacent range loop repeats previous loop body; merge ranges or collapse shared input list",
 	)
+}
+
+func (l *Runner) duplicateAdjacentRangeLoop(stmts []ast.Stmt, idx int) (rangeLoopShape, bool) {
+	if idx == 0 {
+		return rangeLoopShape{}, false
+	}
+
+	current, ok := l.rangeLoopShape(stmts[idx])
+	if !ok {
+		return rangeLoopShape{}, false
+	}
+
+	prior, ok := l.rangeLoopShape(stmts[idx-1])
+	if !ok || current.key != prior.key {
+		return rangeLoopShape{}, false
+	}
+
+	return current, true
 }
 
 func (l *Runner) rangeLoopShape(stmt ast.Stmt) (rangeLoopShape, bool) {

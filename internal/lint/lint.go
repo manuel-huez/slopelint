@@ -124,12 +124,12 @@ func (l *linter) analyzeFiles() {
 			switch fn := n.(type) {
 			case *ast.FuncDecl:
 				if fn.Body != nil {
-					l.analyzeFunction(fn.Type, fn.Body)
+					l.analyzeFunction(fn.Type, fn.Recv, fn.Body)
 				}
 
 				return false
 			case *ast.FuncLit:
-				l.analyzeFunction(fn.Type, fn.Body)
+				l.analyzeFunction(fn.Type, nil, fn.Body)
 				return false
 			default:
 				return true
@@ -141,7 +141,11 @@ func (l *linter) analyzeFiles() {
 	l.scanPackageSmells()
 }
 
-func (l *linter) analyzeFunction(fnType *ast.FuncType, body *ast.BlockStmt) {
+func (l *linter) analyzeFunction(
+	fnType *ast.FuncType,
+	recv *ast.FieldList,
+	body *ast.BlockStmt,
+) {
 	if body == nil {
 		return
 	}
@@ -150,7 +154,7 @@ func (l *linter) analyzeFunction(fnType *ast.FuncType, body *ast.BlockStmt) {
 		return
 	}
 
-	l.scanStructuralFunction(fnType, body)
+	l.scanStructuralFunction(fnType, recv, body)
 	l.execBlock(body.List, []state{newState()})
 }
 

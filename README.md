@@ -37,6 +37,10 @@ Structural ceremony:
 - redundant empty-return guards before final `range` loops
 - adjacent `range` loops that repeat the same body
 - one-read temp aliases like `name := req.Name`
+- clusters of behavior-preserving simplifications inside one function
+- input validation guards scattered after other function work
+- loop performance traps like invariant membership scans, sort calls, derived
+  work, N+1 database/network calls, nested lookups, and pairwise scans
 
 Package-level smells:
 
@@ -215,6 +219,14 @@ Machine-readable diagnostic categories emitted today:
 - `append_ceremony`
 - `loop_ceremony`
 - `temp_alias`
+- `complexity_simplification`
+- `guard_complexity`
+- `loop_membership_scan`
+- `loop_sort`
+- `loop_invariant_work`
+- `loop_external_call`
+- `nested_lookup_loop`
+- `pairwise_comparison_loop`
 - `predicate_signature`
 - `const_grouping`
 - `var_grouping`

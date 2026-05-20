@@ -29,6 +29,7 @@ type deadCodeGraph struct {
 	edges      map[string]map[string]struct{}
 	roots      map[string]struct{}
 	ignored    map[*Package]map[token.Pos]struct{}
+	packages   map[string]*Package
 }
 
 // Private reports production-dead private declarations within one package.
@@ -51,8 +52,15 @@ func Repo(pkgs []*Package) []Finding {
 			continue
 		}
 
-		l := newPackageLinter(pkg)
-		graph.addPackage(l, deadCodeRepo)
+		graph.registerPackage(pkg)
+	}
+
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+
+		graph.addPackageDecls(newPackageLinter(pkg), deadCodeRepo)
 	}
 
 	graph.indexEdges()
@@ -86,7 +94,8 @@ func (graph deadCodeGraph) findings() []Finding {
 
 func (l *packageLinter) deadPrivateDeclGraph() deadCodeGraph {
 	graph := newDeadCodeGraph()
-	graph.addPackage(l, deadCodePrivate)
+	graph.registerPackage(l.pkg)
+	graph.addPackageDecls(l, deadCodePrivate)
 	graph.indexEdges()
 
 	return graph
@@ -98,11 +107,18 @@ func newDeadCodeGraph() deadCodeGraph {
 		edges:      make(map[string]map[string]struct{}),
 		roots:      make(map[string]struct{}),
 		ignored:    make(map[*Package]map[token.Pos]struct{}),
+		packages:   make(map[string]*Package),
 	}
 }
 
-func (graph *deadCodeGraph) addPackage(l *packageLinter, mode deadCodeMode) {
-	graph.ignored[l.pkg] = l.deadCodeIgnoredIdentPositions()
+func (graph *deadCodeGraph) registerPackage(pkg *Package) {
+	l := newPackageLinter(pkg)
+
+	graph.packages[pkg.ImportPath] = pkg
+	graph.ignored[pkg] = l.deadCodeIgnoredIdentPositions()
+}
+
+func (graph *deadCodeGraph) addPackageDecls(l *packageLinter, mode deadCodeMode) {
 	l.forEachProductionDecl(func(decl ast.Decl) {
 		graph.addDecl(l, decl, mode)
 	})

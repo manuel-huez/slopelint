@@ -26,6 +26,13 @@ type boolBranchAction struct {
 	targetID string
 }
 
+type boolIfThenReturnMatch struct {
+	cond      ast.Expr
+	whenTrue  bool
+	whenFalse bool
+	pos       token.Pos
+}
+
 type switchBranchShape struct {
 	clause   *ast.CaseClause
 	key      string
@@ -98,8 +105,10 @@ func (l *Runner) scanStructuralStmt(stmt ast.Stmt) {
 	case *ast.IfStmt:
 		l.scanStructuralIfStmt(stmt)
 	case *ast.ForStmt:
+		l.checkForLoopPerformance(stmt)
 		l.scanStructuralBlock(stmt.Body.List, blockContext{})
 	case *ast.RangeStmt:
+		l.checkRangeLoopPerformance(stmt)
 		l.scanStructuralBlock(stmt.Body.List, blockContext{})
 	case *ast.SwitchStmt:
 		l.scanStructuralSwitchStmt(stmt)

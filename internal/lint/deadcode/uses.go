@@ -22,20 +22,7 @@ func (graph deadCodeGraph) usesFrom(
 			return true
 		}
 
-		for key := range graph.interfaceMethodUses(l, n) {
-			out[key] = struct{}{}
-		}
-
-		if lit, ok := n.(*ast.CompositeLit); ok {
-			for key := range graph.compositeLitFieldUses(l, lit) {
-				out[key] = struct{}{}
-			}
-		}
-
-		if selector, ok := n.(*ast.SelectorExpr); ok {
-			graph.addSelectionUse(l, out, selector)
-			return true
-		}
+		graph.addNonIdentUses(l, out, n)
 
 		ident, ok := n.(*ast.Ident)
 		if !ok || ident == nil || graph.identIgnored(l.pkg, ident.Pos()) {
@@ -60,6 +47,29 @@ func (graph deadCodeGraph) usesFrom(
 	})
 
 	return out
+}
+
+func (graph deadCodeGraph) addNonIdentUses(
+	l *packageLinter,
+	out map[string]struct{},
+	node ast.Node,
+) {
+	for key := range graph.interfaceMethodUses(l, node) {
+		out[key] = struct{}{}
+	}
+
+	switch node := node.(type) {
+	case *ast.CallExpr:
+		for key := range graph.reflectedFieldUses(l, node) {
+			out[key] = struct{}{}
+		}
+	case *ast.CompositeLit:
+		for key := range graph.compositeLitFieldUses(l, node) {
+			out[key] = struct{}{}
+		}
+	case *ast.SelectorExpr:
+		graph.addSelectionUse(l, out, node)
+	}
 }
 
 func (graph deadCodeGraph) addSelectionUse(

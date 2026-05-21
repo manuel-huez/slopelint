@@ -205,6 +205,11 @@ func (l *linter) collectCallArgInvalidations(
 			continue
 		}
 
+		if lit, ok := l.localFuncLitForExpr(arg); ok {
+			l.collectFuncLitInvalidations(lit, invalidations, seen)
+			continue
+		}
+
 		if unary, ok := l.unparen(arg).(*ast.UnaryExpr); ok && unary.Op == token.AND {
 			addFull(unary.X)
 			continue

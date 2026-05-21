@@ -2,6 +2,7 @@ package deadcode
 
 import (
 	"go/token"
+	"maps"
 )
 
 func (graph deadCodeGraph) identIgnored(
@@ -19,6 +20,22 @@ func (graph deadCodeGraph) identIgnored(
 }
 
 func (graph deadCodeGraph) liveObjects() map[string]struct{} {
+	live := graph.reachableObjects()
+
+	for {
+		graph.resetFmtStringerVarSummaries(live)
+		graph.indexEdges()
+
+		next := graph.reachableObjects()
+		if maps.Equal(live, next) {
+			return live
+		}
+
+		live = next
+	}
+}
+
+func (graph deadCodeGraph) reachableObjects() map[string]struct{} {
 	live := make(map[string]struct{})
 	work := make([]string, 0, len(graph.roots))
 

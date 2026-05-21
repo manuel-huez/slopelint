@@ -214,6 +214,11 @@ func (l *linter) invalidateForCallOneSeen(
 			continue
 		}
 
+		if lit, ok := l.localFuncLitForExpr(arg); ok {
+			out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
+			continue
+		}
+
 		if u, ok := l.unparen(arg).(*ast.UnaryExpr); ok && u.Op == token.AND {
 			addFull(u.X)
 			continue

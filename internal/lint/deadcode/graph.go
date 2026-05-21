@@ -25,11 +25,24 @@ type deadCodeDecl struct {
 }
 
 type deadCodeGraph struct {
-	candidates map[string]deadCodeDecl
-	edges      map[string]map[string]struct{}
-	roots      map[string]struct{}
-	ignored    map[*Package]map[token.Pos]struct{}
-	packages   map[string]*Package
+	candidates            map[string]deadCodeDecl
+	edges                 map[string]map[string]struct{}
+	roots                 map[string]struct{}
+	rootUses              []deadCodeRootUse
+	ignored               map[*Package]map[token.Pos]struct{}
+	packages              map[string]*Package
+	fmtStringerForwarded  map[string][]fmtStringerParamUse
+	fmtStringerResults    map[string]fmtStringerResultState
+	fmtStringerVarValues  map[string][]types.Type
+	fmtStringerVarSlices  map[string][]types.Type
+	fmtStringerVarUnknown map[string]struct{}
+	fmtStringerSummary    map[string]struct{}
+	fmtStringerLive       map[string]struct{}
+}
+
+type deadCodeRootUse struct {
+	pkg  *Package
+	node ast.Node
 }
 
 // Private reports production-dead private declarations within one package.
@@ -103,11 +116,18 @@ func (l *packageLinter) deadPrivateDeclGraph() deadCodeGraph {
 
 func newDeadCodeGraph() deadCodeGraph {
 	return deadCodeGraph{
-		candidates: make(map[string]deadCodeDecl),
-		edges:      make(map[string]map[string]struct{}),
-		roots:      make(map[string]struct{}),
-		ignored:    make(map[*Package]map[token.Pos]struct{}),
-		packages:   make(map[string]*Package),
+		candidates:            make(map[string]deadCodeDecl),
+		edges:                 make(map[string]map[string]struct{}),
+		roots:                 make(map[string]struct{}),
+		rootUses:              make([]deadCodeRootUse, 0),
+		ignored:               make(map[*Package]map[token.Pos]struct{}),
+		packages:              make(map[string]*Package),
+		fmtStringerForwarded:  make(map[string][]fmtStringerParamUse),
+		fmtStringerResults:    make(map[string]fmtStringerResultState),
+		fmtStringerVarValues:  make(map[string][]types.Type),
+		fmtStringerVarSlices:  make(map[string][]types.Type),
+		fmtStringerVarUnknown: make(map[string]struct{}),
+		fmtStringerSummary:    make(map[string]struct{}),
 	}
 }
 
@@ -125,8 +145,17 @@ func (graph *deadCodeGraph) addPackageDecls(l *packageLinter, mode deadCodeMode)
 }
 
 func (graph *deadCodeGraph) indexEdges() {
+	graph.reindexRootUses()
+
 	for obj, decl := range graph.candidates {
 		l := newPackageLinter(decl.pkg)
 		graph.edges[obj] = graph.usesFrom(l, decl.node)
+	}
+}
+
+func (graph *deadCodeGraph) reindexRootUses() {
+	graph.roots = make(map[string]struct{})
+	for _, root := range graph.rootUses {
+		graph.addRootUseEdges(root.pkg, root.node)
 	}
 }

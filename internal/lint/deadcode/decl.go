@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"strings"
 )
 
 func (graph *deadCodeGraph) addDecl(l *packageLinter, decl ast.Decl, mode deadCodeMode) {
@@ -42,7 +41,6 @@ func (l *packageLinter) keepFuncLive(
 ) bool {
 	return obj == nil ||
 		!l.reportableFuncForMode(fn, mode) ||
-		isMarshalHookMethod(fn) ||
 		isErrorHookMethod(obj) ||
 		isMarkerMethod(l, fn, obj)
 }
@@ -64,16 +62,6 @@ func deadCodeFuncKind(fn *ast.FuncDecl) string {
 	}
 
 	return "function"
-}
-
-func isMarshalHookMethod(fn *ast.FuncDecl) bool {
-	if fn == nil || fn.Recv == nil || fn.Name == nil {
-		return false
-	}
-
-	name := fn.Name.Name
-
-	return strings.HasPrefix(name, "Marshal") || strings.HasPrefix(name, "Unmarshal")
 }
 
 func isErrorHookMethod(fn *types.Func) bool {

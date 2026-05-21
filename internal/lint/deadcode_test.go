@@ -639,6 +639,1297 @@ func Live() string {
 	}
 }
 
+func TestRepoDeadCodeDoesNotRootAllStringersThroughAnyFmtArg(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live("x")
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type digest string
+
+func (digest) String() string {
+	return "digest"
+}
+
+func Live(value any) string {
+	return fmt.Sprintf("%v", value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`exported method "String" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected unused String method finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerPassedThroughAnyParam(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live(lib.Digest("x"))
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live(value any) string {
+	return fmt.Sprintf("%v", value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt Stringer method passed through any reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerPassedThroughNestedAnyParam(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Wrap(lib.Digest("x"))
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(value any) string {
+	return fmt.Sprint(value)
+}
+
+func Wrap(value any) string {
+	return Log(value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt nested any Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerPassedThroughVariadicAnyParam(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Log(lib.Digest("x"))
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values ...any) string {
+	return fmt.Sprint(values...)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt variadic any Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughAnyConversion(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	return fmt.Sprint(any(Digest("x")))
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt any conversion Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughAnyLocal(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	var value any = Digest("x")
+
+	return fmt.Sprint(value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt any local Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerForwardedThroughAnySlice(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.LogLiteral(lib.Digest("x"))
+	_ = lib.LogAppend(lib.Digest("x"))
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func LogLiteral(value any) string {
+	values := []any{value}
+
+	return fmt.Sprint(values...)
+}
+
+func LogAppend(value any) string {
+	values := []any{}
+	values = append(values, value)
+
+	return fmt.Sprint(values...)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt any slice forwarded Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughAnySliceLocal(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	values := []any{Digest("x")}
+
+	return fmt.Sprint(values...)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt any slice local Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughKeyedAnySliceLocal(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	values := []any{0: Digest("x")}
+
+	return fmt.Sprint(values...)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt keyed any slice local Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerForwardedAcrossBranch(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Log(lib.Digest("x"), false)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(value any, drop bool) string {
+	forwarded := value
+	if drop {
+		forwarded = nil
+	}
+
+	return fmt.Sprint(forwarded)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt branch forwarded Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerLocalAnyPassedToWrapper(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(value any) string {
+	return fmt.Sprint(value)
+}
+
+func Live() string {
+	var value any = Digest("x")
+
+	return Log(value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt wrapper local any Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerAnySlicePassedToWrapper(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values ...any) string {
+	return fmt.Sprint(values...)
+}
+
+func Live() string {
+	values := []any{Digest("x")}
+
+	return Log(values...)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt wrapper any slice Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerKeyedAnySlicePassedToWrapper(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values ...any) string {
+	return fmt.Sprint(values...)
+}
+
+func Live() string {
+	values := []any{0: Digest("x")}
+
+	return Log(values...)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt keyed wrapper any slice Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerNonVariadicAnySlicePassedToWrapper(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values []any) string {
+	return fmt.Sprint(values...)
+}
+
+func Live() string {
+	return Log([]any{Digest("x")})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf(
+			"fmt non-variadic any slice wrapper Stringer method reported dead, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughSwitch(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live(1)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live(mode int) string {
+	var value any
+	switch mode {
+	case 1:
+		value = Digest("x")
+	default:
+		value = nil
+	}
+
+	return fmt.Sprint(value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt switch Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepFmtStringerFromDefaultSwitchOverwrite(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	var value any = Digest("x")
+	switch {
+	default:
+		value = nil
+	}
+
+	return fmt.Sprint(value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`method "String" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected default switch overwrite to leave Stringer dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepTupleSiblingFmtStringer(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type liveDigest string
+
+func (liveDigest) String() string {
+	return "live"
+}
+
+type deadDigest string
+
+func (deadDigest) String() string {
+	return "dead"
+}
+
+func pair() (liveDigest, deadDigest) {
+	return "live", "dead"
+}
+
+func Live() string {
+	var live any
+	var dead any
+	live, dead = pair()
+	_ = dead
+
+	return fmt.Sprint(live)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`method "String" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected tuple sibling String method to stay dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughTupleForwarder(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live(lib.Digest("x"))
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func unpack(value any) (any, bool) {
+	return value, true
+}
+
+func Live(value any) string {
+	next, _ := unpack(value)
+
+	return fmt.Sprint(next)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt tuple-forwarded Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughRange(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	var out string
+	for _, value := range []any{Digest("x")} {
+		out = fmt.Sprint(value)
+	}
+
+	return out
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt range Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughForwardedPackageAny(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+var Value any = Wrapped
+var Wrapped any = Digest("x")
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"fmt"
+
+	"example.com/sample/model"
+)
+
+func Live() string {
+	return fmt.Sprint(model.Value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt package any Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughPackageAnyInit(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+var Value any
+
+func init() {
+	Value = Digest("x")
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"fmt"
+
+	"example.com/sample/model"
+)
+
+func Live() string {
+	return fmt.Sprint(model.Value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt package init any Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerFromLivePackageMutator(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Set()
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+var Value any
+
+func Set() {
+	Value = Digest("x")
+}
+
+func Live() string {
+	return fmt.Sprint(Value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("fmt live package mutator Stringer method reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepFmtStringerFromDeadPackageMutator(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type liveDigest string
+
+func (liveDigest) String() string {
+	return "live"
+}
+
+type deadDigest string
+
+func (deadDigest) String() string {
+	return "dead"
+}
+
+var Value any = liveDigest("x")
+
+func deadSet() {
+	Value = deadDigest("x")
+}
+
+func Live() string {
+	return fmt.Sprint(Value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`method "String" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected dead package mutator String method to stay dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepFmtStringerFromDeadAnyCaller(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type liveDigest string
+
+func (liveDigest) String() string {
+	return "live"
+}
+
+type deadDigest string
+
+func (deadDigest) String() string {
+	return "dead"
+}
+
+func Log(value any) string {
+	return fmt.Sprint(value)
+}
+
+func Live() string {
+	return Log(liveDigest("x"))
+}
+
+func dead() string {
+	return Log(deadDigest("x"))
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if count := strings.Count(joined, `method "String"`); count != 1 {
+		t.Fatalf("expected only dead caller String method finding, got %d:\n%s", count, joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringersWithSamePackageQualifiedName(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "a", "model", "model.go"), `package model
+
+type Digest string
+
+func (Digest) String() string {
+	return "a"
+}
+
+func New() Digest {
+	return Digest("a")
+}
+`)
+	writeFile(t, filepath.Join(tmp, "b", "model", "model.go"), `package model
+
+type Digest string
+
+func (Digest) String() string {
+	return "b"
+}
+
+func New() Digest {
+	return Digest("b")
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"fmt"
+
+	firstmodel "example.com/sample/a/model"
+	secondmodel "example.com/sample/b/model"
+)
+
+func Live() string {
+	values := []any{firstmodel.New(), secondmodel.New()}
+
+	return fmt.Sprint(values...)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf(
+			"fmt Stringer methods with same package-qualified names reported dead, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestRepoDeadCodeDistinguishesFmtStringerStructFieldOwners(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+
+	lib := `package lib
+
+import "fmt"
+
+type A string
+
+func (A) String() string {
+	return "a"
+}
+
+type B string
+
+func (B) String() string {
+	return "b"
+}
+
+type Box struct {
+	Value any
+}
+
+func Live() string {
+	var first Box
+	var second Box
+
+	first.Value = A("x")
+	second.Value = B("x")
+
+	return fmt.Sprint(first.Value)
+}
+`
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), lib)
+
+	issues := lintInDir(t, tmp)
+	line := issueLineForMessage(t, issues, filepath.Join("lib", "lib.go"), `method "String"`)
+
+	expected := sourceLine(t, lib, "func (B) String() string")
+	if line != expected {
+		t.Fatalf(
+			"expected dead String method on B line %d, got line %d:\n%s",
+			expected,
+			line,
+			joinMessages(issues),
+		)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughLocalParallelAssignment(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+
+	lib := `package lib
+
+import "fmt"
+
+type A string
+
+func (A) String() string {
+	return "a"
+}
+
+type B string
+
+func (B) String() string {
+	return "b"
+}
+
+func Live() string {
+	var left any = A("x")
+	var right any = B("x")
+
+	left, right = right, left
+
+	return fmt.Sprint(right)
+}
+`
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), lib)
+
+	issues := lintInDir(t, tmp)
+	line := issueLineForMessage(t, issues, filepath.Join("lib", "lib.go"), `method "String"`)
+
+	expected := sourceLine(t, lib, "func (B) String() string")
+	if line != expected {
+		t.Fatalf(
+			"expected dead String method on B line %d, got line %d:\n%s",
+			expected,
+			line,
+			joinMessages(issues),
+		)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughForwarderParallelAssignment(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Live()
+}
+`)
+
+	lib := `package lib
+
+import "fmt"
+
+type A string
+
+func (A) String() string {
+	return "a"
+}
+
+type B string
+
+func (B) String() string {
+	return "b"
+}
+
+func Log(left any, right any) string {
+	left, right = right, left
+
+	return fmt.Sprint(right)
+}
+
+func Live() string {
+	return Log(A("x"), B("x"))
+}
+`
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), lib)
+
+	issues := lintInDir(t, tmp)
+	line := issueLineForMessage(t, issues, filepath.Join("lib", "lib.go"), `method "String"`)
+
+	expected := sourceLine(t, lib, "func (B) String() string")
+	if line != expected {
+		t.Fatalf(
+			"expected dead String method on B line %d, got line %d:\n%s",
+			expected,
+			line,
+			joinMessages(issues),
+		)
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerFromCrossPackageMutator(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Set()
+	_ = lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+var Value any
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"fmt"
+
+	"example.com/sample/model"
+)
+
+func Set() {
+	model.Value = model.Digest("x")
+}
+
+func Live() string {
+	return fmt.Sprint(model.Value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "String"`) {
+		t.Fatalf("cross-package package var mutator String method reported dead, got:\n%s", joined)
+	}
+}
+
+func sourceLine(t *testing.T, source string, needle string) int {
+	t.Helper()
+
+	index := strings.Index(source, needle)
+	if index < 0 {
+		t.Fatalf("source missing %q", needle)
+	}
+
+	return strings.Count(source[:index], "\n") + 1
+}
+
+func issueLineForMessage(
+	t *testing.T,
+	issues []Issue,
+	pathSuffix string,
+	message string,
+) int {
+	t.Helper()
+
+	lines := make([]int, 0, 1)
+
+	for _, issue := range issues {
+		if !strings.Contains(issue.Message, message) {
+			continue
+		}
+
+		position := issue.fset.Position(issue.Pos)
+		if strings.HasSuffix(position.Filename, pathSuffix) {
+			lines = append(lines, position.Line)
+		}
+	}
+
+	if len(lines) != 1 {
+		t.Fatalf(
+			"expected one %q issue in %s, got lines %v:\n%s",
+			message,
+			pathSuffix,
+			lines,
+			joinMessages(issues),
+		)
+	}
+
+	return lines[0]
+}
+
 func TestRepoDeadCodeKeepsInterfaceAssertionMethods(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
@@ -880,7 +2171,7 @@ func Load(body []byte) (State, error) {
 	}
 }
 
-func TestRepoDeadCodeReportsTaggedFieldsWithoutInRepoUse(t *testing.T) {
+func TestRepoDeadCodeKeepsMarshalOnlyFields(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
@@ -910,12 +2201,12 @@ func Render() ([]byte, error) {
 	joined := joinMessages(issues)
 
 	for _, want := range []string{
-		`exported field "ProofSummary.Verdict" is unreachable from repo entrypoints; remove it`,
-		`exported field "ProofSummary.BlockingFailures" is unreachable from repo entrypoints; remove it`,
-		`exported field "ProofSummary.LocalOnly" is unreachable from repo entrypoints; remove it`,
+		`field "ProofSummary.Verdict"`,
+		`field "ProofSummary.BlockingFailures"`,
+		`field "ProofSummary.LocalOnly"`,
 	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected tagged field finding %q, got:\n%s", want, joined)
+		if strings.Contains(joined, want) {
+			t.Fatalf("marshal-only field reported dead for %q, got:\n%s", want, joined)
 		}
 	}
 }

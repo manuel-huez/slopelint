@@ -907,7 +907,7 @@ func Live() error {
 	}
 }
 
-func TestRepoDeadCodeKeepsAllMarshalAndUnmarshalPrefixedMethods(t *testing.T) {
+func TestRepoDeadCodeKeepsReflectedMarshalAndUnmarshalMethods(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -946,11 +946,13 @@ func (value Scalar) MarshalYAML() (any, error) {
 	return string(value), nil
 }
 
-func (value Scalar) MarshalText() ([]byte, error) {
+type TextScalar string
+
+func (value TextScalar) MarshalText() ([]byte, error) {
 	return []byte(value), nil
 }
 
-func (value *Scalar) UnmarshalText([]byte) error {
+func (value *TextScalar) UnmarshalText([]byte) error {
 	*value = "decoded"
 
 	return nil
@@ -958,6 +960,7 @@ func (value *Scalar) UnmarshalText([]byte) error {
 
 type Manifest struct {
 	Value *Scalar `+"`yaml:\"value\"`"+`
+	Text  *TextScalar `+"`yaml:\"text\"`"+`
 }
 
 func (manifest *Manifest) UnmarshalYAML(node *yaml.Node) error {
@@ -974,7 +977,9 @@ func (manifest *Manifest) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func Save(value Scalar) ([]byte, error) {
-	return yaml.Marshal(Manifest{Value: &value})
+	text := TextScalar("text")
+
+	return yaml.Marshal(Manifest{Value: &value, Text: &text})
 }
 
 func Load(body []byte) (Manifest, error) {
@@ -997,6 +1002,2461 @@ func Load(body []byte) (Manifest, error) {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
 				"YAML-reflected declaration reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeUsesYAMLMarshalMethodSetForValueContainers(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (*Payload) MarshalYAML() (any, error) {
+	return nil, nil
+}
+
+type Wrapper struct {
+	Value Payload `+"`yaml:\"value\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal([]Wrapper{{}})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Name"`,
+		`field "Wrapper.Value"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"YAML value container field reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+
+	if !strings.Contains(
+		joined,
+		`method "MarshalYAML" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected unused YAML pointer marshal hook finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalAliasReturnFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (any, error) {
+	type raw Payload
+
+	return marshalPayload(payload)
+}
+
+func marshalPayload(payload Payload) (any, error) {
+	type raw Payload
+
+	return []raw{raw(payload)}, nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Name"`,
+		`method "MarshalYAML"`,
+		`function "marshalPayload"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"YAML alias return dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalAliasMapReturnFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (any, error) {
+	type raw Payload
+
+	return map[string]any{"payload": raw(payload)}, nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("YAML map alias return field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsCrossPackageYAMLMarshalAliasReturnFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (any, error) {
+	type raw Payload
+
+	return raw(payload), nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"example.com/sample/model"
+
+	"gopkg.in/yaml.v3"
+)
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(model.Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Name"`,
+		`method "MarshalYAML"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"cross-package YAML alias return dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalNamedResultAliasFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	out = raw(payload)
+
+	return
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Name"`,
+		`method "MarshalYAML"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"YAML named result alias dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepYAMLMarshalStaleNamedResultAliasFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	out = raw(payload)
+	out = nil
+
+	return
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf(
+			"expected stale YAML named result assignment to leave field dead, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalNamedResultAliasAcrossBranch(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	out = raw(payload)
+	if err != nil {
+		out = nil
+		return
+	}
+
+	return
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("YAML branch named result alias field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalExplicitNamedResultAliasFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	out = raw(payload)
+
+	return out, nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("YAML explicit named result alias field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalLocalAliasReturnFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (any, error) {
+	type raw Payload
+
+	var out any = raw(payload)
+
+	return out, nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("YAML local alias return field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalAliasAcrossSwitch(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	switch {
+	default:
+		out = raw(payload)
+	}
+
+	return
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("YAML switch alias return field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepYAMLMarshalDefaultSwitchOverwriteFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	out = raw(payload)
+	switch {
+	default:
+		out = nil
+	}
+
+	return
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected YAML default switch overwrite to leave field dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalAliasAcrossAppendedRange(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	values := []any{}
+	values = append(values, raw(payload))
+
+	for _, value := range values {
+		out = value
+	}
+
+	return out, nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("YAML range alias return field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsExternalGenericMarshalWrapperFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsoncodec v0.0.0
+
+replace example.com/jsoncodec => ./jsoncodec
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsoncodec", "go.mod"),
+		"module example.com/jsoncodec\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
+
+import "encoding/json"
+
+func Encode[T any](value T) ([]byte, error) {
+	return json.Marshal(value)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/jsoncodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return jsoncodec.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("external generic marshal wrapper field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsExternalGenericMarshalMethodWithSameNameFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsoncodec v0.0.0
+
+replace example.com/jsoncodec => ./jsoncodec
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsoncodec", "go.mod"),
+		"module example.com/jsoncodec\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
+
+import "encoding/json"
+
+type Other[T any] struct{}
+
+func (Other[T]) Encode(value T) ([]byte, error) {
+	return nil, nil
+}
+
+type Codec[T any] struct{}
+
+func (Codec[T]) Encode(value T) ([]byte, error) {
+	return json.Marshal(value)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/jsoncodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	codec := jsoncodec.Codec[Payload]{}
+
+	return codec.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("external generic marshal method field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsDelegatedExternalGenericMarshalWrapperFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsoncodec v0.0.0
+
+replace example.com/jsoncodec => ./jsoncodec
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsoncodec", "go.mod"),
+		"module example.com/jsoncodec\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
+
+import "encoding/json"
+
+func Encode[T any](value T) ([]byte, error) {
+	return json.Marshal(value)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/jsoncodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func EncodeVia[T any](value T) ([]byte, error) {
+	return jsoncodec.Encode(value)
+}
+
+func Save() ([]byte, error) {
+	return EncodeVia(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("delegated external generic marshal wrapper field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsSigsYAMLGenericMarshalWrapperJSONFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require (
+	example.com/yamlcodec v0.0.0
+	sigs.k8s.io/yaml v0.0.0
+)
+
+replace example.com/yamlcodec => ./yamlcodec
+replace sigs.k8s.io/yaml => ./yaml
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "yamlcodec", "go.mod"),
+		"module example.com/yamlcodec\n\ngo 1.22\n\nrequire sigs.k8s.io/yaml v0.0.0\n",
+	)
+	writeFile(t, filepath.Join(tmp, "yamlcodec", "codec.go"), `package yamlcodec
+
+import "sigs.k8s.io/yaml"
+
+func Encode[T any](value T) ([]byte, error) {
+	return yaml.Marshal(value)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module sigs.k8s.io/yaml\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) {
+	return nil, nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/yamlcodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return yamlcodec.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("sigs YAML generic marshal wrapper JSON field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepFakeYAMLGenericMarshalWrapperFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require (
+	example.com/yamlcodec v0.0.0
+	example.com/yamlfake v0.0.0
+)
+
+replace example.com/yamlcodec => ./yamlcodec
+replace example.com/yamlfake => ./yamlfake
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "yamlcodec", "go.mod"),
+		"module example.com/yamlcodec\n\ngo 1.22\n\nrequire example.com/yamlfake v0.0.0\n",
+	)
+	writeFile(t, filepath.Join(tmp, "yamlcodec", "codec.go"), `package yamlcodec
+
+import "example.com/yamlfake"
+
+func Encode[T any](value T) ([]byte, error) {
+	return yaml.Marshal(value)
+}
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "yamlfake", "go.mod"),
+		"module example.com/yamlfake\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "yamlfake", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) {
+	return nil, nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/yamlcodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return yamlcodec.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected fake YAML generic marshal wrapper field to stay dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepFakeExternalGenericMarshalWrapperFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsoncodec v0.0.0
+
+replace example.com/jsoncodec => ./jsoncodec
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsoncodec", "go.mod"),
+		"module example.com/jsoncodec\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
+
+func Encode[T any](value T) ([]byte, error) {
+	return nil, nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/jsoncodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return jsoncodec.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf(
+			"expected fake external generic marshal wrapper field to stay dead, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeWithoutCodecOutput(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/tools v0.0.0
+
+replace example.com/tools => ./tools
+`)
+	writeFile(t, filepath.Join(tmp, "tools", "go.mod"), "module example.com/tools\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "tools", "tools.go"), `package tools
+
+func Encode[T any](value T) ([]byte, error) {
+	return nil, nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/tools"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return tools.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected non-codec external encode to leave field dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeFromBareCodecPackage(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/codec v0.0.0
+
+replace example.com/codec => ./codec
+`)
+	writeFile(t, filepath.Join(tmp, "codec", "go.mod"), "module example.com/codec\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec
+
+func Encode[T any](value T) ([]byte, error) {
+	return nil, nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/codec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return codec.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected bare codec external encode to leave field dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeFromJSONNamedNonCodec(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsonfake v0.0.0
+
+replace example.com/jsonfake => ./jsonfake
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsonfake", "go.mod"),
+		"module example.com/jsonfake\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "jsonfake", "fake.go"), `package jsonfake
+
+func Encode[T any](value T) ([]byte, error) {
+	return nil, nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/jsonfake"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return jsonfake.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected jsonfake external encode to leave field dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeJSONFromJSONNamedNonCodec(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsonfake v0.0.0
+
+replace example.com/jsonfake => ./jsonfake
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsonfake", "go.mod"),
+		"module example.com/jsonfake\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "jsonfake", "fake.go"), `package jsonfake
+
+func EncodeJSON[T any](value T) ([]byte, error) {
+	return nil, nil
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/jsonfake"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return jsonfake.EncodeJSON(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected jsonfake EncodeJSON to leave field dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepGenericMarshalFromDeadFuncLiteral(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Encode[T any](value T) ([]byte, error) {
+	_ = func() {
+		_, _ = json.Marshal(value)
+	}
+
+	return nil, nil
+}
+
+func Save() ([]byte, error) {
+	return Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected dead func literal generic marshal to leave field dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeIgnoresYAMLMarshalNonRepresentationReturns(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string `+"`yaml:\"name\"`"+`
+}
+
+type payloadError Payload
+
+func (payloadError) Error() string {
+	return "payload"
+}
+
+func (payload Payload) MarshalYAML() (any, error) {
+	_ = func() any {
+		type raw Payload
+
+		return raw(payload)
+	}
+
+	return nil, payloadError(payload)
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected YAML non-representation returns to leave field dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMapKeyHooks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+type Node struct{}
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+func Unmarshal([]byte, any) error { return nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+	_ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Key struct {
+	ID string
+}
+
+func (Key) MarshalYAML() (any, error) {
+	return "key", nil
+}
+
+func (*Key) UnmarshalYAML(*yaml.Node) error {
+	return nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(map[Key]string{})
+}
+
+func Load(body []byte) error {
+	var payload map[Key]string
+
+	return yaml.Unmarshal(body, &payload)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "MarshalYAML"`,
+		`method "UnmarshalYAML"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf("YAML map key hook reported dead for %q, got:\n%s", unexpected, joined)
+		}
+	}
+
+	if !strings.Contains(
+		joined,
+		`exported field "Key.ID" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected unused YAML map key field finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMapKeyFieldsWithoutHooks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+func Unmarshal([]byte, any) error { return nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+	_ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Key struct {
+	ID string `+"`yaml:\"id\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(map[Key]string{})
+}
+
+func Load(body []byte) error {
+	var payload map[Key]string
+
+	return yaml.Unmarshal(body, &payload)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Key.ID"`) {
+		t.Fatalf("YAML map key field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeReportsUnusedMarshalHooks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "fmt"
+
+type OptionalFloat struct {
+	Value float64
+	Valid bool
+}
+
+func (value *OptionalFloat) UnmarshalJSON([]byte) error {
+	return parseOptionalFloat()
+}
+
+func parseOptionalFloat() error {
+	return fmt.Errorf("invalid")
+}
+
+func Live() {}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, want := range []string{
+		`method "UnmarshalJSON"`,
+		`function "parseOptionalFloat"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected unused marshal hook finding %q, got:\n%s", want, joined)
+		}
+	}
+}
+
+func TestRepoDeadCodeFallsThroughPointerMarshalHookForValueMarshal(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func (*Payload) MarshalJSON() ([]byte, error) {
+	return nil, nil
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("value-marshal field suppressed by pointer hook, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`method "MarshalJSON" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected pointer-only marshal hook finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeIgnoresInvalidReflectedHookSignatures(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func (Payload) MarshalJSON() string {
+	return ""
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("field suppressed by invalid marshal hook signature, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`method "MarshalJSON" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected invalid marshal hook finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeIgnoresInvalidYAMLAndXMLHookSignatures(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeFile(t, filepath.Join(tmp, "yaml", "go.mod"), "module gopkg.in/yaml.v3\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+func Unmarshal([]byte, any) error { return nil }
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Load(nil)
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"encoding/xml"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Payload struct {
+	Name string `+"`yaml:\"name\" xml:\"name\"`"+`
+}
+
+func (Payload) MarshalYAML() (string, error) {
+	return "", nil
+}
+
+func (*Payload) UnmarshalYAML(int) error {
+	return nil
+}
+
+func (Payload) MarshalXML(int, int) error {
+	return nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+
+func Load(body []byte) error {
+	var payload Payload
+	if err := yaml.Unmarshal(body, &payload); err != nil {
+		return err
+	}
+
+	return xml.Unmarshal(body, &payload)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("field suppressed by invalid YAML/XML hook signature, got:\n%s", joined)
+	}
+
+	for _, want := range []string{
+		`method "MarshalYAML"`,
+		`method "UnmarshalYAML"`,
+		`method "MarshalXML"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected invalid hook finding %q, got:\n%s", want, joined)
+		}
+	}
+}
+
+func TestRepoDeadCodeMapsMarshalAliasFieldsToOriginalType(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name    string `+"`json:\"name\"`"+`
+	Ignored string `+"`json:\"-\"`"+`
+}
+
+func (payload Payload) MarshalJSON() ([]byte, error) {
+	type raw Payload
+
+	return json.Marshal(raw(payload))
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("marshal alias field reported dead, got:\n%s", joined)
+	}
+
+	if strings.Contains(joined, `method "MarshalJSON"`) {
+		t.Fatalf("marshal alias hook reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected ignored marshal alias field finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeMapsDelegatedMarshalAliasFieldsToOriginalType(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func (payload Payload) MarshalJSON() ([]byte, error) {
+	return marshalPayload(payload)
+}
+
+func marshalPayload(payload Payload) ([]byte, error) {
+	type raw Payload
+
+	return json.Marshal(raw(payload))
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Name"`,
+		`method "MarshalJSON"`,
+		`function "marshalPayload"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"delegated marshal alias dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeMapsPackageAliasFieldsToOriginalType(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Load(nil)
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+type rawPayload Payload
+
+func (payload Payload) MarshalJSON() ([]byte, error) {
+	return json.Marshal(rawPayload(payload))
+}
+
+func (payload *Payload) UnmarshalJSON(body []byte) error {
+	var raw rawPayload
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return err
+	}
+
+	*payload = Payload(raw)
+
+	return nil
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(Payload{})
+}
+
+func Load(body []byte) error {
+	var payload Payload
+
+	return json.Unmarshal(body, &payload)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Name"`,
+		`method "MarshalJSON"`,
+		`method "UnmarshalJSON"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"package alias dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeMapsTextHookAliasFieldsToOriginalType(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Load(nil)
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func (payload Payload) MarshalText() ([]byte, error) {
+	type raw Payload
+
+	return json.Marshal(raw(payload))
+}
+
+func (payload *Payload) UnmarshalText(text []byte) error {
+	type raw Payload
+
+	var value raw
+	if err := json.Unmarshal(text, &value); err != nil {
+		return err
+	}
+
+	*payload = Payload(value)
+
+	return nil
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(Payload{})
+}
+
+func Load(body []byte) error {
+	var payload Payload
+
+	return json.Unmarshal(body, &payload)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Name"`,
+		`method "MarshalText"`,
+		`method "UnmarshalText"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"text hook alias dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeKeepsFieldsPassedThroughGenericJSONMarshal(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Encode[T any](value T) ([]byte, error) {
+	return json.Marshal(value)
+}
+
+func Save() ([]byte, error) {
+	return Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("generic marshal field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsFieldsPassedThroughGenericInterfaceConversions(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Load(nil)
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Encode[T any](value T) ([]byte, error) {
+	return json.Marshal(any(value))
+}
+
+func Decode[T any](body []byte, out *T) error {
+	return json.Unmarshal(body, any(out))
+}
+
+func Save() ([]byte, error) {
+	return Encode(Payload{})
+}
+
+func Load(body []byte) error {
+	var payload Payload
+
+	return Decode(body, &payload)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `field "Payload.Name"`) {
+		t.Fatalf("generic interface conversion field reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsPointerHooksPassedThroughGenericJSONMarshal(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.SavePointer()
+	_, _ = lib.SaveNamedSlice()
+	_, _ = lib.SaveSlice()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Payload struct{}
+
+func (*Payload) MarshalJSON() ([]byte, error) {
+	return nil, nil
+}
+
+func EncodePointer[T any](value T) ([]byte, error) {
+	return json.Marshal(&value)
+}
+
+func EncodeSlice[T any](value T) ([]byte, error) {
+	return json.Marshal([]T{value})
+}
+
+func EncodeNamedSlice[T any](value T) ([]byte, error) {
+	type Slice []T
+
+	return json.Marshal(Slice{value})
+}
+
+func SavePointer() ([]byte, error) {
+	return EncodePointer(Payload{})
+}
+
+func SaveNamedSlice() ([]byte, error) {
+	return EncodeNamedSlice(Payload{})
+}
+
+func SaveSlice() ([]byte, error) {
+	return EncodeSlice(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "MarshalJSON"`) {
+		t.Fatalf("generic pointer/container marshal hook reported dead, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepGenericJSONMapKeyFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Key struct {
+	ID string
+}
+
+func (Key) MarshalText() ([]byte, error) {
+	return []byte("key"), nil
+}
+
+func Encode[K comparable, V any](value map[K]V) ([]byte, error) {
+	return json.Marshal(value)
+}
+
+func Save() ([]byte, error) {
+	return Encode[Key, string](nil)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "MarshalText"`) {
+		t.Fatalf("generic map key text hook reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`exported field "Key.ID" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected unused generic map key field finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsGenericJSONMapKeyUnmarshalTextHook(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Key struct {
+	ID string
+}
+
+func (*Key) UnmarshalText([]byte) error {
+	return nil
+}
+
+func Decode[K comparable, V any](body []byte, out *map[K]V) error {
+	return json.Unmarshal(body, out)
+}
+
+func DecodeVia[K comparable, V any](body []byte, out *map[K]V) error {
+	return Decode(body, out)
+}
+
+func Load(body []byte) error {
+	var payload map[Key]string
+
+	return DecodeVia(body, &payload)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `method "UnmarshalText"`) {
+		t.Fatalf("generic map key unmarshal text hook reported dead, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`exported field "Key.ID" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected unused generic map key field finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsJSONMapKeyTextHooks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+	_, _ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/json"
+
+type Key string
+
+func (key Key) MarshalText() ([]byte, error) {
+	return []byte(key), nil
+}
+
+func (key *Key) UnmarshalText(text []byte) error {
+	*key = Key(text)
+
+	return nil
+}
+
+type Value struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(map[Key]Value{Key("id"): {Name: "x"}})
+}
+
+func Load(body []byte) (map[Key]Value, error) {
+	var payload map[Key]Value
+	err := json.Unmarshal(body, &payload)
+
+	return payload, err
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "MarshalText"`,
+		`method "UnmarshalText"`,
+		`field "Value.Name"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"JSON map-key text hook dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeKeepsXMLAttrHooks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save(lib.Item{})
+	_, _ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "encoding/xml"
+
+type Attr string
+
+func (attr Attr) MarshalXMLAttr(name xml.Name) (xml.Attr, error) {
+	return xml.Attr{Name: name, Value: string(attr)}, nil
+}
+
+func (attr *Attr) UnmarshalXMLAttr(value xml.Attr) error {
+	*attr = Attr(value.Value)
+
+	return nil
+}
+
+type Item struct {
+	ID Attr `+"`xml:\"id,attr\"`"+`
+}
+
+func Save(item Item) ([]byte, error) {
+	return xml.Marshal(item)
+}
+
+func Load(body []byte) (Item, error) {
+	var item Item
+	err := xml.Unmarshal(body, &item)
+
+	return item, err
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "MarshalXMLAttr"`,
+		`method "UnmarshalXMLAttr"`,
+		`field "Item.ID"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf("XML attr hook dependency reported dead for %q, got:\n%s", unexpected, joined)
+		}
+	}
+}
+
+func TestRepoDeadCodeKeepsXMLElementAPIHooksAndFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_ = lib.Save(lib.Payload{})
+	_, _ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"bytes"
+	"encoding/xml"
+)
+
+type XMLValue string
+
+func (value XMLValue) MarshalXML(encoder *xml.Encoder, start xml.StartElement) error {
+	return encoder.EncodeElement(string(value), start)
+}
+
+func (value *XMLValue) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement) error {
+	var text string
+	if err := decoder.DecodeElement(&text, &start); err != nil {
+		return err
+	}
+
+	*value = XMLValue(text)
+
+	return nil
+}
+
+type Payload struct {
+	Value XMLValue `+"`xml:\"value\"`"+`
+	Name  string   `+"`xml:\"name\"`"+`
+}
+
+func Save(payload Payload) error {
+	var buffer bytes.Buffer
+	encoder := xml.NewEncoder(&buffer)
+
+	return encoder.EncodeElement(
+		payload,
+		xml.StartElement{Name: xml.Name{Local: "payload"}},
+	)
+}
+
+func Load(body []byte) (Payload, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	var payload Payload
+	var start xml.StartElement
+	err := decoder.DecodeElement(&payload, &start)
+
+	return payload, err
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "MarshalXML"`,
+		`method "UnmarshalXML"`,
+		`field "Payload.Value"`,
+		`field "Payload.Name"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"XML element API dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+}
+
+func TestRepoDeadCodeKeepsGenericXMLElementDecodeFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Load(nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"bytes"
+	"encoding/xml"
+)
+
+type XMLValue string
+
+func (value *XMLValue) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement) error {
+	var text string
+	if err := decoder.DecodeElement(&text, &start); err != nil {
+		return err
+	}
+
+	*value = XMLValue(text)
+
+	return nil
+}
+
+type Payload struct {
+	Value XMLValue `+"`xml:\"value\"`"+`
+	Name  string   `+"`xml:\"name\"`"+`
+}
+
+func decodeElement[T any](
+	decoder *xml.Decoder,
+	start xml.StartElement,
+) (T, error) {
+	var value T
+	err := decoder.DecodeElement(&value, &start)
+
+	return value, err
+}
+
+func Load(body []byte) (Payload, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	var start xml.StartElement
+
+	return decodeElement[Payload](decoder, start)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`method "UnmarshalXML"`,
+		`field "Payload.Value"`,
+		`field "Payload.Name"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"generic XML element dependency reported dead for %q, got:\n%s",
 				unexpected,
 				joined,
 			)

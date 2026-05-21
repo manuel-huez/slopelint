@@ -141,6 +141,38 @@ func f() {
 	}
 }
 
+func TestLocalFuncCallbackArgInvalidatesOuterFact(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(writeRows func(func([]int) error) error) error {
+	wroteRows := false
+	write := func(rows []int) error {
+		if len(rows) == 0 { return nil }
+		wroteRows = true
+
+		return nil
+	}
+
+	if err := writeRows(write); err != nil {
+		return err
+	}
+
+	if !wroteRows { println("empty") }
+
+	return nil
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `condition "!wroteRows" is always true here`) {
+		t.Fatalf("callback arg closure write should invalidate outer bool fact, got:\n%s", joined)
+	}
+}
+
 func TestTracksAliasesBackToOriginalSelector(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

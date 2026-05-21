@@ -6,6 +6,15 @@ import (
 )
 
 func (graph *deadCodeGraph) addRootUses(l *packageLinter, node ast.Node) {
+	graph.rootUses = append(graph.rootUses, deadCodeRootUse{
+		pkg:  l.pkg,
+		node: node,
+	})
+	graph.addRootUseEdges(l.pkg, node)
+}
+
+func (graph *deadCodeGraph) addRootUseEdges(pkg *Package, node ast.Node) {
+	l := newPackageLinter(pkg)
 	for key := range graph.usesFrom(l, node) {
 		graph.roots[key] = struct{}{}
 	}
@@ -16,6 +25,10 @@ func (graph deadCodeGraph) usesFrom(
 	node ast.Node,
 ) map[string]struct{} {
 	out := make(map[string]struct{})
+
+	for key := range graph.fmtStringerFlowUses(l, node) {
+		out[key] = struct{}{}
+	}
 
 	ast.Inspect(node, func(n ast.Node) bool {
 		if n == nil {
@@ -60,7 +73,7 @@ func (graph deadCodeGraph) addNonIdentUses(
 
 	switch node := node.(type) {
 	case *ast.CallExpr:
-		for key := range graph.reflectedFieldUses(l, node) {
+		for key := range graph.reflectedUses(l, node) {
 			out[key] = struct{}{}
 		}
 	case *ast.CompositeLit:

@@ -1,9 +1,7 @@
 package slopelint
 
 import (
-	"os"
 	"reflect"
-	"strings"
 
 	"github.com/manuel-huez/slopelint/internal/lint"
 	"golang.org/x/tools/go/analysis"
@@ -50,8 +48,8 @@ func init() {
 func run(pass *analysis.Pass) (any, error) {
 	issues, err := lint.RunAnalysis(pass, lint.Options{
 		MaxStates:    maxStates,
-		CacheEnabled: cacheEnabled && cacheEnvEnabled(),
-		CacheDir:     resolvedCacheDir(),
+		CacheEnabled: cacheEnabled && lint.CacheEnabledFromEnv(),
+		CacheDir:     lint.ResolveCacheDir(cacheDir),
 	})
 	if err != nil {
 		return nil, err
@@ -66,26 +64,4 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	return analysisResult{}, nil
-}
-
-func cacheEnvEnabled() bool {
-	value := strings.TrimSpace(os.Getenv("SLOPELINT_CACHE"))
-	if value == "" {
-		return true
-	}
-
-	switch strings.ToLower(value) {
-	case "0", "false", "off", "no":
-		return false
-	default:
-		return true
-	}
-}
-
-func resolvedCacheDir() string {
-	if cacheDir != "" {
-		return cacheDir
-	}
-
-	return strings.TrimSpace(os.Getenv("SLOPELINT_CACHE_DIR"))
 }

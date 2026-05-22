@@ -198,7 +198,7 @@ func (graph deadCodeGraph) reflectedWrapperFunc(
 		return nil, nil, nil, false
 	}
 
-	decl := genericFuncDecl(pkg, fn)
+	decl := graph.funcDeclForObject(pkg, fn)
 	if decl == nil || decl.Body == nil {
 		return nil, nil, nil, false
 	}
@@ -288,6 +288,10 @@ func (graph deadCodeGraph) collectDelegatedReflectedWrapperCall(
 	kind reflectedWrapperKind,
 	out *[]reflectedWrapperArgUse,
 ) bool {
+	if !reflectedWrapperCallPassesParam(pkg, call, paramIndexes) {
+		return true
+	}
+
 	callee := calledFunc(pkg.TypesInfo, call)
 
 	uses, inspected, complete := graph.reflectedWrapperArgUsesSeen(callee, funcsSeen, kind)
@@ -314,6 +318,20 @@ func (graph deadCodeGraph) collectDelegatedReflectedWrapperCall(
 	}
 
 	return complete
+}
+
+func reflectedWrapperCallPassesParam(
+	pkg *Package,
+	call *ast.CallExpr,
+	paramIndexes map[types.Object]int,
+) bool {
+	for _, arg := range call.Args {
+		if _, ok := reflectedWrapperParamIndex(pkg, arg, paramIndexes); ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 func reflectedWrapperParamIndex(

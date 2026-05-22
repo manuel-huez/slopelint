@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"sort"
 
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
@@ -10,6 +11,17 @@ import (
 func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 	if len(pkgs) == 0 {
 		return nil
+	}
+
+	cache, err := newRepoAnalysisCache(pkgs, opts)
+	if err == nil {
+		if entry, ok := cache.load(); ok {
+			if issues, ok := replayRepoAnalysisCache(pkgs, entry, opts.CacheHitHook); ok {
+				return issues
+			}
+		}
+	} else if !errors.Is(err, errAnalysisCacheDisabled) {
+		cache = nil
 	}
 
 	explicitFacts, inferredFacts := inferRepoSummaries(pkgs, opts)
@@ -42,6 +54,10 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 
 	if repoDeadCode {
 		issues = append(issues, repoDeadCodeIssues(deadPkgs)...)
+	}
+
+	if cache != nil {
+		_ = cache.store(issues)
 	}
 
 	return issues

@@ -771,7 +771,7 @@ func (graph deadCodeGraph) addFmtStringerConcreteForwardedCallUses(
 		return
 	}
 
-	decl := genericFuncDecl(calleePkg, fn)
+	decl := graph.funcDeclForObject(calleePkg, fn)
 	if decl == nil {
 		return
 	}

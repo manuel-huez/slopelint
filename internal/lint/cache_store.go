@@ -3,6 +3,7 @@ package lint
 import (
 	"encoding/json"
 	"errors"
+	"go/token"
 	"os"
 	"path/filepath"
 
@@ -14,7 +15,19 @@ func (cache *analysisCache) load() (*analysisCacheEntry, bool) {
 		return nil, false
 	}
 
-	data, err := os.ReadFile(cache.path)
+	return loadAnalysisCacheEntry(cache.path)
+}
+
+func (cache *repoAnalysisCache) load() (*analysisCacheEntry, bool) {
+	if cache == nil {
+		return nil, false
+	}
+
+	return loadAnalysisCacheEntry(cache.path)
+}
+
+func loadAnalysisCacheEntry(path string) (*analysisCacheEntry, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
 	}
@@ -42,17 +55,34 @@ func (cache *analysisCache) store(
 		return err
 	}
 
+	return writeAnalysisCacheEntry(cache.path, entry)
+}
+
+func (cache *repoAnalysisCache) store(issues []Issue) error {
+	if cache == nil {
+		return nil
+	}
+
+	entry, err := buildRepoAnalysisCacheEntry(issues)
+	if err != nil {
+		return err
+	}
+
+	return writeAnalysisCacheEntry(cache.path, entry)
+}
+
+func writeAnalysisCacheEntry(path string, entry analysisCacheEntry) error {
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
 
-	dir := filepath.Dir(cache.path)
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, cacheDirPerm); err != nil {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(dir, filepath.Base(cache.path)+".tmp-*")
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
@@ -72,7 +102,7 @@ func (cache *analysisCache) store(
 		return err
 	}
 
-	return os.Rename(name, cache.path)
+	return os.Rename(name, path)
 }
 
 func buildAnalysisCacheEntry(
@@ -86,15 +116,66 @@ func buildAnalysisCacheEntry(
 		Exports: cachedExportsForLinter(pkg, l),
 	}
 
+	cachedIssues, err := buildAnalysisCacheIssues(
+		issues,
+		func(issue Issue) (token.Position, error) {
+			return pass.Fset.Position(issue.Pos), nil
+		},
+	)
+	if err != nil {
+		return analysisCacheEntry{}, err
+	}
+
+	entry.Issues = cachedIssues
+
+	return entry, nil
+}
+
+func buildRepoAnalysisCacheEntry(issues []Issue) (analysisCacheEntry, error) {
+	entry := analysisCacheEntry{
+		Issues: make([]analysisCacheIssue, 0, len(issues)),
+	}
+
+	cachedIssues, err := buildAnalysisCacheIssues(
+		issues,
+		func(issue Issue) (token.Position, error) {
+			if issue.fset == nil {
+				return token.Position{}, errors.New(
+					"cannot cache issue without file set",
+				)
+			}
+
+			return issue.fset.Position(issue.Pos), nil
+		},
+	)
+	if err != nil {
+		return analysisCacheEntry{}, err
+	}
+
+	entry.Issues = cachedIssues
+
+	return entry, nil
+}
+
+func buildAnalysisCacheIssues(
+	issues []Issue,
+	position func(Issue) (token.Position, error),
+) ([]analysisCacheIssue, error) {
+	out := make([]analysisCacheIssue, 0, len(issues))
+
 	for _, issue := range issues {
-		pos := pass.Fset.Position(issue.Pos)
+		pos, err := position(issue)
+		if err != nil {
+			return nil, err
+		}
+
 		if pos.Filename == "" || pos.Offset < 0 {
-			return analysisCacheEntry{}, errors.New(
+			return nil, errors.New(
 				"cannot cache issue without stable source position",
 			)
 		}
 
-		entry.Issues = append(entry.Issues, analysisCacheIssue{
+		out = append(out, analysisCacheIssue{
 			Filename: pos.Filename,
 			Offset:   pos.Offset,
 			Kind:     issue.Kind,
@@ -102,5 +183,5 @@ func buildAnalysisCacheEntry(
 		})
 	}
 
-	return entry, nil
+	return out, nil
 }

@@ -996,7 +996,7 @@ func (graph deadCodeGraph) inspectReflectedFuncTypeParamUsesSeen(
 		return false
 	}
 
-	decl := genericFuncDecl(pkg, fn)
+	decl := graph.funcDeclForObject(pkg, fn)
 	if decl == nil || decl.Body == nil {
 		return false
 	}
@@ -1300,7 +1300,24 @@ func (graph deadCodeGraph) packageForFunc(fn *types.Func) *Package {
 	return graph.packages[fn.Pkg().Path()]
 }
 
-func genericFuncDecl(pkg *Package, fn *types.Func) *ast.FuncDecl {
+func (graph deadCodeGraph) funcDeclForObject(pkg *Package, fn *types.Func) *ast.FuncDecl {
+	if pkg == nil || fn == nil {
+		return nil
+	}
+
+	target := fn.Origin()
+	if target == nil {
+		target = fn
+	}
+
+	if decl, ok := graph.funcDeclCache[target]; ok {
+		return decl
+	}
+
+	if _, ok := graph.funcDeclMisses[target]; ok {
+		return nil
+	}
+
 	targetKey := deadCodeObjectKey(fn)
 
 	for _, decl := range pkg.ProductionFuncs {
@@ -1309,10 +1326,18 @@ func genericFuncDecl(pkg *Package, fn *types.Func) *ast.FuncDecl {
 		}
 
 		obj, _ := pkg.TypesInfo.Defs[decl.Name].(*types.Func)
-		if obj != nil && deadCodeObjectKey(obj) == targetKey {
+		if obj == nil {
+			continue
+		}
+
+		if obj.Origin() == target || deadCodeObjectKey(obj) == targetKey {
+			graph.funcDeclCache[target] = decl
+
 			return decl
 		}
 	}
+
+	graph.funcDeclMisses[target] = struct{}{}
 
 	return nil
 }

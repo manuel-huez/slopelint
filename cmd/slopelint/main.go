@@ -51,8 +51,8 @@ func runStandalone(args []string) int {
 		defaultMaxStates,
 		"maximum number of symbolic states before widening",
 	)
-	flags.Bool("cache", true, "reuse cached analysis for unchanged packages")
-	flags.String("cache-dir", "", "directory for persistent analysis cache")
+	cacheEnabled := flags.Bool("cache", true, "reuse cached analysis for unchanged packages")
+	cacheDir := flags.String("cache-dir", "", "directory for persistent analysis cache")
 
 	if err := flags.Parse(args); err != nil {
 		return exitUsage
@@ -70,7 +70,11 @@ func runStandalone(args []string) int {
 		return exitFailure
 	}
 
-	issues := lint.LintPackages(pkgs, lint.Options{MaxStates: *maxStates})
+	issues := lint.LintPackages(pkgs, lint.Options{
+		MaxStates:    *maxStates,
+		CacheEnabled: *cacheEnabled && lint.CacheEnabledFromEnv(),
+		CacheDir:     lint.ResolveCacheDir(*cacheDir),
+	})
 	if len(issues) == 0 {
 		return 0
 	}

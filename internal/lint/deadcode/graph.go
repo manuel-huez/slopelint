@@ -38,6 +38,8 @@ type deadCodeGraph struct {
 	fmtStringerVarUnknown        map[string]struct{}
 	fmtStringerSummary           map[string]struct{}
 	fmtStringerLive              map[string]struct{}
+	funcDeclCache                map[*types.Func]*ast.FuncDecl
+	funcDeclMisses               map[*types.Func]struct{}
 	reflectedWrapperDecodeCache  map[string]reflectedWrapperSummary
 	reflectedWrapperMarshalCache map[string]reflectedWrapperSummary
 }
@@ -130,6 +132,8 @@ func newDeadCodeGraph() deadCodeGraph {
 		fmtStringerVarSlices:         make(map[string][]types.Type),
 		fmtStringerVarUnknown:        make(map[string]struct{}),
 		fmtStringerSummary:           make(map[string]struct{}),
+		funcDeclCache:                make(map[*types.Func]*ast.FuncDecl),
+		funcDeclMisses:               make(map[*types.Func]struct{}),
 		reflectedWrapperDecodeCache:  make(map[string]reflectedWrapperSummary),
 		reflectedWrapperMarshalCache: make(map[string]reflectedWrapperSummary),
 	}

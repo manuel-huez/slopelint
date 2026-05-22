@@ -776,7 +776,7 @@ func (graph deadCodeGraph) fmtStringerCallResultParamUses(
 		return nil, nil, false
 	}
 
-	decl := genericFuncDecl(calleePkg, fn)
+	decl := graph.funcDeclForObject(calleePkg, fn)
 	if decl == nil {
 		return nil, nil, false
 	}
@@ -1055,7 +1055,7 @@ func (graph deadCodeGraph) fmtStringerDelegatedCallParamUses(
 		return nil
 	}
 
-	decl := genericFuncDecl(calleePkg, fn)
+	decl := graph.funcDeclForObject(calleePkg, fn)
 	if decl == nil {
 		return nil
 	}

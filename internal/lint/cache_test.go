@@ -74,6 +74,54 @@ func f(s string) {
 	}
 }
 
+func TestLintPackagesCachesStandaloneRepoResult(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := t.TempDir()
+
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(s string) {
+	if s == "" { return }
+	if s == "" { println("bad") }
+}
+`)
+
+	pkgs := loadPackagesInDir(t, tmp)
+	pkg := mustPackage(t, pkgs, "example.com/sample")
+	issues1 := LintPackages(pkgs, Options{
+		MaxStates:    32,
+		CacheEnabled: true,
+		CacheDir:     cacheDir,
+	})
+
+	digest1 := issuesDigest(pkg.FSet, issues1)
+	if !strings.Contains(digest1, `condition "s == \"\"" is always false here`) {
+		t.Fatalf("expected first run diagnostic, got:\n%s", digest1)
+	}
+
+	var hits []string
+
+	pkgs = loadPackagesInDir(t, tmp)
+	pkg = mustPackage(t, pkgs, "example.com/sample")
+	issues2 := LintPackages(pkgs, Options{
+		MaxStates:    32,
+		CacheEnabled: true,
+		CacheDir:     cacheDir,
+		CacheHitHook: func(importPath string) {
+			hits = append(hits, importPath)
+		},
+	})
+
+	if len(hits) != 1 || hits[0] != "repo" {
+		t.Fatalf("expected standalone repo cache hit, got %v", hits)
+	}
+
+	if got := issuesDigest(pkg.FSet, issues2); got != digest1 {
+		t.Fatalf("cached issues changed:\nwant:\n%s\n\ngot:\n%s", digest1, got)
+	}
+}
+
 func TestRunAnalysisInvalidatesCacheWhenImportedFactsChange(t *testing.T) {
 	tmp := t.TempDir()
 	cacheDir := t.TempDir()

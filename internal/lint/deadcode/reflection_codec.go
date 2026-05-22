@@ -23,17 +23,41 @@ type reflectedCodec struct {
 }
 
 type reflectedPackageCodec struct {
-	tag     string
-	decode  bool
-	marshal bool
+	tag          string
+	decodeFuncs  map[string]reflectedCodecFunc
+	marshalFuncs map[string]reflectedCodecFunc
+}
+
+type reflectedCodecFunc struct {
+	argIndex int
+	hookTag  string
 }
 
 const (
 	reflectedJSONTag      = "json"
+	reflectedGoccyJSONTag = "json:goccy"
 	reflectedXMLTag       = "xml"
 	reflectedYAMLTag      = "yaml"
+)
+
+const (
 	reflectedDedupeMinLen = 2
-	reflectedEncodingXML  = "encoding/xml"
+	reflectedLastArgIndex = -1
+)
+
+const (
+	reflectedFirstArgIndex              = 0
+	reflectedSecondArgIndex             = 1
+	reflectedGoccyContextUnmarshalIndex = 2
+)
+
+const (
+	reflectedContext     = "context"
+	reflectedEncodingXML = "encoding/xml"
+	reflectedGoccyJSON   = "github.com/goccy/go-json"
+)
+
+const (
 	reflectedXMLHookArgs  = 2
 	reflectedYAMLHookArgs = 1
 )
@@ -78,54 +102,117 @@ var reflectedCodecsByTag = map[string]reflectedCodec{
 	},
 }
 
+var (
+	reflectedLastArgDecodeFunc = reflectedCodecFunc{argIndex: reflectedLastArgIndex}
+	reflectedFirstArgCodecFunc = reflectedCodecFunc{argIndex: reflectedFirstArgIndex}
+)
+
+var (
+	reflectedLastArgDecodeFuncs = map[string]reflectedCodecFunc{
+		"Decode":    reflectedLastArgDecodeFunc,
+		"Unmarshal": reflectedLastArgDecodeFunc,
+	}
+	reflectedEncodeMarshalFuncs = map[string]reflectedCodecFunc{
+		"Encode":  reflectedFirstArgCodecFunc,
+		"Marshal": reflectedFirstArgCodecFunc,
+	}
+)
+
 var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 	"encoding/gob": {
-		tag:    "",
-		decode: true,
+		tag: "",
+		decodeFuncs: map[string]reflectedCodecFunc{
+			"Decode": reflectedLastArgDecodeFunc,
+		},
 	},
 	"encoding/json": {
-		tag:     reflectedJSONTag,
-		decode:  true,
-		marshal: true,
+		tag:          reflectedJSONTag,
+		decodeFuncs:  reflectedLastArgDecodeFuncs,
+		marshalFuncs: reflectedCodecFuncsWith(reflectedEncodeMarshalFuncs, "MarshalIndent"),
+	},
+	reflectedGoccyJSON: {
+		tag: reflectedJSONTag,
+		// goccy context hooks are only reachable through APIs that carry context.
+		decodeFuncs: map[string]reflectedCodecFunc{
+			"Decode":              reflectedLastArgDecodeFunc,
+			"DecodeContext":       reflectedContextCodecFunc(reflectedSecondArgIndex),
+			"DecodeWithOption":    reflectedFirstArgCodecFunc,
+			"Unmarshal":           {argIndex: reflectedSecondArgIndex},
+			"UnmarshalContext":    reflectedContextCodecFunc(reflectedGoccyContextUnmarshalIndex),
+			"UnmarshalNoEscape":   {argIndex: reflectedSecondArgIndex},
+			"UnmarshalWithOption": {argIndex: reflectedSecondArgIndex},
+		},
+		marshalFuncs: map[string]reflectedCodecFunc{
+			"Encode":                  reflectedFirstArgCodecFunc,
+			"EncodeContext":           reflectedContextCodecFunc(reflectedSecondArgIndex),
+			"EncodeWithOption":        reflectedFirstArgCodecFunc,
+			"Marshal":                 reflectedFirstArgCodecFunc,
+			"MarshalContext":          reflectedContextCodecFunc(reflectedSecondArgIndex),
+			"MarshalIndent":           reflectedFirstArgCodecFunc,
+			"MarshalIndentWithOption": reflectedFirstArgCodecFunc,
+			"MarshalNoEscape":         reflectedFirstArgCodecFunc,
+			"MarshalWithOption":       reflectedFirstArgCodecFunc,
+		},
 	},
 	reflectedEncodingXML: {
-		tag:     reflectedXMLTag,
-		decode:  true,
-		marshal: true,
+		tag: reflectedXMLTag,
+		decodeFuncs: map[string]reflectedCodecFunc{
+			"Decode":        reflectedLastArgDecodeFunc,
+			"DecodeElement": reflectedFirstArgCodecFunc,
+			"Unmarshal":     reflectedLastArgDecodeFunc,
+		},
+		marshalFuncs: map[string]reflectedCodecFunc{
+			"Encode":        reflectedFirstArgCodecFunc,
+			"EncodeElement": reflectedFirstArgCodecFunc,
+			"Marshal":       reflectedFirstArgCodecFunc,
+			"MarshalIndent": reflectedFirstArgCodecFunc,
+		},
 	},
 	"github.com/goccy/go-yaml": {
-		tag:     reflectedYAMLTag,
-		decode:  true,
-		marshal: true,
+		tag:          reflectedYAMLTag,
+		decodeFuncs:  reflectedLastArgDecodeFuncs,
+		marshalFuncs: reflectedEncodeMarshalFuncs,
 	},
 	"gopkg.in/yaml.v2": {
-		tag:     reflectedYAMLTag,
-		decode:  true,
-		marshal: true,
+		tag:          reflectedYAMLTag,
+		decodeFuncs:  reflectedLastArgDecodeFuncs,
+		marshalFuncs: reflectedEncodeMarshalFuncs,
 	},
 	"gopkg.in/yaml.v3": {
-		tag:     reflectedYAMLTag,
-		decode:  true,
-		marshal: true,
+		tag:          reflectedYAMLTag,
+		decodeFuncs:  reflectedLastArgDecodeFuncs,
+		marshalFuncs: reflectedEncodeMarshalFuncs,
 	},
 	"sigs.k8s.io/yaml": {
-		tag:     reflectedJSONTag,
-		decode:  true,
-		marshal: true,
+		tag:         reflectedJSONTag,
+		decodeFuncs: reflectedLastArgDecodeFuncs,
+		marshalFuncs: map[string]reflectedCodecFunc{
+			"Marshal": reflectedFirstArgCodecFunc,
+		},
 	},
 }
 
-var reflectedDecodeFuncNames = map[string]struct{}{
-	"Decode":        {},
-	"DecodeElement": {},
-	"Unmarshal":     {},
+func reflectedContextCodecFunc(argIndex int) reflectedCodecFunc {
+	return reflectedCodecFunc{
+		argIndex: argIndex,
+		hookTag:  reflectedGoccyJSONTag,
+	}
 }
 
-var reflectedMarshalFuncNames = map[string]struct{}{
-	"Encode":        {},
-	"EncodeElement": {},
-	"Marshal":       {},
-	"MarshalIndent": {},
+func reflectedCodecFuncsWith(
+	funcs map[string]reflectedCodecFunc,
+	names ...string,
+) map[string]reflectedCodecFunc {
+	out := make(map[string]reflectedCodecFunc, len(funcs)+len(names))
+	for name, fn := range funcs {
+		out[name] = fn
+	}
+
+	for _, name := range names {
+		out[name] = reflectedFirstArgCodecFunc
+	}
+
+	return out
 }
 
 var reflectedHookSignatureValidators = map[string]reflectedHookSignatureValidator{
@@ -141,46 +228,111 @@ var reflectedHookSignatureValidators = map[string]reflectedHookSignatureValidato
 	"UnmarshalXMLAttr": reflectedUnmarshalXMLAttrSignature,
 }
 
-func reflectedDecodeFuncTag(fn *types.Func) (string, bool) {
+type reflectedCodecUse struct {
+	tag     string
+	hookTag string
+}
+
+func reflectedCodecUseForTag(tag string) reflectedCodecUse {
+	return reflectedCodecUse{
+		tag:     tag,
+		hookTag: tag,
+	}
+}
+
+func (codec reflectedPackageCodec) use(fn reflectedCodecFunc) reflectedCodecUse {
+	hookTag := fn.hookTag
+	if hookTag == "" {
+		hookTag = codec.tag
+	}
+
+	return reflectedCodecUse{
+		tag:     codec.tag,
+		hookTag: hookTag,
+	}
+}
+
+func reflectedDecodeFuncCodec(fn *types.Func) (reflectedCodecUse, bool) {
 	// Only known reflection decoders set fields by name; local Decode funcs use normal edges.
-	return reflectedFuncTag(fn, reflectedDecodeFuncNames, func(codec reflectedPackageCodec) bool {
-		return codec.decode
+	return reflectedFuncCodec(fn, func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
+		return codec.decodeFuncs
 	})
 }
 
 func reflectedDecodeTargetArgIndex(fn *types.Func, call *ast.CallExpr) int {
-	if fn != nil &&
-		fn.Pkg() != nil &&
-		fn.Pkg().Path() == reflectedEncodingXML &&
-		fn.Name() == "DecodeElement" {
-		return 0
+	return reflectedTargetArgIndex(
+		fn,
+		call,
+		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
+			return codec.decodeFuncs
+		},
+	)
+}
+
+func reflectedMarshalFuncCodec(fn *types.Func) (reflectedCodecUse, bool) {
+	return reflectedFuncCodec(fn, func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
+		return codec.marshalFuncs
+	})
+}
+
+func reflectedMarshalTargetArgIndex(fn *types.Func, call *ast.CallExpr) int {
+	return reflectedTargetArgIndex(
+		fn,
+		call,
+		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
+			return codec.marshalFuncs
+		},
+	)
+}
+
+func reflectedFuncCodec(
+	fn *types.Func,
+	funcs func(reflectedPackageCodec) map[string]reflectedCodecFunc,
+) (reflectedCodecUse, bool) {
+	codec, ok := reflectedFuncPackageCodec(fn)
+	if !ok {
+		return reflectedCodecUse{}, false
+	}
+
+	codecFunc, ok := funcs(codec)[fn.Name()]
+
+	return codec.use(codecFunc), ok
+}
+
+func reflectedTargetArgIndex(
+	fn *types.Func,
+	call *ast.CallExpr,
+	funcs func(reflectedPackageCodec) map[string]reflectedCodecFunc,
+) int {
+	codec, ok := reflectedFuncPackageCodec(fn)
+	if !ok {
+		return reflectedLastCallArgIndex(call)
+	}
+
+	codecFunc, ok := funcs(codec)[fn.Name()]
+	if !ok || codecFunc.argIndex == reflectedLastArgIndex {
+		return reflectedLastCallArgIndex(call)
+	}
+
+	return codecFunc.argIndex
+}
+
+func reflectedLastCallArgIndex(call *ast.CallExpr) int {
+	if call == nil {
+		return reflectedLastArgIndex
 	}
 
 	return len(call.Args) - 1
 }
-func reflectedMarshalFuncTag(fn *types.Func) (string, bool) {
-	return reflectedFuncTag(fn, reflectedMarshalFuncNames, func(codec reflectedPackageCodec) bool {
-		return codec.marshal
-	})
-}
 
-func reflectedFuncTag(
-	fn *types.Func,
-	names map[string]struct{},
-	enabled func(reflectedPackageCodec) bool,
-) (string, bool) {
+func reflectedFuncPackageCodec(fn *types.Func) (reflectedPackageCodec, bool) {
 	if fn == nil || fn.Pkg() == nil {
-		return "", false
+		return reflectedPackageCodec{}, false
 	}
 
 	codec, ok := reflectedPackageCodecs[fn.Pkg().Path()]
-	if !ok || !enabled(codec) {
-		return "", false
-	}
 
-	_, ok = names[fn.Name()]
-
-	return codec.tag, ok
+	return codec, ok
 }
 
 type reflectedFieldTag struct {
@@ -211,7 +363,7 @@ func reflectedTagHasOption(value string, option string) bool {
 
 	return slices.Contains(strings.Split(options, ","), option)
 }
-func reflectedHookMethodSignature(fn *types.Func, name string) bool {
+func reflectedHookMethodSignature(fn *types.Func, hookTag string, name string) bool {
 	if fn == nil {
 		return false
 	}
@@ -221,16 +373,31 @@ func reflectedHookMethodSignature(fn *types.Func, name string) bool {
 		return false
 	}
 
-	return reflectedHookSignatureMatchesName(sig, name)
+	return reflectedHookSignatureMatchesName(sig, hookTag, name)
 }
 
-func reflectedHookSignatureMatchesName(sig *types.Signature, name string) bool {
+func reflectedHookSignatureMatchesName(sig *types.Signature, hookTag string, name string) bool {
+	if hookTag == reflectedGoccyJSONTag && reflectedGoccyJSONContextHookSignature(sig, name) {
+		return true
+	}
+
 	validator := reflectedHookSignatureValidators[name]
 	if validator == nil {
 		return false
 	}
 
 	return validator(sig)
+}
+
+func reflectedGoccyJSONContextHookSignature(sig *types.Signature, name string) bool {
+	switch name {
+	case "MarshalJSON":
+		return reflectedContextParamBytesErrorSignature(sig)
+	case "UnmarshalJSON":
+		return reflectedContextBytesParamErrorSignature(sig)
+	default:
+		return false
+	}
 }
 
 func reflectedNoParamBytesErrorSignature(sig *types.Signature) bool {
@@ -243,6 +410,22 @@ func reflectedNoParamBytesErrorSignature(sig *types.Signature) bool {
 func reflectedBytesParamErrorSignature(sig *types.Signature) bool {
 	return tupleLen(sig.Params()) == 1 &&
 		reflectedExactByteSliceType(sig.Params().At(0).Type()) &&
+		tupleLen(sig.Results()) == 1 &&
+		typeIsError(sig.Results().At(0).Type())
+}
+
+func reflectedContextParamBytesErrorSignature(sig *types.Signature) bool {
+	return tupleLen(sig.Params()) == 1 &&
+		namedTypeMatches(sig.Params().At(0).Type(), reflectedContext, "Context") &&
+		tupleLen(sig.Results()) == 2 &&
+		reflectedExactByteSliceType(sig.Results().At(0).Type()) &&
+		typeIsError(sig.Results().At(1).Type())
+}
+
+func reflectedContextBytesParamErrorSignature(sig *types.Signature) bool {
+	return tupleLen(sig.Params()) == 2 &&
+		namedTypeMatches(sig.Params().At(0).Type(), reflectedContext, "Context") &&
+		reflectedExactByteSliceType(sig.Params().At(1).Type()) &&
 		tupleLen(sig.Results()) == 1 &&
 		typeIsError(sig.Results().At(0).Type())
 }
@@ -324,7 +507,7 @@ func reflectedHookNames(
 	mode reflectedStructFieldUseMode,
 	context reflectedHookContext,
 ) []string {
-	codec, ok := reflectedCodecsByTag[tag]
+	codec, ok := reflectedCodecsByTag[reflectedHookNameTag(tag)]
 	if !ok {
 		return nil
 	}
@@ -354,5 +537,13 @@ func reflectedHookNames(
 }
 
 func reflectedMapKeyFallbackField(tag string) bool {
-	return reflectedCodecsByTag[tag].mapKeyFallbackField
+	return reflectedCodecsByTag[reflectedHookNameTag(tag)].mapKeyFallbackField
+}
+
+func reflectedHookNameTag(tag string) string {
+	if tag == reflectedGoccyJSONTag {
+		return reflectedJSONTag
+	}
+
+	return tag
 }

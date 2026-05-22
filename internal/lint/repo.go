@@ -3,7 +3,7 @@ package lint
 import (
 	"sort"
 
-	deadcodecheck "example.com/slopelint/internal/lint/deadcode"
+	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
 )
 
 // LintPackages runs repo-aware analysis across loaded packages.

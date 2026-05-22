@@ -1,4 +1,4 @@
-module example.com/slopelint
+module github.com/manuel-huez/slopelint
 
 go 1.22.0
 

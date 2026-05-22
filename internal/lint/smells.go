@@ -1,6 +1,6 @@
 package lint
 
-import smellcheck "example.com/slopelint/internal/lint/smells"
+import smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 
 func (l *linter) scanDefaultSmells() {
 	l.addSmellFindings(smellcheck.RunDefault(l.smellsPackage()))

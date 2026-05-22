@@ -560,10 +560,17 @@ replace example.com/jsoncodec => ./jsoncodec
 	)
 	writeFile(t, filepath.Join(tmp, "jsoncodec", "jsoncodec.go"), `package jsoncodec
 
-func DecodeJSON[T any]([]byte) (T, error) {
-	var zero T
+import "encoding/json"
 
-	return zero, nil
+func DecodeJSON[T any](body []byte) (T, error) {
+	var zero T
+	err := json.Unmarshal(body, &zero)
+
+	return zero, err
+}
+
+func DecodeIntoJSON[T any](body []byte, out *T) error {
+	return json.Unmarshal(body, any(out))
 }
 `)
 	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
@@ -583,13 +590,22 @@ type Payload struct {
 	Ignored  string `+"`json:\"-\"`"+`
 }
 
+type IntoPayload struct {
+	FromJSON string `+"`json:\"from_json\"`"+`
+}
+
 func Live(body []byte) error {
 	payload, err := jsoncodec.DecodeJSON[Payload](body)
 	if err != nil {
 		return err
 	}
 
-	_ = payload
+	var into IntoPayload
+	if err := jsoncodec.DecodeIntoJSON(body, &into); err != nil {
+		return err
+	}
+
+	_, _ = payload, into
 
 	return nil
 }
@@ -602,11 +618,137 @@ func Live(body []byte) error {
 		t.Fatalf("external generic DecodeJSON result field reported dead, got:\n%s", joined)
 	}
 
+	if strings.Contains(joined, `field "IntoPayload.FromJSON"`) {
+		t.Fatalf("external generic DecodeIntoJSON field reported dead, got:\n%s", joined)
+	}
+
 	if !strings.Contains(
 		joined,
 		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
 	) {
 		t.Fatalf("expected ignored external generic DecodeJSON field finding, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeKeepsExternalGoccyJSONGenericDecodeContextHooks(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require (
+	example.com/jsoncodec v0.0.0
+	github.com/goccy/go-json v0.0.0
+)
+
+replace example.com/jsoncodec => ./jsoncodec
+replace github.com/goccy/go-json => ./gojson
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsoncodec", "go.mod"),
+		"module example.com/jsoncodec\n\ngo 1.22\n\nrequire github.com/goccy/go-json v0.0.0\n",
+	)
+	writeFile(
+		t,
+		filepath.Join(tmp, "gojson", "go.mod"),
+		"module github.com/goccy/go-json\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
+
+import "context"
+
+type DecodeOptionFunc func()
+
+func UnmarshalContext(context.Context, []byte, any, ...DecodeOptionFunc) error { return nil }
+`)
+	writeFile(t, filepath.Join(tmp, "jsoncodec", "jsoncodec.go"), `package jsoncodec
+
+import (
+	"context"
+
+	goccyjson "github.com/goccy/go-json"
+)
+
+func DecodeContext[T any](ctx context.Context, body []byte) (*T, error) {
+	value := new(T)
+	err := goccyjson.UnmarshalContext(ctx, body, any(value))
+
+	return value, err
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import (
+	"context"
+
+	"example.com/sample/lib"
+)
+
+func main() {
+	_ = lib.Load(context.Background(), nil)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"context"
+
+	"example.com/jsoncodec"
+)
+
+type Custom string
+
+func (custom *Custom) UnmarshalJSON(ctx context.Context, body []byte) error {
+	return parseCustom(ctx, body)
+}
+
+type Payload struct {
+	Custom Custom `+"`json:\"custom\"`"+`
+	Ignored string `+"`json:\"-\"`"+`
+}
+
+func Load(ctx context.Context, body []byte) error {
+	payload, err := jsoncodec.DecodeContext[Payload](ctx, body)
+	if err != nil {
+		return err
+	}
+
+	_ = payload
+
+	return nil
+}
+
+func parseCustom(context.Context, []byte) error {
+	return nil
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, unexpected := range []string{
+		`field "Payload.Custom"`,
+		`method "UnmarshalJSON"`,
+		`function "parseCustom"`,
+	} {
+		if strings.Contains(joined, unexpected) {
+			t.Fatalf(
+				"external goccy JSON generic context decode dependency reported dead for %q, got:\n%s",
+				unexpected,
+				joined,
+			)
+		}
+	}
+
+	if !strings.Contains(
+		joined,
+		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf(
+			"expected ignored external goccy JSON generic decode field finding, got:\n%s",
+			joined,
+		)
 	}
 }
 
@@ -1709,24 +1851,37 @@ func Save() ([]byte, error) {
 	}
 }
 
-func TestRepoDeadCodeKeepsExternalGenericMarshalWrapperFields(t *testing.T) {
+func TestRepoDeadCodeKeepsExternalGoccyJSONGenericMarshalWrapperFields(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
 go 1.22
 
-require example.com/jsoncodec v0.0.0
+require (
+	example.com/jsoncodec v0.0.0
+	github.com/goccy/go-json v0.0.0
+)
 
 replace example.com/jsoncodec => ./jsoncodec
+replace github.com/goccy/go-json => ./gojson
 `)
 	writeFile(
 		t,
 		filepath.Join(tmp, "jsoncodec", "go.mod"),
-		"module example.com/jsoncodec\n\ngo 1.22\n",
+		"module example.com/jsoncodec\n\ngo 1.22\n\nrequire github.com/goccy/go-json v0.0.0\n",
 	)
+	writeFile(
+		t,
+		filepath.Join(tmp, "gojson", "go.mod"),
+		"module github.com/goccy/go-json\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
 	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
 
-import "encoding/json"
+import "github.com/goccy/go-json"
 
 func Encode[T any](value T) ([]byte, error) {
 	return json.Marshal(value)
@@ -1757,7 +1912,74 @@ func Save() ([]byte, error) {
 	joined := joinMessages(issues)
 
 	if strings.Contains(joined, `field "Payload.Name"`) {
-		t.Fatalf("external generic marshal wrapper field reported dead, got:\n%s", joined)
+		t.Fatalf(
+			"external goccy JSON generic marshal wrapper field reported dead, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepExternalGenericMarshalShadowedParamFields(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsoncodec v0.0.0
+
+replace example.com/jsoncodec => ./jsoncodec
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsoncodec", "go.mod"),
+		"module example.com/jsoncodec\n\ngo 1.22\n",
+	)
+	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
+
+import "encoding/json"
+
+func Encode[T any](value T) ([]byte, error) {
+	{
+		value := struct {
+			Other string `+"`json:\"other\"`"+`
+		}{}
+
+		return json.Marshal(value)
+	}
+}
+`)
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	_, _ = lib.Save()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import "example.com/jsoncodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return jsoncodec.Encode(Payload{})
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf(
+			"expected shadowed external generic marshal param to leave field dead, got:\n%s",
+			joined,
+		)
 	}
 }
 
@@ -2292,12 +2514,14 @@ type Payload struct {
 }
 
 func Encode[T any](value T) ([]byte, error) {
-	_ = func() {
+	sink(func() {
 		_, _ = json.Marshal(value)
-	}
+	})
 
 	return nil, nil
 }
+
+func sink(func()) {}
 
 func Save() ([]byte, error) {
 	return Encode(Payload{})

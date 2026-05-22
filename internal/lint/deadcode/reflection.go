@@ -7,26 +7,26 @@ import (
 
 type reflectedDecodeTarget struct {
 	typ    types.Type
-	tag    string
+	codec  reflectedCodecUse
 	mapKey bool
 }
 
 type reflectedMarshalTarget struct {
 	typ         types.Type
-	tag         string
+	codec       reflectedCodecUse
 	addressable reflectedMarshalAddressability
 }
 
 type reflectedTypeParamUse struct {
 	index       int
-	tag         string
+	codec       reflectedCodecUse
 	pointerOnly bool
 	mapKey      bool
 }
 
 type reflectedMarshalTypeParamUse struct {
-	typ types.Type
-	tag string
+	typ   types.Type
+	codec reflectedCodecUse
 }
 
 type reflectedTypeParamUseContext uint8
@@ -59,19 +59,27 @@ func (graph deadCodeGraph) reflectedUses(
 	}
 
 	out := make(map[string]struct{})
-	targets := reflectedDecodeTargetTypes(l, fn, call)
+	targets := graph.reflectedDecodeTargetTypes(l, fn, call)
 
 	targets = append(targets, graph.reflectedGenericDecodeTypes(l, fn, call)...)
 	for _, target := range targets {
 		if target.mapKey {
-			graph.addReflectedDecodeMapKeyUses(
-				l,
+			if !l.addReflectedDecodeHookUse(
 				out,
 				target.typ,
-				target.tag,
-				call,
-				make(map[string]struct{}),
-			)
+				target.codec,
+				reflectedMapKeyHook,
+			) &&
+				reflectedMapKeyFallbackField(target.codec.hookTag) {
+				graph.addReflectedDecodeUses(
+					l,
+					out,
+					target.typ,
+					target.codec,
+					call,
+					make(map[string]struct{}),
+				)
+			}
 
 			continue
 		}
@@ -80,13 +88,13 @@ func (graph deadCodeGraph) reflectedUses(
 			l,
 			out,
 			target.typ,
-			target.tag,
+			target.codec,
 			call,
 			make(map[string]struct{}),
 		)
 	}
 
-	marshalTargets := reflectedMarshalTargetTypes(l, fn, call)
+	marshalTargets := graph.reflectedMarshalTargetTypes(l, fn, call)
 
 	marshalTargets = append(marshalTargets, graph.reflectedGenericMarshalTypes(l, fn, call)...)
 	for _, target := range marshalTargets {
@@ -94,7 +102,7 @@ func (graph deadCodeGraph) reflectedUses(
 			l,
 			out,
 			target.typ,
-			target.tag,
+			target.codec,
 			call,
 			make(map[string]struct{}),
 			target.addressable,
@@ -104,39 +112,68 @@ func (graph deadCodeGraph) reflectedUses(
 	return out
 }
 
-func reflectedDecodeTargetTypes(
+func inspectReflectedBodyCalls(body *ast.BlockStmt, visit func(*ast.CallExpr)) {
+	if body == nil || visit == nil {
+		return
+	}
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.FuncLit); ok {
+			return false
+		}
+
+		call, ok := n.(*ast.CallExpr)
+		if ok {
+			visit(call)
+		}
+
+		return true
+	})
+}
+
+func (graph deadCodeGraph) reflectedDecodeTargetTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
 ) []reflectedDecodeTarget {
-	tag, ok := reflectedDecodeFuncTag(fn)
+	codec, ok := reflectedDecodeFuncCodec(fn)
 	if !ok || len(call.Args) == 0 {
+		return graph.reflectedWrapperDecodeTargetTypes(l, fn, call)
+	}
+
+	argIndex := reflectedDecodeTargetArgIndex(fn, call)
+	if argIndex < 0 || argIndex >= len(call.Args) {
 		return nil
 	}
 
-	target := call.Args[reflectedDecodeTargetArgIndex(fn, call)]
+	target := call.Args[argIndex]
 
 	typ := reflectedValueType(l.pkg.TypesInfo, target)
 	if !reflectedDecodeTargetType(typ) {
 		return nil
 	}
 
-	return []reflectedDecodeTarget{{typ: typ, tag: tag}}
+	return []reflectedDecodeTarget{{typ: typ, codec: codec}}
 }
 
-func reflectedMarshalTargetTypes(
+func (graph deadCodeGraph) reflectedMarshalTargetTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
 ) []reflectedMarshalTarget {
-	tag, ok := reflectedMarshalFuncTag(fn)
+	codec, ok := reflectedMarshalFuncCodec(fn)
 	if !ok || len(call.Args) == 0 {
+		return graph.reflectedWrapperMarshalTargetTypes(l, fn, call)
+	}
+
+	argIndex := reflectedMarshalTargetArgIndex(fn, call)
+	if argIndex < 0 || argIndex >= len(call.Args) {
 		return nil
 	}
 
 	return []reflectedMarshalTarget{{
-		typ:         reflectedValueType(l.pkg.TypesInfo, call.Args[0]),
-		tag:         tag,
+		typ:         reflectedValueType(l.pkg.TypesInfo, call.Args[argIndex]),
+		codec:       codec,
 		addressable: reflectedMarshalUnaddressable,
 	}}
 }
@@ -155,28 +192,28 @@ func (graph deadCodeGraph) addReflectedDecodeUses(
 	l *packageLinter,
 	out map[string]struct{},
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	seen map[string]struct{},
 ) {
+	if l.addReflectedDecodeHookUse(out, typ, codec, reflectedValueHook) {
+		return
+	}
+
 	if elem, ok := reflectedSequentialContainerElem(typ); ok {
-		graph.addReflectedDecodeUses(l, out, elem, tag, call, seen)
+		graph.addReflectedDecodeUses(l, out, elem, codec, call, seen)
 
 		return
 	}
 
 	if key, elem, ok := reflectedMapTypes(typ); ok {
-		graph.addReflectedDecodeMapKeyUses(l, out, key, tag, call, seen)
-		graph.addReflectedDecodeUses(l, out, elem, tag, call, seen)
+		if !l.addReflectedDecodeHookUse(out, key, codec, reflectedMapKeyHook) &&
+			reflectedMapKeyFallbackField(codec.hookTag) {
+			graph.addReflectedDecodeUses(l, out, key, codec, call, seen)
+		}
 
-		return
-	}
+		graph.addReflectedDecodeUses(l, out, elem, codec, call, seen)
 
-	if l.addReflectedHookUse(
-		out,
-		typ,
-		reflectedHookNames(tag, reflectedDecodeStructFields, reflectedValueHook),
-	) {
 		return
 	}
 
@@ -184,7 +221,7 @@ func (graph deadCodeGraph) addReflectedDecodeUses(
 		l,
 		out,
 		typ,
-		tag,
+		codec,
 		call,
 		seen,
 		reflectedDecodeStructFields,
@@ -192,44 +229,24 @@ func (graph deadCodeGraph) addReflectedDecodeUses(
 	)
 }
 
-func (graph deadCodeGraph) addReflectedDecodeMapKeyUses(
-	l *packageLinter,
-	out map[string]struct{},
-	typ types.Type,
-	tag string,
-	call *ast.CallExpr,
-	seen map[string]struct{},
-) {
-	if l.addReflectedHookUse(
-		out,
-		typ,
-		reflectedHookNames(tag, reflectedDecodeStructFields, reflectedMapKeyHook),
-	) {
-		return
-	}
-
-	if reflectedMapKeyFallbackField(tag) {
-		graph.addReflectedDecodeUses(l, out, typ, tag, call, seen)
-	}
-}
-
 func (graph deadCodeGraph) addReflectedMarshalUses(
 	l *packageLinter,
 	out map[string]struct{},
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	seen map[string]struct{},
 	addressable reflectedMarshalAddressability,
 ) {
 	hook := reflectedTypeMarshalHookMethod(
 		typ,
-		reflectedHookNames(tag, reflectedMarshalStructFields, reflectedValueHook),
-		reflectedMarshalHookAddressability(typ, tag, addressable),
+		reflectedHookNames(codec.hookTag, reflectedMarshalStructFields, reflectedValueHook),
+		codec.hookTag,
+		reflectedMarshalHookAddressability(typ, codec.tag, addressable),
 	)
 	if hook != nil {
 		addReflectedHookFuncUse(out, hook)
-		graph.addReflectedYAMLMarshalReturnUses(l, out, hook, typ, tag, call, seen)
+		graph.addReflectedYAMLMarshalReturnUses(l, out, hook, typ, codec.tag, call, seen)
 
 		return
 	}
@@ -238,18 +255,18 @@ func (graph deadCodeGraph) addReflectedMarshalUses(
 		typ,
 		addressable,
 	); ok {
-		graph.addReflectedMarshalUses(l, out, elem, tag, call, seen, elemAddressable)
+		graph.addReflectedMarshalUses(l, out, elem, codec, call, seen, elemAddressable)
 
 		return
 	}
 
 	if key, elem, ok := reflectedMapTypes(typ); ok {
-		graph.addReflectedMarshalMapKeyUses(l, out, key, tag, call, seen)
+		graph.addReflectedMarshalMapKeyUses(l, out, key, codec, call, seen)
 		graph.addReflectedMarshalUses(
 			l,
 			out,
 			elem,
-			tag,
+			codec,
 			call,
 			seen,
 			reflectedMarshalUnaddressable,
@@ -262,7 +279,7 @@ func (graph deadCodeGraph) addReflectedMarshalUses(
 		l,
 		out,
 		typ,
-		tag,
+		codec,
 		call,
 		seen,
 		reflectedMarshalStructFields,
@@ -274,7 +291,7 @@ func (graph deadCodeGraph) addReflectedNamedStructUses(
 	l *packageLinter,
 	out map[string]struct{},
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	seen map[string]struct{},
 	mode reflectedStructFieldUseMode,
@@ -290,46 +307,51 @@ func (graph deadCodeGraph) addReflectedNamedStructUses(
 		return
 	}
 
-	graph.addReflectedStructFields(
-		l,
-		out,
-		named,
-		structType,
-		tag,
-		call,
-		seen,
-		mode,
-		addressable,
-	)
+	graph.addReflectedStructFields(l, out, named, structType, codec, call, seen, mode, addressable)
 
 	if seenKey != "" {
 		delete(seen, seenKey)
 	}
 }
 
+func (l *packageLinter) addReflectedDecodeHookUse(
+	out map[string]struct{},
+	typ types.Type,
+	codec reflectedCodecUse,
+	context reflectedHookContext,
+) bool {
+	return l.addReflectedHookUse(
+		out,
+		typ,
+		reflectedHookNames(codec.hookTag, reflectedDecodeStructFields, context),
+		codec.hookTag,
+	)
+}
+
 func (graph deadCodeGraph) addReflectedMarshalMapKeyUses(
 	l *packageLinter,
 	out map[string]struct{},
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	seen map[string]struct{},
 ) {
 	if l.addReflectedMarshalHookUse(
 		out,
 		typ,
-		reflectedHookNames(tag, reflectedMarshalStructFields, reflectedMapKeyHook),
+		reflectedHookNames(codec.hookTag, reflectedMarshalStructFields, reflectedMapKeyHook),
+		codec.hookTag,
 		reflectedMarshalUnaddressable,
 	) {
 		return
 	}
 
-	if reflectedMapKeyFallbackField(tag) {
+	if reflectedMapKeyFallbackField(codec.hookTag) {
 		graph.addReflectedMarshalUses(
 			l,
 			out,
 			typ,
-			tag,
+			codec,
 			call,
 			seen,
 			reflectedMarshalUnaddressable,
@@ -421,19 +443,19 @@ func (graph deadCodeGraph) addReflectedStructFields(
 	out map[string]struct{},
 	named *types.Named,
 	structType *types.Struct,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	seen map[string]struct{},
 	mode reflectedStructFieldUseMode,
 	addressable reflectedMarshalAddressability,
 ) {
-	owners := l.reflectedStructFieldOwners(named, tag, call, mode)
+	owners := l.reflectedStructFieldOwners(named, codec, call, mode)
 	graph.addReflectedStructFieldsWithOwners(
 		l,
 		out,
 		owners,
 		structType,
-		tag,
+		codec,
 		call,
 		seen,
 		mode,
@@ -446,7 +468,7 @@ func (graph deadCodeGraph) addReflectedStructFieldsWithOwners(
 	out map[string]struct{},
 	owners []*types.Named,
 	structType *types.Struct,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	seen map[string]struct{},
 	mode reflectedStructFieldUseMode,
@@ -458,7 +480,7 @@ func (graph deadCodeGraph) addReflectedStructFieldsWithOwners(
 			continue
 		}
 
-		fieldTag := reflectedStructFieldTag(structType.Tag(index), tag)
+		fieldTag := reflectedStructFieldTag(structType.Tag(index), codec.tag)
 		if fieldTag.ignored {
 			continue
 		}
@@ -474,7 +496,7 @@ func (graph deadCodeGraph) addReflectedStructFieldsWithOwners(
 				l.addReflectedStructFieldAttrHookUse(
 					out,
 					field.Type(),
-					tag,
+					codec,
 					mode,
 					addressable,
 				)
@@ -486,7 +508,7 @@ func (graph deadCodeGraph) addReflectedStructFieldsWithOwners(
 				l,
 				out,
 				field.Type(),
-				tag,
+				codec,
 				call,
 				seen,
 				mode,
@@ -499,7 +521,7 @@ func (graph deadCodeGraph) addReflectedStructFieldsWithOwners(
 func (l *packageLinter) addReflectedStructFieldAttrHookUse(
 	out map[string]struct{},
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	mode reflectedStructFieldUseMode,
 	addressable reflectedMarshalAddressability,
 ) {
@@ -508,13 +530,15 @@ func (l *packageLinter) addReflectedStructFieldAttrHookUse(
 		l.addReflectedHookUse(
 			out,
 			typ,
-			reflectedHookNames(tag, reflectedDecodeStructFields, reflectedAttrHook),
+			reflectedHookNames(codec.hookTag, reflectedDecodeStructFields, reflectedAttrHook),
+			codec.hookTag,
 		)
 	case reflectedMarshalStructFields:
 		l.addReflectedMarshalHookUse(
 			out,
 			typ,
-			reflectedHookNames(tag, reflectedMarshalStructFields, reflectedAttrHook),
+			reflectedHookNames(codec.hookTag, reflectedMarshalStructFields, reflectedAttrHook),
+			codec.hookTag,
 			addressable,
 		)
 	}
@@ -524,7 +548,7 @@ func (graph deadCodeGraph) addReflectedStructFieldNestedUses(
 	l *packageLinter,
 	out map[string]struct{},
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	seen map[string]struct{},
 	mode reflectedStructFieldUseMode,
@@ -532,9 +556,9 @@ func (graph deadCodeGraph) addReflectedStructFieldNestedUses(
 ) {
 	switch mode {
 	case reflectedDecodeStructFields:
-		graph.addReflectedDecodeUses(l, out, typ, tag, call, seen)
+		graph.addReflectedDecodeUses(l, out, typ, codec, call, seen)
 	case reflectedMarshalStructFields:
-		graph.addReflectedMarshalUses(l, out, typ, tag, call, seen, addressable)
+		graph.addReflectedMarshalUses(l, out, typ, codec, call, seen, addressable)
 	}
 }
 
@@ -542,8 +566,9 @@ func (l *packageLinter) addReflectedHookUse(
 	out map[string]struct{},
 	typ types.Type,
 	names []string,
+	hookTag string,
 ) bool {
-	fn := reflectedTypeHookMethod(typ, names)
+	fn := reflectedTypeHookMethod(typ, names, hookTag)
 	if fn == nil {
 		return false
 	}
@@ -560,9 +585,10 @@ func (l *packageLinter) addReflectedMarshalHookUse(
 	out map[string]struct{},
 	typ types.Type,
 	names []string,
+	hookTag string,
 	addressable reflectedMarshalAddressability,
 ) bool {
-	fn := reflectedTypeMarshalHookMethod(typ, names, addressable)
+	fn := reflectedTypeMarshalHookMethod(typ, names, hookTag, addressable)
 	if fn == nil {
 		return false
 	}
@@ -579,24 +605,21 @@ func addReflectedHookFuncUse(out map[string]struct{}, fn *types.Func) {
 	}
 }
 
-func reflectedTypeHookMethod(typ types.Type, names []string) *types.Func {
+func reflectedTypeHookMethod(typ types.Type, names []string, hookTag string) *types.Func {
 	named := namedDeadCodeType(typ)
 	if named == nil {
 		return nil
 	}
 
 	for _, name := range names {
-		if fn := reflectedTypeMethod(named, name); reflectedHookMethodSignature(fn, name) {
+		if fn := reflectedTypeMethod(named, name); reflectedHookMethodSignature(fn, hookTag, name) {
 			return fn
 		}
 
 		if fn := reflectedTypeMethod(
 			types.NewPointer(named),
 			name,
-		); reflectedHookMethodSignature(
-			fn,
-			name,
-		) {
+		); reflectedHookMethodSignature(fn, hookTag, name) {
 			return fn
 		}
 	}
@@ -607,11 +630,12 @@ func reflectedTypeHookMethod(typ types.Type, names []string) *types.Func {
 func reflectedTypeMarshalHookMethod(
 	typ types.Type,
 	names []string,
+	hookTag string,
 	addressable reflectedMarshalAddressability,
 ) *types.Func {
 	typ = types.Unalias(typ)
 	if ptr, ok := typ.(*types.Pointer); ok {
-		return reflectedTypeMethodSetMethod(ptr, names, reflectedMarshalUnaddressable)
+		return reflectedTypeMethodSetMethod(ptr, names, hookTag, reflectedMarshalUnaddressable)
 	}
 
 	named, _ := typ.(*types.Named)
@@ -619,12 +643,17 @@ func reflectedTypeMarshalHookMethod(
 		return nil
 	}
 
-	if fn := reflectedTypeMethodSetMethod(named, names, reflectedMarshalUnaddressable); fn != nil {
+	if fn := reflectedTypeMethodSetMethod(
+		named,
+		names,
+		hookTag,
+		reflectedMarshalUnaddressable,
+	); fn != nil {
 		return fn
 	}
 
 	if addressable == reflectedMarshalAddressable {
-		return reflectedTypeMethodSetMethod(named, names, reflectedMarshalAddressable)
+		return reflectedTypeMethodSetMethod(named, names, hookTag, reflectedMarshalAddressable)
 	}
 
 	return nil
@@ -633,6 +662,7 @@ func reflectedTypeMarshalHookMethod(
 func reflectedTypeMethodSetMethod(
 	typ types.Type,
 	names []string,
+	hookTag string,
 	addressable reflectedMarshalAddressability,
 ) *types.Func {
 	for _, name := range names {
@@ -642,7 +672,7 @@ func reflectedTypeMethodSetMethod(
 			nil,
 			name,
 		)
-		if fn, _ := obj.(*types.Func); reflectedHookMethodSignature(fn, name) {
+		if fn, _ := obj.(*types.Func); reflectedHookMethodSignature(fn, hookTag, name) {
 			return fn
 		}
 	}

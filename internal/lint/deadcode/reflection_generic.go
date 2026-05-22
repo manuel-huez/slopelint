@@ -26,7 +26,7 @@ func (graph deadCodeGraph) reflectedGenericDecodeTypes(
 	// Source inspection wins; name fallback is only for external generic codecs.
 	decodes, inspected := graph.reflectedDecodeTypeParamDecodes(fn)
 	if !inspected {
-		decodes = fallbackGenericDecodeTypeParamDecodes(fn, typeArgs.Len())
+		decodes = fallbackGenericDecodeTypeParamDecodes(fn, typeArgs.Len(), l.pkg.FSet)
 	}
 
 	return reflectedGenericTargetsForTypeArgs(typeArgs, decodes)
@@ -57,7 +57,7 @@ func (graph deadCodeGraph) reflectedGenericMarshalTypes(
 	for _, marshal := range marshals {
 		out = append(out, reflectedMarshalTarget{
 			typ:         substituteReflectedTypeParams(marshal.typ, replacements),
-			tag:         marshal.tag,
+			codec:       marshal.codec,
 			addressable: reflectedMarshalUnaddressable,
 		})
 	}
@@ -68,11 +68,26 @@ func (graph deadCodeGraph) reflectedGenericMarshalTypes(
 func fallbackGenericDecodeTypeParamDecodes(
 	fn *types.Func,
 	count int,
+	fset *token.FileSet,
+) []reflectedTypeParamUse {
+	uses, inspected := sourceGenericDecodeTypeParamDecodes(fn, fset)
+	if inspected {
+		return dedupeReflectedTypeParamUses(uses)
+	}
+
+	return nameFallbackGenericDecodeTypeParamDecodes(fn, count)
+}
+
+func nameFallbackGenericDecodeTypeParamDecodes(
+	fn *types.Func,
+	count int,
 ) []reflectedTypeParamUse {
 	tag, ok := genericDecodeFallbackTag(fn)
 	if !ok {
 		return nil
 	}
+
+	codec := reflectedCodecUseForTag(tag)
 
 	sig, ok := genericFallbackSignature(fn)
 	if !ok || !genericDecodeHasEncodedInput(sig) {
@@ -82,10 +97,15 @@ func fallbackGenericDecodeTypeParamDecodes(
 	out := make([]reflectedTypeParamUse, 0, count)
 	indexes := genericTypeParamIndexes(fn)
 
-	collectFallbackGenericDecodeParamDecodes(sig, tag, indexes, &out)
+	collectFallbackGenericDecodeParamDecodes(sig, codec, indexes, &out)
 
 	if resultTag, ok := genericDecodeExplicitFallbackTag(fn); ok {
-		collectFallbackGenericDecodeResultDecodes(sig, resultTag, indexes, &out)
+		collectFallbackGenericDecodeResultDecodes(
+			sig,
+			reflectedCodecUseForTag(resultTag),
+			indexes,
+			&out,
+		)
 	}
 
 	out = dedupeReflectedTypeParamUses(out)
@@ -113,56 +133,109 @@ func sourceGenericMarshalTypeParamUses(
 	fset *token.FileSet,
 ) []reflectedMarshalTypeParamUse {
 	sig, ok := genericFallbackSignature(fn)
-	if !ok || fset == nil {
+	if !ok {
 		return nil
+	}
+
+	file, decl, ok := sourceFuncFileDecl(fn, fset)
+	if !ok {
+		return nil
+	}
+
+	importCodecs := sourceCodecImportCodecs(
+		file,
+		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
+			return codec.marshalFuncs
+		},
+	)
+	paramTypes := sourceFuncParamTypes(sig, decl)
+	indexes := genericTypeParamIndexes(fn)
+
+	out := make([]reflectedMarshalTypeParamUse, 0)
+
+	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
+		codec, argIndex, ok := sourceCodecCall(importCodecs, call)
+		if !ok || argIndex < 0 || argIndex >= len(call.Args) {
+			return
+		}
+
+		if ident, ok := unparenReflectedExpr(call.Args[argIndex]).(*ast.Ident); ok {
+			addReflectedMarshalTypeParamUse(
+				sourceFuncParamTypeAt(paramTypes, decl.Body, ident),
+				codec,
+				indexes,
+				&out,
+			)
+		}
+	})
+
+	return out
+}
+
+func sourceGenericDecodeTypeParamDecodes(
+	fn *types.Func,
+	fset *token.FileSet,
+) ([]reflectedTypeParamUse, bool) {
+	sig, ok := genericFallbackSignature(fn)
+	if !ok {
+		return nil, false
+	}
+
+	file, decl, ok := sourceFuncFileDecl(fn, fset)
+	if !ok {
+		return nil, false
+	}
+
+	importCodecs := sourceCodecImportCodecs(
+		file,
+		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
+			return codec.decodeFuncs
+		},
+	)
+	paramTypes := sourceFuncParamTypes(sig, decl)
+	indexes := genericTypeParamIndexes(fn)
+
+	out := make([]reflectedTypeParamUse, 0)
+
+	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
+		codec, argIndex, ok := sourceCodecCall(importCodecs, call)
+		if !ok || argIndex < 0 || argIndex >= len(call.Args) {
+			return
+		}
+
+		typ := sourceDecodeTargetType(sig, paramTypes, decl.Body, call.Args[argIndex])
+		collectReflectedDecodeTargetTypeParamDecodes(typ, codec, indexes, &out)
+	})
+
+	return out, true
+}
+
+func sourceFuncFileDecl(
+	fn *types.Func,
+	fset *token.FileSet,
+) (*ast.File, *ast.FuncDecl, bool) {
+	if fset == nil {
+		return nil, nil, false
 	}
 
 	filename := fset.Position(fn.Pos()).Filename
 	if filename == "" {
-		return nil
+		return nil, nil, false
 	}
 
 	fileFSet := token.NewFileSet()
 
 	file, err := parser.ParseFile(fileFSet, filename, nil, 0)
 	if err != nil {
-		return nil
+		return nil, nil, false
 	}
 
 	decl := sourceFuncDecl(file, fileFSet, fn, fset)
 	if decl == nil || decl.Body == nil {
-		return nil
+		return nil, nil, false
 	}
 
-	importTags := sourceMarshalImportTags(file)
-	paramTypes := sourceFuncParamTypes(sig, decl)
-	indexes := genericTypeParamIndexes(fn)
-
-	out := make([]reflectedMarshalTypeParamUse, 0)
-
-	ast.Inspect(decl.Body, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
-			return false
-		}
-
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		tag, ok := sourceMarshalCallTag(importTags, call)
-		if !ok || len(call.Args) == 0 {
-			return true
-		}
-
-		if ident, ok := unparenReflectedExpr(call.Args[0]).(*ast.Ident); ok {
-			addReflectedMarshalTypeParamUse(paramTypes[ident.Name], tag, indexes, &out)
-		}
-
-		return true
-	})
-
-	return out
+	return file, decl, true
 }
 
 func sourceFuncDecl(
@@ -250,8 +323,16 @@ func sourceTypeName(expr ast.Expr) string {
 	}
 }
 
-func sourceMarshalImportTags(file *ast.File) map[string]string {
-	out := make(map[string]string)
+type sourceCodecImport struct {
+	use   reflectedCodecUse
+	funcs map[string]reflectedCodecFunc
+}
+
+func sourceCodecImportCodecs(
+	file *ast.File,
+	funcs func(reflectedPackageCodec) map[string]reflectedCodecFunc,
+) map[string]sourceCodecImport {
+	out := make(map[string]sourceCodecImport)
 
 	for _, spec := range file.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)
@@ -259,26 +340,38 @@ func sourceMarshalImportTags(file *ast.File) map[string]string {
 			continue
 		}
 
-		tag, ok := sourceMarshalImportTag(path)
+		codec, ok := sourceCodecImportForPath(path, funcs)
 		if !ok {
 			continue
 		}
 
 		name := sourceImportName(spec, path)
 		if name != "" {
-			out[name] = tag
+			out[name] = codec
 		}
 	}
 
 	return out
 }
 
-func sourceMarshalImportTag(path string) (string, bool) {
-	if codec, ok := reflectedPackageCodecs[path]; ok && codec.marshal {
-		return codec.tag, true
+func sourceCodecImportForPath(
+	path string,
+	funcs func(reflectedPackageCodec) map[string]reflectedCodecFunc,
+) (sourceCodecImport, bool) {
+	codec, ok := reflectedPackageCodecs[path]
+	if !ok {
+		return sourceCodecImport{}, false
 	}
 
-	return "", false
+	codecFuncs := funcs(codec)
+	if len(codecFuncs) == 0 {
+		return sourceCodecImport{}, false
+	}
+
+	return sourceCodecImport{
+		use:   reflectedCodecUseForTag(codec.tag),
+		funcs: codecFuncs,
+	}, true
 }
 
 func sourceImportName(spec *ast.ImportSpec, path string) string {
@@ -287,7 +380,7 @@ func sourceImportName(spec *ast.ImportSpec, path string) string {
 	}
 
 	switch {
-	case path == "encoding/json":
+	case path == "encoding/json", path == reflectedGoccyJSON:
 		return "json"
 	case path == "encoding/xml":
 		return "xml"
@@ -298,60 +391,330 @@ func sourceImportName(spec *ast.ImportSpec, path string) string {
 	}
 }
 
-func sourceFuncParamTypes(
+func sourceCodecCall(
+	importCodecs map[string]sourceCodecImport,
+	call *ast.CallExpr,
+) (reflectedCodecUse, int, bool) {
+	selector, ok := unparenReflectedExpr(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return reflectedCodecUse{}, 0, false
+	}
+
+	ident, ok := selector.X.(*ast.Ident)
+	if !ok {
+		return reflectedCodecUse{}, 0, false
+	}
+
+	codec, ok := importCodecs[ident.Name]
+	if !ok {
+		return reflectedCodecUse{}, 0, false
+	}
+
+	codecFunc, ok := codec.funcs[selector.Sel.Name]
+	if !ok {
+		return reflectedCodecUse{}, 0, false
+	}
+
+	index := codecFunc.argIndex
+	use := codec.use
+
+	if codecFunc.hookTag != "" {
+		use.hookTag = codecFunc.hookTag
+	}
+
+	if index == reflectedLastArgIndex {
+		index = reflectedLastCallArgIndex(call)
+	}
+
+	return use, index, true
+}
+
+func sourceDecodeTargetType(
 	sig *types.Signature,
-	decl *ast.FuncDecl,
-) map[string]types.Type {
-	out := make(map[string]types.Type)
-	if decl.Type == nil || decl.Type.Params == nil {
+	paramTypes map[string]types.Type,
+	body *ast.BlockStmt,
+	expr ast.Expr,
+) types.Type {
+	typeParams := sourceTypeParamTypes(sig)
+
+	return sourceDecodeTargetExprType(paramTypes, body, typeParams, expr)
+}
+
+func sourceDecodeTargetExprType(
+	paramTypes map[string]types.Type,
+	body *ast.BlockStmt,
+	typeParams map[string]*types.TypeParam,
+	expr ast.Expr,
+) types.Type {
+	switch expr := unparenReflectedExpr(expr).(type) {
+	case *ast.Ident:
+		return sourceValueTypeAt(paramTypes, body, typeParams, expr)
+	case *ast.UnaryExpr:
+		if expr.Op != token.AND {
+			return nil
+		}
+
+		typ := sourceDecodeTargetExprType(paramTypes, body, typeParams, expr.X)
+		if typ == nil {
+			return nil
+		}
+
+		return types.NewPointer(typ)
+	case *ast.CallExpr:
+		if sourceInterfaceConversionCall(expr) {
+			return sourceDecodeTargetExprType(paramTypes, body, typeParams, expr.Args[0])
+		}
+
+		return sourceNewCallType(typeParams, expr)
+	default:
+		return nil
+	}
+}
+
+func sourceValueTypeAt(
+	paramTypes map[string]types.Type,
+	body *ast.BlockStmt,
+	typeParams map[string]*types.TypeParam,
+	ident *ast.Ident,
+) types.Type {
+	if typ := sourceFuncParamTypeAt(paramTypes, body, ident); typ != nil {
+		return typ
+	}
+
+	return sourceLocalTypeParamTypeAt(paramTypes, body, typeParams, ident)
+}
+
+func sourceInterfaceConversionCall(call *ast.CallExpr) bool {
+	if call == nil || len(call.Args) != 1 {
+		return false
+	}
+
+	switch fun := unparenReflectedExpr(call.Fun).(type) {
+	case *ast.Ident:
+		return fun.Name == "any"
+	case *ast.InterfaceType:
+		return fun.Methods == nil || len(fun.Methods.List) == 0
+	default:
+		return false
+	}
+}
+
+func sourceNewCallType(
+	typeParams map[string]*types.TypeParam,
+	call *ast.CallExpr,
+) types.Type {
+	if call == nil || len(call.Args) != 1 {
+		return nil
+	}
+
+	ident, ok := unparenReflectedExpr(call.Fun).(*ast.Ident)
+	if !ok || ident.Name != "new" {
+		return nil
+	}
+
+	typ := sourceTypeExpr(call.Args[0], typeParams)
+	if typ == nil {
+		return nil
+	}
+
+	return types.NewPointer(typ)
+}
+
+func sourceLocalTypeParamTypeAt(
+	paramTypes map[string]types.Type,
+	body *ast.BlockStmt,
+	typeParams map[string]*types.TypeParam,
+	ident *ast.Ident,
+) types.Type {
+	if ident == nil || body == nil {
+		return nil
+	}
+
+	var (
+		typ    types.Type
+		writes int
+	)
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		if n == nil || n.Pos() >= ident.Pos() {
+			return false
+		}
+
+		if _, ok := n.(*ast.FuncLit); ok {
+			return false
+		}
+
+		if !sourceNodeCanDeclareForPos(n, body, ident.Pos()) {
+			return false
+		}
+
+		next, ok := sourceLocalTypeParamDeclTypeAt(paramTypes, body, typeParams, n, ident)
+		if !ok {
+			return true
+		}
+
+		writes++
+		typ = next
+
+		return true
+	})
+
+	if writes != 1 {
+		return nil
+	}
+
+	return typ
+}
+
+func sourceNodeCanDeclareForPos(n ast.Node, root *ast.BlockStmt, pos token.Pos) bool {
+	if n == root {
+		return true
+	}
+
+	switch n.(type) {
+	case *ast.BlockStmt:
+		return nodeContainsPos(n, pos)
+	case *ast.IfStmt,
+		*ast.ForStmt,
+		*ast.RangeStmt,
+		*ast.SwitchStmt,
+		*ast.TypeSwitchStmt,
+		*ast.SelectStmt,
+		*ast.CaseClause,
+		*ast.CommClause:
+		return nodeContainsPos(n, pos)
+	default:
+		return true
+	}
+}
+
+func sourceLocalTypeParamDeclTypeAt(
+	paramTypes map[string]types.Type,
+	body *ast.BlockStmt,
+	typeParams map[string]*types.TypeParam,
+	n ast.Node,
+	ident *ast.Ident,
+) (types.Type, bool) {
+	switch n := n.(type) {
+	case *ast.ValueSpec:
+		return sourceValueSpecNameType(paramTypes, body, typeParams, n, ident)
+	case *ast.AssignStmt:
+		return sourceShortAssignNameType(paramTypes, body, typeParams, n, ident)
+	default:
+		return nil, false
+	}
+}
+
+func sourceValueSpecNameType(
+	paramTypes map[string]types.Type,
+	body *ast.BlockStmt,
+	typeParams map[string]*types.TypeParam,
+	spec *ast.ValueSpec,
+	ident *ast.Ident,
+) (types.Type, bool) {
+	for index, name := range spec.Names {
+		if name.Name != ident.Name {
+			continue
+		}
+
+		if typ := sourceTypeExpr(spec.Type, typeParams); typ != nil {
+			return typ, true
+		}
+
+		return sourceDecodeTargetExprType(
+			paramTypes,
+			body,
+			typeParams,
+			reflectedExprAt(spec.Values, index),
+		), true
+	}
+
+	return nil, false
+}
+
+func sourceShortAssignNameType(
+	paramTypes map[string]types.Type,
+	body *ast.BlockStmt,
+	typeParams map[string]*types.TypeParam,
+	assign *ast.AssignStmt,
+	ident *ast.Ident,
+) (types.Type, bool) {
+	if assign.Tok != token.DEFINE {
+		return nil, false
+	}
+
+	for index, lhs := range assign.Lhs {
+		name, _ := unparenReflectedExpr(lhs).(*ast.Ident)
+		if name == nil || name.Name != ident.Name {
+			continue
+		}
+
+		return sourceDecodeTargetExprType(
+			paramTypes,
+			body,
+			typeParams,
+			reflectedExprAt(assign.Rhs, index),
+		), true
+	}
+
+	return nil, false
+}
+
+func sourceTypeParamTypes(sig *types.Signature) map[string]*types.TypeParam {
+	out := make(map[string]*types.TypeParam)
+	if sig == nil {
 		return out
 	}
 
-	index := 0
+	for index := range typeParamListLen(sig.RecvTypeParams()) {
+		param := sig.RecvTypeParams().At(index)
+		out[param.Obj().Name()] = param
+	}
 
-	for _, field := range decl.Type.Params.List {
-		for _, name := range field.Names {
-			if index >= tupleLen(sig.Params()) {
-				return out
-			}
-
-			out[name.Name] = sig.Params().At(index).Type()
-			index++
-		}
-
-		if len(field.Names) == 0 {
-			index++
-		}
+	for index := range typeParamListLen(sig.TypeParams()) {
+		param := sig.TypeParams().At(index)
+		out[param.Obj().Name()] = param
 	}
 
 	return out
 }
 
-func sourceMarshalCallTag(
-	importTags map[string]string,
-	call *ast.CallExpr,
-) (string, bool) {
-	selector, ok := unparenReflectedExpr(call.Fun).(*ast.SelectorExpr)
-	if !ok || !sourceMarshalFuncName(selector.Sel.Name) {
-		return "", false
-	}
+func sourceTypeExpr(
+	expr ast.Expr,
+	typeParams map[string]*types.TypeParam,
+) types.Type {
+	switch expr := unparenReflectedExpr(expr).(type) {
+	case *ast.Ident:
+		return typeParams[expr.Name]
+	case *ast.StarExpr:
+		typ := sourceTypeExpr(expr.X, typeParams)
+		if typ == nil {
+			return nil
+		}
 
-	ident, ok := selector.X.(*ast.Ident)
-	if !ok {
-		return "", false
-	}
+		return types.NewPointer(typ)
+	case *ast.ArrayType:
+		if expr.Len != nil {
+			return nil
+		}
 
-	tag, ok := importTags[ident.Name]
+		elem := sourceTypeExpr(expr.Elt, typeParams)
+		if elem == nil {
+			return nil
+		}
 
-	return tag, ok
-}
+		return types.NewSlice(elem)
+	case *ast.MapType:
+		key := sourceTypeExpr(expr.Key, typeParams)
 
-func sourceMarshalFuncName(name string) bool {
-	switch name {
-	case "Marshal", "MarshalIndent":
-		return true
+		elem := sourceTypeExpr(expr.Value, typeParams)
+		if key == nil || elem == nil {
+			return nil
+		}
+
+		return types.NewMap(key, elem)
 	default:
-		return false
+		return nil
 	}
 }
 
@@ -392,7 +755,7 @@ func genericDecodeEncodedInputType(typ types.Type) bool {
 
 func collectFallbackGenericDecodeParamDecodes(
 	sig *types.Signature,
-	tag string,
+	codec reflectedCodecUse,
 	indexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 ) {
@@ -402,31 +765,36 @@ func collectFallbackGenericDecodeParamDecodes(
 			continue
 		}
 
-		collectFallbackGenericDecodeParamTypeDecodes(typ, tag, indexes, out)
+		collectFallbackGenericDecodeParamTypeDecodes(typ, codec, indexes, out)
 	}
 }
 
 func collectFallbackGenericDecodeParamTypeDecodes(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	indexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 ) {
 	typ = types.Unalias(typ)
 
 	if _, ok := typ.(*types.Pointer); ok {
-		collectReflectedSettableTypeParamDecodes(typ, tag, indexes, out)
+		collectReflectedSettableTypeParamDecodes(typ, codec, indexes, out)
 	}
 }
 
 func collectFallbackGenericDecodeResultDecodes(
 	sig *types.Signature,
-	tag string,
+	codec reflectedCodecUse,
 	indexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 ) {
 	for index := range tupleLen(sig.Results()) {
-		collectReflectedSettableTypeParamDecodes(sig.Results().At(index).Type(), tag, indexes, out)
+		collectReflectedSettableTypeParamDecodes(
+			sig.Results().At(index).Type(),
+			codec,
+			indexes,
+			out,
+		)
 	}
 }
 
@@ -451,7 +819,7 @@ func reflectedGenericTargetsForTypeArgs(
 
 		out = append(out, reflectedDecodeTarget{
 			typ:    typ,
-			tag:    decode.tag,
+			codec:  decode.codec,
 			mapKey: decode.mapKey,
 		})
 	}
@@ -561,11 +929,13 @@ func (graph deadCodeGraph) reflectedDecodeTypeParamDecodesSeen(
 			pkg *Package,
 			call *ast.CallExpr,
 			typeParamIndexes map[*types.TypeParam]int,
+			scope *ast.BlockStmt,
 		) {
 			graph.collectReflectedDecodeCallTypeParamDecodes(
 				pkg,
 				call,
 				typeParamIndexes,
+				scope,
 				funcsSeen,
 				&out,
 			)
@@ -597,11 +967,13 @@ func (graph deadCodeGraph) reflectedMarshalTypeParamUsesSeen(
 			pkg *Package,
 			call *ast.CallExpr,
 			typeParamIndexes map[*types.TypeParam]int,
+			scope *ast.BlockStmt,
 		) {
 			graph.collectReflectedMarshalCallTypeParamUses(
 				pkg,
 				call,
 				typeParamIndexes,
+				scope,
 				funcsSeen,
 				&out,
 			)
@@ -617,7 +989,7 @@ func (graph deadCodeGraph) reflectedMarshalTypeParamUsesSeen(
 func (graph deadCodeGraph) inspectReflectedFuncTypeParamUsesSeen(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
-	visit func(*Package, *ast.CallExpr, map[*types.TypeParam]int),
+	visit func(*Package, *ast.CallExpr, map[*types.TypeParam]int, *ast.BlockStmt),
 ) bool {
 	pkg := graph.packageForFunc(fn)
 	if pkg == nil {
@@ -644,19 +1016,8 @@ func (graph deadCodeGraph) inspectReflectedFuncTypeParamUsesSeen(
 		defer delete(funcsSeen, key)
 	}
 
-	ast.Inspect(decl.Body, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
-			return false
-		}
-
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		visit(pkg, call, typeParamIndexes)
-
-		return true
+	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
+		visit(pkg, call, typeParamIndexes, decl.Body)
 	})
 
 	return true
@@ -666,14 +1027,20 @@ func (graph deadCodeGraph) collectReflectedDecodeCallTypeParamDecodes(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
+	scope *ast.BlockStmt,
 	funcsSeen map[string]struct{},
 	out *[]reflectedTypeParamUse,
 ) {
-	if fn, tag, ok := reflectedDecodeTargetCall(pkg, call); ok {
-		target := call.Args[reflectedDecodeTargetArgIndex(fn, call)]
+	if fn, codec, ok := reflectedDecodeTargetCall(pkg, call); ok {
+		argIndex := reflectedDecodeTargetArgIndex(fn, call)
+		if argIndex < 0 || argIndex >= len(call.Args) {
+			return
+		}
+
+		target := call.Args[argIndex]
 		collectReflectedDecodeTargetTypeParamDecodes(
 			reflectedValueType(pkg.TypesInfo, target),
-			tag,
+			codec,
 			typeParamIndexes,
 			out,
 		)
@@ -685,6 +1052,14 @@ func (graph deadCodeGraph) collectReflectedDecodeCallTypeParamDecodes(
 		pkg,
 		call,
 		typeParamIndexes,
+		funcsSeen,
+		out,
+	)
+	graph.collectFuncLitArgReflectedTypeParamDecodes(
+		pkg,
+		call,
+		typeParamIndexes,
+		scope,
 		funcsSeen,
 		out,
 	)
@@ -706,7 +1081,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 
 	decodes, inspected := graph.reflectedDecodeTypeParamDecodesSeen(callee, funcsSeen)
 	if !inspected {
-		decodes = fallbackGenericDecodeTypeParamDecodes(callee, typeArgs.Len())
+		decodes = fallbackGenericDecodeTypeParamDecodes(callee, typeArgs.Len(), pkg.FSet)
 	}
 
 	for _, decode := range decodes {
@@ -718,7 +1093,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 		if decode.mapKey {
 			collectReflectedMapKeyTypeParamDecodes(
 				typ,
-				decode.tag,
+				decode.codec,
 				typeParamIndexes,
 				out,
 			)
@@ -729,7 +1104,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 		if decode.pointerOnly {
 			collectReflectedDecodeTargetTypeParamDecodes(
 				typ,
-				decode.tag,
+				decode.codec,
 				typeParamIndexes,
 				out,
 			)
@@ -739,7 +1114,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 
 		collectReflectedSettableTypeParamDecodes(
 			typ,
-			decode.tag,
+			decode.codec,
 			typeParamIndexes,
 			out,
 		)
@@ -750,13 +1125,19 @@ func (graph deadCodeGraph) collectReflectedMarshalCallTypeParamUses(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
+	scope *ast.BlockStmt,
 	funcsSeen map[string]struct{},
 	out *[]reflectedMarshalTypeParamUse,
 ) {
-	if tag, ok := reflectedMarshalTargetCall(pkg, call); ok {
+	if fn, codec, ok := reflectedMarshalTargetCall(pkg, call); ok {
+		argIndex := reflectedMarshalTargetArgIndex(fn, call)
+		if argIndex < 0 || argIndex >= len(call.Args) {
+			return
+		}
+
 		addReflectedMarshalTypeParamUse(
-			reflectedValueType(pkg.TypesInfo, call.Args[0]),
-			tag,
+			reflectedValueType(pkg.TypesInfo, call.Args[argIndex]),
+			codec,
 			typeParamIndexes,
 			out,
 		)
@@ -768,6 +1149,14 @@ func (graph deadCodeGraph) collectReflectedMarshalCallTypeParamUses(
 		pkg,
 		call,
 		typeParamIndexes,
+		funcsSeen,
+		out,
+	)
+	graph.collectFuncLitArgReflectedTypeParamMarshals(
+		pkg,
+		call,
+		typeParamIndexes,
+		scope,
 		funcsSeen,
 		out,
 	)
@@ -796,7 +1185,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamMarshals(
 	for _, marshal := range marshals {
 		addReflectedMarshalTypeParamUse(
 			substituteReflectedTypeParams(marshal.typ, replacements),
-			marshal.tag,
+			marshal.codec,
 			typeParamIndexes,
 			out,
 		)
@@ -827,7 +1216,7 @@ func dedupeReflectedTypeParamUses(
 
 func addReflectedMarshalTypeParamUse(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedMarshalTypeParamUse,
 ) {
@@ -836,8 +1225,8 @@ func addReflectedMarshalTypeParamUse(
 	}
 
 	*out = append(*out, reflectedMarshalTypeParamUse{
-		typ: typ,
-		tag: tag,
+		typ:   typ,
+		codec: codec,
 	})
 }
 
@@ -852,7 +1241,7 @@ func dedupeReflectedMarshalTypeParamUses(
 
 	out := make([]reflectedMarshalTypeParamUse, 0, len(uses))
 	for _, use := range uses {
-		key := use.tag + "\x00" + use.typ.String()
+		key := use.codec.tag + "\x00" + use.codec.hookTag + "\x00" + use.typ.String()
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -875,26 +1264,32 @@ func genericFuncObject(pkg *Package, decl *ast.FuncDecl) *types.Func {
 	return obj
 }
 
-func reflectedDecodeTargetCall(pkg *Package, call *ast.CallExpr) (*types.Func, string, bool) {
+func reflectedDecodeTargetCall(
+	pkg *Package,
+	call *ast.CallExpr,
+) (*types.Func, reflectedCodecUse, bool) {
 	if len(call.Args) == 0 {
-		return nil, "", false
+		return nil, reflectedCodecUse{}, false
 	}
 
 	fn := calledFunc(pkg.TypesInfo, call)
-	tag, ok := reflectedDecodeFuncTag(fn)
+	codec, ok := reflectedDecodeFuncCodec(fn)
 
-	return fn, tag, ok
+	return fn, codec, ok
 }
 
-func reflectedMarshalTargetCall(pkg *Package, call *ast.CallExpr) (string, bool) {
+func reflectedMarshalTargetCall(
+	pkg *Package,
+	call *ast.CallExpr,
+) (*types.Func, reflectedCodecUse, bool) {
 	if len(call.Args) == 0 {
-		return "", false
+		return nil, reflectedCodecUse{}, false
 	}
 
 	fn := calledFunc(pkg.TypesInfo, call)
-	tag, ok := reflectedMarshalFuncTag(fn)
+	codec, ok := reflectedMarshalFuncCodec(fn)
 
-	return tag, ok
+	return fn, codec, ok
 }
 
 func (graph deadCodeGraph) packageForFunc(fn *types.Func) *Package {
@@ -1292,13 +1687,13 @@ func substituteReflectedStructTypeParams(
 
 func collectReflectedDecodeTargetTypeParamDecodes(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 ) {
 	collectReflectedTypeParamUses(
 		typ,
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		make(map[string]struct{}),
@@ -1308,13 +1703,13 @@ func collectReflectedDecodeTargetTypeParamDecodes(
 
 func collectReflectedMapKeyTypeParamDecodes(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 ) {
 	collectReflectedTypeParamUses(
 		typ,
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		make(map[string]struct{}),
@@ -1324,13 +1719,13 @@ func collectReflectedMapKeyTypeParamDecodes(
 
 func collectReflectedSettableTypeParamDecodes(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 ) {
 	collectReflectedTypeParamUses(
 		typ,
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		make(map[string]struct{}),
@@ -1340,7 +1735,7 @@ func collectReflectedSettableTypeParamDecodes(
 
 func collectReflectedTypeParamUses(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1353,7 +1748,7 @@ func collectReflectedTypeParamUses(
 	typ = types.Unalias(typ)
 	if collectReflectedDirectTypeParam(
 		typ,
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		context,
@@ -1363,7 +1758,7 @@ func collectReflectedTypeParamUses(
 
 	collectReflectedCompositeTypeParamUses(
 		typ,
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		seen,
@@ -1373,7 +1768,7 @@ func collectReflectedTypeParamUses(
 
 func collectReflectedDirectTypeParam(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	context reflectedTypeParamUseContext,
@@ -1386,7 +1781,7 @@ func collectReflectedDirectTypeParam(
 	if index, ok := typeParamIndexes[typeParam]; ok {
 		*out = append(*out, reflectedTypeParamUse{
 			index:       index,
-			tag:         tag,
+			codec:       codec,
 			pointerOnly: context == reflectedDecodeTargetContext,
 			mapKey:      context == reflectedTextDecodeContext,
 		})
@@ -1397,7 +1792,7 @@ func collectReflectedDirectTypeParam(
 
 func collectReflectedCompositeTypeParamUses(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1405,11 +1800,11 @@ func collectReflectedCompositeTypeParamUses(
 ) {
 	switch typ := typ.(type) {
 	case *types.Pointer:
-		collectReflectedPointerTypeParamUses(typ, tag, typeParamIndexes, out, seen, context)
+		collectReflectedPointerTypeParamUses(typ, codec, typeParamIndexes, out, seen, context)
 	case *types.Slice:
 		collectReflectedContainerElemTypeParamUses(
 			typ.Elem(),
-			tag,
+			codec,
 			typeParamIndexes,
 			out,
 			seen,
@@ -1418,24 +1813,38 @@ func collectReflectedCompositeTypeParamUses(
 	case *types.Array:
 		collectReflectedContainerElemTypeParamUses(
 			typ.Elem(),
-			tag,
+			codec,
 			typeParamIndexes,
 			out,
 			seen,
 			context,
 		)
 	case *types.Map:
-		collectReflectedMapTypeParamUses(typ, tag, typeParamIndexes, out, seen, context)
+		collectReflectedMapTypeParamUses(typ, codec, typeParamIndexes, out, seen, context)
 	case *types.Named:
-		collectReflectedNamedCompositeTypeParamUses(typ, tag, typeParamIndexes, out, seen, context)
+		collectReflectedNamedCompositeTypeParamUses(
+			typ,
+			codec,
+			typeParamIndexes,
+			out,
+			seen,
+			context,
+		)
 	case *types.Struct:
-		collectReflectedStructCompositeTypeParamUses(typ, tag, typeParamIndexes, out, seen, context)
+		collectReflectedStructCompositeTypeParamUses(
+			typ,
+			codec,
+			typeParamIndexes,
+			out,
+			seen,
+			context,
+		)
 	}
 }
 
 func collectReflectedPointerTypeParamUses(
 	typ *types.Pointer,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1448,7 +1857,7 @@ func collectReflectedPointerTypeParamUses(
 
 	collectReflectedTypeParamUses(
 		typ.Elem(),
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		seen,
@@ -1458,7 +1867,7 @@ func collectReflectedPointerTypeParamUses(
 
 func collectReflectedContainerElemTypeParamUses(
 	typ types.Type,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1468,12 +1877,12 @@ func collectReflectedContainerElemTypeParamUses(
 		return
 	}
 
-	collectReflectedTypeParamUses(typ, tag, typeParamIndexes, out, seen, context)
+	collectReflectedTypeParamUses(typ, codec, typeParamIndexes, out, seen, context)
 }
 
 func collectReflectedMapTypeParamUses(
 	typ *types.Map,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1482,7 +1891,7 @@ func collectReflectedMapTypeParamUses(
 	if context != reflectedDecodeTargetContext {
 		collectReflectedTypeParamUses(
 			typ.Key(),
-			tag,
+			codec,
 			typeParamIndexes,
 			out,
 			seen,
@@ -1492,7 +1901,7 @@ func collectReflectedMapTypeParamUses(
 
 	collectReflectedContainerElemTypeParamUses(
 		typ.Elem(),
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		seen,
@@ -1502,7 +1911,7 @@ func collectReflectedMapTypeParamUses(
 
 func collectReflectedNamedCompositeTypeParamUses(
 	typ *types.Named,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1512,12 +1921,12 @@ func collectReflectedNamedCompositeTypeParamUses(
 		return
 	}
 
-	collectReflectedNamedTypeParamUses(typ, tag, typeParamIndexes, out, seen, context)
+	collectReflectedNamedTypeParamUses(typ, codec, typeParamIndexes, out, seen, context)
 }
 
 func collectReflectedStructCompositeTypeParamUses(
 	typ *types.Struct,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1527,12 +1936,12 @@ func collectReflectedStructCompositeTypeParamUses(
 		return
 	}
 
-	collectReflectedStructTypeParamUses(typ, tag, typeParamIndexes, out, seen, context)
+	collectReflectedStructTypeParamUses(typ, codec, typeParamIndexes, out, seen, context)
 }
 
 func collectReflectedNamedTypeParamUses(
 	typ *types.Named,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1547,7 +1956,7 @@ func collectReflectedNamedTypeParamUses(
 	for index := range typ.TypeArgs().Len() {
 		collectReflectedTypeParamUses(
 			typ.TypeArgs().At(index),
-			tag,
+			codec,
 			typeParamIndexes,
 			out,
 			seen,
@@ -1557,7 +1966,7 @@ func collectReflectedNamedTypeParamUses(
 
 	collectReflectedTypeParamUses(
 		typ.Underlying(),
-		tag,
+		codec,
 		typeParamIndexes,
 		out,
 		seen,
@@ -1568,7 +1977,7 @@ func collectReflectedNamedTypeParamUses(
 
 func collectReflectedStructTypeParamUses(
 	typ *types.Struct,
-	tag string,
+	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
 	seen map[string]struct{},
@@ -1577,7 +1986,7 @@ func collectReflectedStructTypeParamUses(
 	for index := range typ.NumFields() {
 		collectReflectedTypeParamUses(
 			typ.Field(index).Type(),
-			tag,
+			codec,
 			typeParamIndexes,
 			out,
 			seen,

@@ -1,6 +1,6 @@
 package lint
 
-import deadcodecheck "example.com/slopelint/internal/lint/deadcode"
+import deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
 
 func (l *linter) checkDeadPrivateDecls() {
 	for _, finding := range deadcodecheck.Private(l.deadCodePackage()) {

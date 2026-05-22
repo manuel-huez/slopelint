@@ -633,7 +633,7 @@ func (graph deadCodeGraph) addReflectedYAMLMarshalReturnTypeUses(
 		out,
 		[]*types.Named{receiver},
 		structType,
-		reflectedYAMLTag,
+		reflectedCodecUseForTag(reflectedYAMLTag),
 		call,
 		seen,
 		reflectedMarshalStructFields,

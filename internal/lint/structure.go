@@ -1,7 +1,7 @@
 package lint
 
 import (
-	structurecheck "example.com/slopelint/internal/lint/structure"
+	structurecheck "github.com/manuel-huez/slopelint/internal/lint/structure"
 
 	"go/ast"
 )

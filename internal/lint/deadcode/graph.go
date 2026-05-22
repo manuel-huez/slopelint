@@ -25,19 +25,21 @@ type deadCodeDecl struct {
 }
 
 type deadCodeGraph struct {
-	candidates            map[string]deadCodeDecl
-	edges                 map[string]map[string]struct{}
-	roots                 map[string]struct{}
-	rootUses              []deadCodeRootUse
-	ignored               map[*Package]map[token.Pos]struct{}
-	packages              map[string]*Package
-	fmtStringerForwarded  map[string][]fmtStringerParamUse
-	fmtStringerResults    map[string]fmtStringerResultState
-	fmtStringerVarValues  map[string][]types.Type
-	fmtStringerVarSlices  map[string][]types.Type
-	fmtStringerVarUnknown map[string]struct{}
-	fmtStringerSummary    map[string]struct{}
-	fmtStringerLive       map[string]struct{}
+	candidates                   map[string]deadCodeDecl
+	edges                        map[string]map[string]struct{}
+	roots                        map[string]struct{}
+	rootUses                     []deadCodeRootUse
+	ignored                      map[*Package]map[token.Pos]struct{}
+	packages                     map[string]*Package
+	fmtStringerForwarded         map[string][]fmtStringerParamUse
+	fmtStringerResults           map[string]fmtStringerResultState
+	fmtStringerVarValues         map[string][]types.Type
+	fmtStringerVarSlices         map[string][]types.Type
+	fmtStringerVarUnknown        map[string]struct{}
+	fmtStringerSummary           map[string]struct{}
+	fmtStringerLive              map[string]struct{}
+	reflectedWrapperDecodeCache  map[string]reflectedWrapperSummary
+	reflectedWrapperMarshalCache map[string]reflectedWrapperSummary
 }
 
 type deadCodeRootUse struct {
@@ -116,18 +118,20 @@ func (l *packageLinter) deadPrivateDeclGraph() deadCodeGraph {
 
 func newDeadCodeGraph() deadCodeGraph {
 	return deadCodeGraph{
-		candidates:            make(map[string]deadCodeDecl),
-		edges:                 make(map[string]map[string]struct{}),
-		roots:                 make(map[string]struct{}),
-		rootUses:              make([]deadCodeRootUse, 0),
-		ignored:               make(map[*Package]map[token.Pos]struct{}),
-		packages:              make(map[string]*Package),
-		fmtStringerForwarded:  make(map[string][]fmtStringerParamUse),
-		fmtStringerResults:    make(map[string]fmtStringerResultState),
-		fmtStringerVarValues:  make(map[string][]types.Type),
-		fmtStringerVarSlices:  make(map[string][]types.Type),
-		fmtStringerVarUnknown: make(map[string]struct{}),
-		fmtStringerSummary:    make(map[string]struct{}),
+		candidates:                   make(map[string]deadCodeDecl),
+		edges:                        make(map[string]map[string]struct{}),
+		roots:                        make(map[string]struct{}),
+		rootUses:                     make([]deadCodeRootUse, 0),
+		ignored:                      make(map[*Package]map[token.Pos]struct{}),
+		packages:                     make(map[string]*Package),
+		fmtStringerForwarded:         make(map[string][]fmtStringerParamUse),
+		fmtStringerResults:           make(map[string]fmtStringerResultState),
+		fmtStringerVarValues:         make(map[string][]types.Type),
+		fmtStringerVarSlices:         make(map[string][]types.Type),
+		fmtStringerVarUnknown:        make(map[string]struct{}),
+		fmtStringerSummary:           make(map[string]struct{}),
+		reflectedWrapperDecodeCache:  make(map[string]reflectedWrapperSummary),
+		reflectedWrapperMarshalCache: make(map[string]reflectedWrapperSummary),
 	}
 }
 

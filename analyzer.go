@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"example.com/slopelint/internal/lint"
+	"github.com/manuel-huez/slopelint/internal/lint"
 	"golang.org/x/tools/go/analysis"
 )
 

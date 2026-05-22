@@ -8,7 +8,7 @@ import (
 
 func (l *packageLinter) reflectedStructFieldOwners(
 	named *types.Named,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	mode reflectedStructFieldUseMode,
 ) []*types.Named {
@@ -19,7 +19,7 @@ func (l *packageLinter) reflectedStructFieldOwners(
 	out := []*types.Named{named}
 	if target := l.reflectedAliasTargetNamed(
 		named,
-		tag,
+		codec,
 		call,
 		mode,
 	); target != nil &&
@@ -37,7 +37,7 @@ func (l *packageLinter) reflectedStructFieldOwners(
 
 func (l *packageLinter) reflectedAliasTargetNamed(
 	named *types.Named,
-	tag string,
+	codec reflectedCodecUse,
 	call *ast.CallExpr,
 	mode reflectedStructFieldUseMode,
 ) *types.Named {
@@ -45,7 +45,7 @@ func (l *packageLinter) reflectedAliasTargetNamed(
 		return nil
 	}
 
-	for _, methodName := range reflectedHookNames(tag, mode, reflectedValueHook) {
+	for _, methodName := range reflectedHookNames(codec.hookTag, mode, reflectedValueHook) {
 		fn := l.reflectedAliasContextFunc(methodName, call)
 
 		receiver := l.reflectedCustomHookReceiver(fn)

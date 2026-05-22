@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"example.com/slopelint"
-	"example.com/slopelint/internal/lint"
+	"github.com/manuel-huez/slopelint"
+	"github.com/manuel-huez/slopelint/internal/lint"
 	"golang.org/x/tools/go/analysis/singlechecker"
 )
 

@@ -68,7 +68,7 @@ func (l *Runner) privateHelperOverlapsTrivialForwarder(fn *ast.FuncDecl, obj *ty
 		return false
 	}
 
-	return l.samePackageForwardTarget(obj, call)
+	return l.validForwardTarget(obj, call)
 }
 
 func (l *Runner) privateHelperBodyIsTiny(body *ast.BlockStmt) bool {

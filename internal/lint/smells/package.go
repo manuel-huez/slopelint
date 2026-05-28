@@ -41,7 +41,6 @@ type Runner struct {
 	findings       []Finding
 	reported       map[string]struct{}
 	renderCache    map[ast.Node]string
-	callCountsAll  map[string]int
 	callCountsProd map[string]int
 }
 

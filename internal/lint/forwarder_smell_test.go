@@ -52,7 +52,7 @@ func use(name string) bool {
 
 	if !strings.Contains(
 		joined,
-		`private helper "run" only forwards to "execute" at one callsite; inline or merge names`,
+		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial forwarder finding, got:\n%s", joined)
 	}
@@ -84,7 +84,7 @@ func use(name string) bool {
 
 	if !strings.Contains(
 		joined,
-		`private helper "run" only forwards to "execute" at one callsite; inline or merge names`,
+		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial assign-return forwarder finding, got:\n%s", joined)
 	}
@@ -113,9 +113,74 @@ func use(name string) bool {
 
 	if !strings.Contains(
 		joined,
-		`private helper "run" only forwards to "execute" at one callsite; inline or merge names`,
+		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial var-return forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsTrivialForwarderToImportedFunction(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "strconv"
+
+func parseCount(value string) (int, error) {
+	return strconv.Atoi(value)
+}
+
+func use(value string) error {
+	_, err := parseCount(value)
+	return err
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "parseCount" only forwards to "strconv.Atoi" at one production callsite; inline or merge names`,
+	) {
+		t.Fatalf("expected imported trivial forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsTrivialForwarderDespiteTestCallsite(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(name string) bool { return name != "" }
+
+func run(name string) bool {
+	return execute(name)
+}
+
+func use(name string) bool {
+	return run(name)
+}
+`)
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+import "testing"
+
+func TestRun(t *testing.T) {
+	if !run("ok") {
+		t.Fatal("run failed")
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
+	) {
+		t.Fatalf("expected trivial forwarder finding despite test callsite, got:\n%s", joined)
 	}
 }
 
@@ -147,7 +212,7 @@ func use(scope CacheScope) error {
 
 	if !strings.Contains(
 		joined,
-		`private helper "fxCacheScopeCurrencies" only forwards to "fxScopeCurrencies" at one callsite; inline or merge names`,
+		`private helper "fxCacheScopeCurrencies" only forwards to "fxScopeCurrencies" at one production callsite; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial adapter forwarder finding, got:\n%s", joined)
 	}
@@ -183,7 +248,7 @@ func use(req request, code CurrencyCode) error {
 
 	if !strings.Contains(
 		joined,
-		`private helper "convertRequest" only forwards to "convertScope" at one callsite; inline or merge names`,
+		`private helper "convertRequest" only forwards to "convertScope" at one production callsite; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial field/conversion adapter forwarder finding, got:\n%s", joined)
 	}

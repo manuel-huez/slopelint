@@ -7,14 +7,6 @@ import (
 	"go/types"
 )
 
-func (l *Runner) packageCallCounts() map[string]int {
-	if l.callCountsAll == nil {
-		l.callCountsAll = l.packageCallCountsForFiles(l.pkg.Files)
-	}
-
-	return l.callCountsAll
-}
-
 func (l *Runner) packageCallCountsForFiles(files []*ast.File) map[string]int {
 	counts := make(map[string]int)
 
@@ -45,9 +37,9 @@ const (
 )
 
 func (l *Runner) checkTrivialForwarders() {
-	callCounts := l.packageCallCounts()
+	callCounts := l.productionPackageCallCounts()
 
-	l.forEachPackageFunc(func(fn *ast.FuncDecl) {
+	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
 		l.checkTrivialForwarder(fn, callCounts)
 	})
 }
@@ -67,7 +59,7 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, callCounts map[string]i
 		return
 	}
 
-	if !l.samePackageForwardTarget(obj, call) {
+	if !l.validForwardTarget(obj, call) {
 		return
 	}
 
@@ -75,7 +67,7 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, callCounts map[string]i
 		fn.Name.Pos(),
 		"trivial_wrapper",
 		fmt.Sprintf(
-			`private helper %q only forwards to %q at one callsite; inline or merge names`,
+			`private helper %q only forwards to %q at one production callsite; inline or merge names`,
 			fn.Name.Name,
 			l.render(call.Fun),
 		),
@@ -154,17 +146,13 @@ func (l *Runner) trivialForwarderBodyCall(
 	return call, true
 }
 
-func (l *Runner) samePackageForwardTarget(obj *types.Func, call *ast.CallExpr) bool {
+func (l *Runner) validForwardTarget(obj *types.Func, call *ast.CallExpr) bool {
 	callee, _, ok := l.calledFunc(call)
 	if !ok || obj == nil || callee == nil || callee == obj {
 		return false
 	}
 
-	if obj.Pkg() == nil || callee.Pkg() == nil {
-		return false
-	}
-
-	return obj.Pkg().Path() == callee.Pkg().Path()
+	return obj.Pkg() != nil && callee.Pkg() != nil
 }
 
 func (l *Runner) trivialForwarderCall(

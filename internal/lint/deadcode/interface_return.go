@@ -113,8 +113,8 @@ func (graph deadCodeGraph) returnInterfaceMethodUses(
 
 func tupleTypes(tuple *types.Tuple) []types.Type {
 	out := make([]types.Type, 0, tuple.Len())
-	for index := range tuple.Len() {
-		out = append(out, tuple.At(index).Type())
+	for variable := range tuple.Variables() {
+		out = append(out, variable.Type())
 	}
 
 	return out

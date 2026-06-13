@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"maps"
 	"sort"
 	"strings"
 	"unicode"
@@ -44,7 +45,7 @@ func (s scalar) String() string {
 	case scalarInvalid:
 		return "<unknown>"
 	case scalarNil:
-		return "nil"
+		return nilText
 	case scalarBool:
 		return s.text
 	case scalarString:
@@ -81,9 +82,7 @@ func (f fact) clone() fact {
 
 	if len(f.not) != 0 {
 		out.not = make(map[string]evidence, len(f.not))
-		for k, v := range f.not {
-			out.not[k] = v
-		}
+		maps.Copy(out.not, f.not)
 	}
 
 	return out
@@ -298,10 +297,10 @@ func scalarFromConstantValue(v constant.Value) (scalar, bool) {
 		return scalar{}, false
 	case constant.Bool:
 		if constant.BoolVal(v) {
-			return scalar{kind: scalarBool, text: "true"}, true
+			return scalar{kind: scalarBool, text: boolTrueText}, true
 		}
 
-		return scalar{kind: scalarBool, text: "false"}, true
+		return scalar{kind: scalarBool, text: boolFalseText}, true
 	case constant.String:
 		return scalar{kind: scalarString, text: constant.StringVal(v)}, true
 	case constant.Int:
@@ -320,7 +319,7 @@ func zeroScalarOfType(t types.Type) (scalar, bool) {
 		info := tt.Info()
 		switch {
 		case info&types.IsBoolean != 0:
-			return scalar{kind: scalarBool, text: "false"}, true
+			return scalar{kind: scalarBool, text: boolFalseText}, true
 		case info&types.IsString != 0:
 			return scalar{kind: scalarString, text: ""}, true
 		case info&types.IsInteger != 0:
@@ -329,9 +328,9 @@ func zeroScalarOfType(t types.Type) (scalar, bool) {
 			return scalar{}, false
 		}
 	case *types.Pointer, *types.Slice, *types.Map, *types.Chan, *types.Signature:
-		return scalar{kind: scalarNil, text: "nil"}, true
+		return scalar{kind: scalarNil, text: nilText}, true
 	case *types.Interface:
-		return scalar{kind: scalarNil, text: "nil"}, true
+		return scalar{kind: scalarNil, text: nilText}, true
 	case *types.Named:
 		return zeroScalarOfType(tt.Underlying())
 	default:

@@ -171,7 +171,7 @@ func parseContractScalar(text string) (scalar, bool) {
 	switch text {
 	case nilText:
 		return scalar{kind: scalarNil, text: nilText}, true
-	case "true", "false":
+	case boolTrueText, boolFalseText:
 		return scalar{kind: scalarBool, text: text}, true
 	}
 

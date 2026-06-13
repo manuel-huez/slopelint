@@ -9,6 +9,19 @@ import (
 	"testing"
 )
 
+const (
+	wantFieldPayloadCustom      = `field "Payload.Custom"`
+	wantFieldPayloadName        = `field "Payload.Name"`
+	wantMethodMarshalJSON       = `method "MarshalJSON"`
+	wantMethodMarshalText       = `method "MarshalText"`
+	wantMethodMarshalYAML       = `method "MarshalYAML"`
+	wantMethodUnmarshalJSON     = `method "UnmarshalJSON"`
+	wantMethodUnmarshalText     = `method "UnmarshalText"`
+	wantMethodUnmarshalYAML     = `method "UnmarshalYAML"`
+	wantRemoveFieldPayloadName  = wantFieldPayloadName + ` is unreachable from repo entrypoints; remove it`
+	wantRemoveMethodMarshalJSON = wantMethodMarshalJSON + ` is unreachable from repo entrypoints; remove it`
+)
+
 func lintInDir(t *testing.T, dir string) []Issue {
 	t.Helper()
 
@@ -33,7 +46,7 @@ func lintInDirWithOptions(t *testing.T, dir string, opts Options) []Issue {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	pkgs, err := LoadPackages([]string{"./..."})
+	pkgs, err := LoadPackages([]string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("load packages: %v", err)
 	}
@@ -90,7 +103,7 @@ func loadOnePackageForTest(t *testing.T, dir string) *LoadedPackage {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	pkgs, err := LoadPackages([]string{"./..."})
+	pkgs, err := LoadPackages([]string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("load packages: %v", err)
 	}

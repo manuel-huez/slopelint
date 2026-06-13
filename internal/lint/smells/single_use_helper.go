@@ -13,10 +13,10 @@ const (
 )
 
 func (l *Runner) checkSingleUsePrivateHelpers() {
-	callCounts := l.productionPackageCallCounts()
+	useCounts := l.productionPackageFuncUseCounts()
 
 	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if !l.isSingleUsePrivateHelper(fn, callCounts) {
+		if !l.isSingleUsePrivateHelper(fn, useCounts) {
 			return
 		}
 
@@ -24,7 +24,7 @@ func (l *Runner) checkSingleUsePrivateHelpers() {
 			fn.Name.Pos(),
 			"abstraction_overkill",
 			fmt.Sprintf(
-				`private helper %q has one production callsite and a tiny body; inline or give it a stronger role`,
+				`private helper %q has one production use and a tiny body; inline or give it a stronger role`,
 				fn.Name.Name,
 			),
 		)
@@ -35,19 +35,18 @@ func (l *Runner) checkSingleUsePrivateHelpers() {
 
 func (l *Runner) isSingleUsePrivateHelper(
 	fn *ast.FuncDecl,
-	callCounts map[string]int,
+	useCounts map[string]int,
 ) bool {
 	if !isEligiblePrivateSmellFunc(fn) || fn.Name.Name == initFuncName {
 		return false
 	}
 
-	if funcParamCount(fn.Type.Results) != 0 ||
-		funcParamCount(fn.Type.Params) > privateHelperMaxParams {
+	if funcParamCount(fn.Type.Params) > privateHelperMaxParams {
 		return false
 	}
 
 	obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-	if !ok || obj == nil || callCounts[funcObjectKey(obj)] != 1 {
+	if !ok || obj == nil || useCounts[funcObjectKey(obj)] != 1 {
 		return false
 	}
 
@@ -91,7 +90,7 @@ func privateHelperStmtIsTiny(stmt ast.Stmt) bool {
 	}
 
 	switch stmt := stmt.(type) {
-	case *ast.ExprStmt, *ast.AssignStmt, *ast.SendStmt, *ast.IncDecStmt:
+	case *ast.ExprStmt, *ast.AssignStmt, *ast.SendStmt, *ast.IncDecStmt, *ast.ReturnStmt:
 		return true
 	case *ast.DeclStmt:
 		decl, ok := stmt.Decl.(*ast.GenDecl)

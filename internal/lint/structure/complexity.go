@@ -516,7 +516,7 @@ func (l *Runner) inputValidationMethodCall(
 	}
 
 	selector, ok := l.unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || !inputValidationPredicateName(selector.Sel.Name) {
+	if !ok || (selector.Sel.Name != "IsZero" && !strings.HasPrefix(selector.Sel.Name, "Is")) {
 		return false
 	}
 
@@ -526,10 +526,6 @@ func (l *Runner) inputValidationMethodCall(
 	}
 
 	return l.inputValidationExpr(selector.X, bodyStart, validationTemps)
-}
-
-func inputValidationPredicateName(name string) bool {
-	return name == "IsZero" || strings.HasPrefix(name, "Is")
 }
 
 func (l *Runner) inputValidationBinary(

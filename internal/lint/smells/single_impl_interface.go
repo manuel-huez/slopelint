@@ -76,8 +76,8 @@ func interfaceEligibleForSingleImpl(iface *types.Interface) bool {
 		return false
 	}
 
-	for idx := range iface.NumMethods() {
-		if !iface.Method(idx).Exported() {
+	for method := range iface.Methods() {
+		if !method.Exported() {
 			return false
 		}
 	}

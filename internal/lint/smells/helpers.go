@@ -30,7 +30,7 @@ func (l *Runner) reportGenericNameForSingleUseHelper(fn *ast.FuncDecl) {
 		fn.Name.Pos(),
 		"generic_naming",
 		fmt.Sprintf(
-			`private helper %q has generic name and one tiny callsite; rename or inline`,
+			`private helper %q has generic name and one tiny use; rename or inline`,
 			fn.Name.Name,
 		),
 	)
@@ -39,7 +39,7 @@ func (l *Runner) reportGenericNameForSingleUseHelper(fn *ast.FuncDecl) {
 func genericPrivateName(name string) bool {
 	for _, word := range splitIdentifierWords(name) {
 		switch word {
-		case "helper", "manager", "processor", "util", "utils", "base", "impl":
+		case "helper", "manager", "processor", "util", "utils", "base", "impl", "wrapper":
 			return true
 		default:
 			continue
@@ -61,12 +61,12 @@ func isEligiblePrivateSmellFunc(fn *ast.FuncDecl) bool {
 
 const initFuncName = "init"
 
-func (l *Runner) productionPackageCallCounts() map[string]int {
-	if l.callCountsProd == nil {
-		l.callCountsProd = l.packageCallCountsForFiles(l.pkg.ProductionFiles)
+func (l *Runner) productionPackageFuncUseCounts() map[string]int {
+	if l.funcUseCounts == nil {
+		l.funcUseCounts = l.packageFuncUseCountsForFiles(l.pkg.ProductionFiles)
 	}
 
-	return l.callCountsProd
+	return l.funcUseCounts
 }
 
 func funcParamCount(fields *ast.FieldList) int {

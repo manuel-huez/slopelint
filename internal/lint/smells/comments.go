@@ -147,7 +147,7 @@ func isRestatementCommentGroup(doc *ast.CommentGroup) bool {
 		return false
 	}
 
-	text := normalizeCommentText(doc.Text())
+	text := strings.Join(strings.Fields(strings.TrimSpace(doc.Text())), " ")
 	if text == "" {
 		return false
 	}

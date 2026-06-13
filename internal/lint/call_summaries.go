@@ -400,19 +400,18 @@ func callSummaryEqual(left, right callSummary) bool {
 			return false
 		}
 
-		if !resultSummaryEqual(left.results[leftKeys[i]], right.results[rightKeys[i]]) {
+		leftResult := left.results[leftKeys[i]]
+		rightResult := right.results[rightKeys[i]]
+
+		if !guardContractsEqual(leftResult.whenTrue, rightResult.whenTrue) ||
+			!guardContractsEqual(leftResult.whenFalse, rightResult.whenFalse) ||
+			!guardContractsEqual(leftResult.whenNil, rightResult.whenNil) ||
+			!guardContractsEqual(leftResult.whenNonNil, rightResult.whenNonNil) {
 			return false
 		}
 	}
 
 	return true
-}
-
-func resultSummaryEqual(left, right resultSummary) bool {
-	return guardContractsEqual(left.whenTrue, right.whenTrue) &&
-		guardContractsEqual(left.whenFalse, right.whenFalse) &&
-		guardContractsEqual(left.whenNil, right.whenNil) &&
-		guardContractsEqual(left.whenNonNil, right.whenNonNil)
 }
 
 func sortedSummaryResultIndices(results map[int]resultSummary) []int {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 )
 
 func (l *Runner) checkRedundantBoolReturn(stmts []ast.Stmt, idx int) {
@@ -323,7 +324,8 @@ func (l *Runner) checkExhaustiveDefensiveDefault(stmt *ast.SwitchStmt) {
 }
 
 func (l *Runner) checkExhaustiveBoolDefault(stmt *ast.SwitchStmt) bool {
-	if !isBoolType(l.pkg.TypesInfo.TypeOf(stmt.Tag)) {
+	basic, ok := types.Unalias(l.pkg.TypesInfo.TypeOf(stmt.Tag)).Underlying().(*types.Basic)
+	if !ok || basic.Info()&types.IsBoolean == 0 {
 		return false
 	}
 

@@ -5,23 +5,25 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 )
 
-func (l *Runner) packageCallCountsForFiles(files []*ast.File) map[string]int {
+func (l *Runner) packageFuncUseCountsForFiles(files []*ast.File) map[string]int {
 	counts := make(map[string]int)
 
 	for _, file := range files {
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
+		ast.PreorderStack(file, nil, func(n ast.Node, stack []ast.Node) bool {
+			expr, ok := n.(ast.Expr)
+			if !ok || funcUseExprIsDeclarationOrSelectorName(expr, stack) {
 				return true
 			}
 
-			_, key, ok := l.calledFunc(call)
-			if !ok {
+			obj := l.funcObject(expr)
+			if obj == nil {
 				return true
 			}
 
+			key := funcObjectKey(obj)
 			counts[key]++
 
 			return true
@@ -31,25 +33,49 @@ func (l *Runner) packageCallCountsForFiles(files []*ast.File) map[string]int {
 	return counts
 }
 
+func funcUseExprIsDeclarationOrSelectorName(expr ast.Expr, stack []ast.Node) bool {
+	if len(stack) == 0 {
+		return false
+	}
+
+	parent := stack[len(stack)-1]
+
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+
+	switch parent := parent.(type) {
+	case *ast.FuncDecl:
+		return parent.Name == ident
+	case *ast.SelectorExpr:
+		return parent.Sel == ident
+	case *ast.Field:
+		return slices.Contains(parent.Names, ident)
+	default:
+		return false
+	}
+}
+
 const (
 	trivialForwarderDirectStmtCount = 1
 	trivialForwarderAssignStmtCount = 2
 )
 
 func (l *Runner) checkTrivialForwarders() {
-	callCounts := l.productionPackageCallCounts()
+	useCounts := l.productionPackageFuncUseCounts()
 
 	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		l.checkTrivialForwarder(fn, callCounts)
+		l.checkTrivialForwarder(fn, useCounts)
 	})
 }
 
-func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, callCounts map[string]int) {
+func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, useCounts map[string]int) {
 	if !isEligibleTrivialForwarderDecl(fn) {
 		return
 	}
 
-	obj, ok := l.trivialForwarderObject(fn, callCounts)
+	obj, ok := l.trivialForwarderObject(fn, useCounts)
 	if !ok {
 		return
 	}
@@ -67,7 +93,7 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, callCounts map[string]i
 		fn.Name.Pos(),
 		"trivial_wrapper",
 		fmt.Sprintf(
-			`private helper %q only forwards to %q at one production callsite; inline or merge names`,
+			`private helper %q only forwards to %q at one production use; inline or merge names`,
 			fn.Name.Name,
 			l.render(call.Fun),
 		),
@@ -96,7 +122,7 @@ func hasTypeParams(fnType *ast.FuncType) bool {
 
 func (l *Runner) trivialForwarderObject(
 	fn *ast.FuncDecl,
-	callCounts map[string]int,
+	useCounts map[string]int,
 ) (*types.Func, bool) {
 	for _, stmt := range fn.Body.List {
 		if l.hasAttachedComment(stmt) {
@@ -113,7 +139,7 @@ func (l *Runner) trivialForwarderObject(
 		return nil, false
 	}
 
-	if callCounts[funcObjectKey(obj)] != 1 {
+	if useCounts[funcObjectKey(obj)] != 1 {
 		return nil, false
 	}
 

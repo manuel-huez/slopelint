@@ -73,10 +73,11 @@ func (l *Runner) ScanFunctionBody(
 
 	if body != nil {
 		ctx := blockContext{
-			functionBody:       true,
-			functionHasResults: funcTypeHasResults(fnType),
-			functionResults:    l.funcResultTypes(fnType),
-			functionInputs:     l.funcInputObjects(fnType, recv),
+			functionBody: true,
+			functionHasResults: fnType != nil && fnType.Results != nil &&
+				len(fnType.Results.List) != 0,
+			functionResults: l.funcResultTypes(fnType),
+			functionInputs:  l.funcInputObjects(fnType, recv),
 		}
 
 		l.checkFunctionComplexity(body, ctx)
@@ -123,10 +124,6 @@ func (l *Runner) addFieldListObjects(
 			}
 		}
 	}
-}
-
-func funcTypeHasResults(fnType *ast.FuncType) bool {
-	return fnType != nil && fnType.Results != nil && len(fnType.Results.List) != 0
 }
 
 func (l *Runner) funcResultTypes(fnType *ast.FuncType) []types.Type {

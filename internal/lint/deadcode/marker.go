@@ -15,7 +15,13 @@ func isMarkerMethod(l *packageLinter, fn *ast.FuncDecl, obj *types.Func) bool {
 }
 
 func markerFuncSignature(fn *ast.FuncDecl, obj *types.Func) (*types.Signature, bool) {
-	if !emptyPrivateMarkerMethodDecl(fn) || obj == nil {
+	if fn == nil ||
+		fn.Name == nil ||
+		fn.Recv == nil ||
+		fn.Body == nil ||
+		len(fn.Body.List) != 0 ||
+		ast.IsExported(fn.Name.Name) ||
+		obj == nil {
 		return nil, false
 	}
 
@@ -25,15 +31,6 @@ func markerFuncSignature(fn *ast.FuncDecl, obj *types.Func) (*types.Signature, b
 	}
 
 	return sig, true
-}
-
-func emptyPrivateMarkerMethodDecl(fn *ast.FuncDecl) bool {
-	return fn != nil &&
-		fn.Name != nil &&
-		fn.Recv != nil &&
-		fn.Body != nil &&
-		len(fn.Body.List) == 0 &&
-		!ast.IsExported(fn.Name.Name)
 }
 
 func (l *packageLinter) methodImplementsMarkerInterface(
@@ -74,11 +71,13 @@ func (l *packageLinter) markerInterfaceRequiresMethod(
 		return false
 	}
 
-	for index := range iface.NumMethods() {
-		method := iface.Method(index)
-		if method == nil ||
-			method.Name() != obj.Name() ||
-			!emptyMarkerMethod(method) {
+	for method := range iface.Methods() {
+		if method == nil || method.Name() != obj.Name() {
+			continue
+		}
+
+		sig, ok := method.Type().(*types.Signature)
+		if !ok || sig == nil || !emptyMarkerSignature(sig) {
 			continue
 		}
 
@@ -86,12 +85,6 @@ func (l *packageLinter) markerInterfaceRequiresMethod(
 	}
 
 	return false
-}
-
-func emptyMarkerMethod(method *types.Func) bool {
-	sig, ok := method.Type().(*types.Signature)
-
-	return ok && sig != nil && emptyMarkerSignature(sig)
 }
 
 func emptyMarkerSignature(sig *types.Signature) bool {

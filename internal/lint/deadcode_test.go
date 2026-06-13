@@ -2147,8 +2147,8 @@ func Load(body []byte) (State, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`method "MarshalJSON"`,
-		`method "UnmarshalJSON"`,
+		wantMethodMarshalJSON,
+		wantMethodUnmarshalJSON,
 		`function "parseStatus"`,
 		`field "State.Status"`,
 		`field "State.Name"`,

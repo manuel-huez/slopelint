@@ -1545,10 +1545,10 @@ func substituteReflectedNamedTypeParams(
 	}
 
 	typeArgs := make([]types.Type, 0, typ.TypeArgs().Len())
-	for index := range typ.TypeArgs().Len() {
+	for arg := range typ.TypeArgs().Types() {
 		typeArgs = append(
 			typeArgs,
-			substituteReflectedTypeParamsSeen(typ.TypeArgs().At(index), replacements, seen),
+			substituteReflectedTypeParamsSeen(arg, replacements, seen),
 		)
 	}
 
@@ -1664,8 +1664,8 @@ func reflectedNamedTypeContainsMatchingParam(
 	matches reflectedTypeParamMatcher,
 	seen map[string]struct{},
 ) bool {
-	for index := range typ.TypeArgs().Len() {
-		if reflectedTypeContainsMatchingParam(typ.TypeArgs().At(index), matches, seen) {
+	for arg := range typ.TypeArgs().Types() {
+		if reflectedTypeContainsMatchingParam(arg, matches, seen) {
 			return true
 		}
 	}
@@ -1678,8 +1678,8 @@ func reflectedStructTypeContainsMatchingParam(
 	matches reflectedTypeParamMatcher,
 	seen map[string]struct{},
 ) bool {
-	for index := range typ.NumFields() {
-		if reflectedTypeContainsMatchingParam(typ.Field(index).Type(), matches, seen) {
+	for field := range typ.Fields() {
+		if reflectedTypeContainsMatchingParam(field.Type(), matches, seen) {
 			return true
 		}
 	}
@@ -1978,9 +1978,9 @@ func collectReflectedNamedTypeParamUses(
 	}
 
 	seen[key] = struct{}{}
-	for index := range typ.TypeArgs().Len() {
+	for arg := range typ.TypeArgs().Types() {
 		collectReflectedTypeParamUses(
-			typ.TypeArgs().At(index),
+			arg,
 			codec,
 			typeParamIndexes,
 			out,
@@ -2008,9 +2008,9 @@ func collectReflectedStructTypeParamUses(
 	seen map[string]struct{},
 	context reflectedTypeParamUseContext,
 ) {
-	for index := range typ.NumFields() {
+	for field := range typ.Fields() {
 		collectReflectedTypeParamUses(
-			typ.Field(index).Type(),
+			field.Type(),
 			codec,
 			typeParamIndexes,
 			out,

@@ -728,8 +728,8 @@ func parseCustom(context.Context, []byte) error {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Custom"`,
-		`method "UnmarshalJSON"`,
+		wantFieldPayloadCustom,
+		wantMethodUnmarshalJSON,
 		`function "parseCustom"`,
 	} {
 		if strings.Contains(joined, unexpected) {
@@ -860,7 +860,7 @@ func Load(body []byte) error {
 	for _, unexpected := range []string{
 		`field "Payload.Inner"`,
 		`field "Inner.Used"`,
-		`method "UnmarshalJSON"`,
+		wantMethodUnmarshalJSON,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -923,8 +923,8 @@ func Load(body []byte) error {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`method "UnmarshalJSON"`,
+		wantFieldPayloadName,
+		wantMethodUnmarshalJSON,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -1136,10 +1136,10 @@ func Load(body []byte) (Manifest, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`method "MarshalYAML"`,
-		`method "MarshalText"`,
-		`method "UnmarshalYAML"`,
-		`method "UnmarshalText"`,
+		wantMethodMarshalYAML,
+		wantMethodMarshalText,
+		wantMethodUnmarshalYAML,
+		wantMethodUnmarshalText,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -1199,7 +1199,7 @@ func Save() ([]byte, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
+		wantFieldPayloadName,
 		`field "Wrapper.Value"`,
 	} {
 		if strings.Contains(joined, unexpected) {
@@ -1271,8 +1271,8 @@ func Save() ([]byte, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`method "MarshalYAML"`,
+		wantFieldPayloadName,
+		wantMethodMarshalYAML,
 		`function "marshalPayload"`,
 	} {
 		if strings.Contains(joined, unexpected) {
@@ -1330,7 +1330,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("YAML map alias return field reported dead, got:\n%s", joined)
 	}
 }
@@ -1387,8 +1387,8 @@ func Save() ([]byte, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`method "MarshalYAML"`,
+		wantFieldPayloadName,
+		wantMethodMarshalYAML,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -1448,8 +1448,8 @@ func Save() ([]byte, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`method "MarshalYAML"`,
+		wantFieldPayloadName,
+		wantMethodMarshalYAML,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -1511,7 +1511,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf(
 			"expected stale YAML named result assignment to leave field dead, got:\n%s",
@@ -1571,7 +1571,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("YAML branch named result alias field reported dead, got:\n%s", joined)
 	}
 }
@@ -1623,7 +1623,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("YAML explicit named result alias field reported dead, got:\n%s", joined)
 	}
 }
@@ -1675,7 +1675,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("YAML local alias return field reported dead, got:\n%s", joined)
 	}
 }
@@ -1730,7 +1730,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("YAML switch alias return field reported dead, got:\n%s", joined)
 	}
 }
@@ -1788,7 +1788,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected YAML default switch overwrite to leave field dead, got:\n%s", joined)
 	}
@@ -1846,7 +1846,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("YAML range alias return field reported dead, got:\n%s", joined)
 	}
 }
@@ -1911,7 +1911,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf(
 			"external goccy JSON generic marshal wrapper field reported dead, got:\n%s",
 			joined,
@@ -1974,7 +1974,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf(
 			"expected shadowed external generic marshal param to leave field dead, got:\n%s",
@@ -2040,7 +2040,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("external generic marshal method field reported dead, got:\n%s", joined)
 	}
 }
@@ -2096,7 +2096,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("delegated external generic marshal wrapper field reported dead, got:\n%s", joined)
 	}
 }
@@ -2159,7 +2159,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("sigs YAML generic marshal wrapper JSON field reported dead, got:\n%s", joined)
 	}
 }
@@ -2228,7 +2228,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected fake YAML generic marshal wrapper field to stay dead, got:\n%s", joined)
 	}
@@ -2281,7 +2281,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf(
 			"expected fake external generic marshal wrapper field to stay dead, got:\n%s",
@@ -2333,7 +2333,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected non-codec external encode to leave field dead, got:\n%s", joined)
 	}
@@ -2382,7 +2382,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected bare codec external encode to leave field dead, got:\n%s", joined)
 	}
@@ -2435,7 +2435,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected jsonfake external encode to leave field dead, got:\n%s", joined)
 	}
@@ -2488,7 +2488,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected jsonfake EncodeJSON to leave field dead, got:\n%s", joined)
 	}
@@ -2533,7 +2533,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected dead func literal generic marshal to leave field dead, got:\n%s", joined)
 	}
@@ -2596,7 +2596,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected YAML non-representation returns to leave field dead, got:\n%s", joined)
 	}
@@ -2660,8 +2660,8 @@ func Load(body []byte) error {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`method "MarshalYAML"`,
-		`method "UnmarshalYAML"`,
+		wantMethodMarshalYAML,
+		wantMethodUnmarshalYAML,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf("YAML map key hook reported dead for %q, got:\n%s", unexpected, joined)
@@ -2763,7 +2763,7 @@ func Live() {}
 	joined := joinMessages(issues)
 
 	for _, want := range []string{
-		`method "UnmarshalJSON"`,
+		wantMethodUnmarshalJSON,
 		`function "parseOptionalFloat"`,
 	} {
 		if !strings.Contains(joined, want) {
@@ -2803,13 +2803,13 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("value-marshal field suppressed by pointer hook, got:\n%s", joined)
 	}
 
 	if !strings.Contains(
 		joined,
-		`method "MarshalJSON" is unreachable from repo entrypoints; remove it`,
+		wantRemoveMethodMarshalJSON,
 	) {
 		t.Fatalf("expected pointer-only marshal hook finding, got:\n%s", joined)
 	}
@@ -2846,13 +2846,13 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("field suppressed by invalid marshal hook signature, got:\n%s", joined)
 	}
 
 	if !strings.Contains(
 		joined,
-		`method "MarshalJSON" is unreachable from repo entrypoints; remove it`,
+		wantRemoveMethodMarshalJSON,
 	) {
 		t.Fatalf("expected invalid marshal hook finding, got:\n%s", joined)
 	}
@@ -2924,13 +2924,13 @@ func Load(body []byte) error {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("field suppressed by invalid YAML/XML hook signature, got:\n%s", joined)
 	}
 
 	for _, want := range []string{
-		`method "MarshalYAML"`,
-		`method "UnmarshalYAML"`,
+		wantMethodMarshalYAML,
+		wantMethodUnmarshalYAML,
 		`method "MarshalXML"`,
 	} {
 		if !strings.Contains(joined, want) {
@@ -2973,11 +2973,11 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("marshal alias field reported dead, got:\n%s", joined)
 	}
 
-	if strings.Contains(joined, `method "MarshalJSON"`) {
+	if strings.Contains(joined, wantMethodMarshalJSON) {
 		t.Fatalf("marshal alias hook reported dead, got:\n%s", joined)
 	}
 
@@ -3027,8 +3027,8 @@ func Save() ([]byte, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`method "MarshalJSON"`,
+		wantFieldPayloadName,
+		wantMethodMarshalJSON,
 		`function "marshalPayload"`,
 	} {
 		if strings.Contains(joined, unexpected) {
@@ -3093,9 +3093,9 @@ func Load(body []byte) error {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`method "MarshalJSON"`,
-		`method "UnmarshalJSON"`,
+		wantFieldPayloadName,
+		wantMethodMarshalJSON,
+		wantMethodUnmarshalJSON,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -3161,9 +3161,9 @@ func Load(body []byte) error {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`method "MarshalText"`,
-		`method "UnmarshalText"`,
+		wantFieldPayloadName,
+		wantMethodMarshalText,
+		wantMethodUnmarshalText,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -3206,7 +3206,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("generic marshal field reported dead, got:\n%s", joined)
 	}
 }
@@ -3253,7 +3253,7 @@ func Load(body []byte) error {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("generic interface conversion field reported dead, got:\n%s", joined)
 	}
 }
@@ -3311,7 +3311,7 @@ func SaveSlice() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `method "MarshalJSON"`) {
+	if strings.Contains(joined, wantMethodMarshalJSON) {
 		t.Fatalf("generic pointer/container marshal hook reported dead, got:\n%s", joined)
 	}
 }
@@ -3351,7 +3351,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `method "MarshalText"`) {
+	if strings.Contains(joined, wantMethodMarshalText) {
 		t.Fatalf("generic map key text hook reported dead, got:\n%s", joined)
 	}
 
@@ -3404,7 +3404,7 @@ func Load(body []byte) error {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `method "UnmarshalText"`) {
+	if strings.Contains(joined, wantMethodUnmarshalText) {
 		t.Fatalf("generic map key unmarshal text hook reported dead, got:\n%s", joined)
 	}
 
@@ -3464,8 +3464,8 @@ func Load(body []byte) (map[Key]Value, error) {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`method "MarshalText"`,
-		`method "UnmarshalText"`,
+		wantMethodMarshalText,
+		wantMethodUnmarshalText,
 		`field "Value.Name"`,
 	} {
 		if strings.Contains(joined, unexpected) {
@@ -3604,7 +3604,7 @@ func Load(body []byte) (Payload, error) {
 		`method "MarshalXML"`,
 		`method "UnmarshalXML"`,
 		`field "Payload.Value"`,
-		`field "Payload.Name"`,
+		wantFieldPayloadName,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -3676,7 +3676,7 @@ func Load(body []byte) (Payload, error) {
 	for _, unexpected := range []string{
 		`method "UnmarshalXML"`,
 		`field "Payload.Value"`,
-		`field "Payload.Name"`,
+		wantFieldPayloadName,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(

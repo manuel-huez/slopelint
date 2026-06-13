@@ -237,9 +237,19 @@ func zeroValueScalarArg(l *Runner, arg ast.Expr, typ types.Type) bool {
 	case scalarNil:
 		return typeCanBeNil(typ)
 	case scalarString:
-		return value.text == "" && typeIsString(typ)
+		basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
+		if !ok {
+			return false
+		}
+
+		return value.text == "" && basic.Info()&types.IsString != 0
 	case scalarInt:
-		return value.text == "0" && typeIsInteger(typ)
+		basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
+		if !ok {
+			return false
+		}
+
+		return value.text == "0" && basic.Info()&types.IsInteger != 0
 	}
 
 	return false
@@ -262,18 +272,6 @@ func zeroValueCompositeArg(l *Runner, arg ast.Expr, paramType types.Type) bool {
 	default:
 		return false
 	}
-}
-
-func typeIsString(typ types.Type) bool {
-	basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
-
-	return ok && basic.Info()&types.IsString != 0
-}
-
-func typeIsInteger(typ types.Type) bool {
-	basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
-
-	return ok && basic.Info()&types.IsInteger != 0
 }
 
 func typeCanBeNil(typ types.Type) bool {

@@ -62,7 +62,11 @@ func (graph deadCodeGraph) knownOptionalInterfaceMethodUses(
 	call *ast.CallExpr,
 	sig *types.Signature,
 ) map[string]struct{} {
-	if !knownOptionalByteReaderCall(calledFunc(l.pkg.TypesInfo, call)) {
+	fn := calledFunc(l.pkg.TypesInfo, call)
+	if fn == nil ||
+		fn.Pkg() == nil ||
+		fn.Pkg().Path() != "github.com/ulikunitz/xz/lzma" ||
+		fn.Name() != "NewReader" {
 		return nil
 	}
 
@@ -83,13 +87,6 @@ func (graph deadCodeGraph) knownOptionalInterfaceMethodUses(
 	}
 
 	return out
-}
-
-func knownOptionalByteReaderCall(fn *types.Func) bool {
-	return fn != nil &&
-		fn.Pkg() != nil &&
-		fn.Pkg().Path() == "github.com/ulikunitz/xz/lzma" &&
-		fn.Name() == "NewReader"
 }
 
 func siblingNamedInterface(
@@ -1354,8 +1351,7 @@ func interfaceRequiresStringMethod(iface *types.Interface) bool {
 		return false
 	}
 
-	for index := range iface.NumMethods() {
-		method := iface.Method(index)
+	for method := range iface.Methods() {
 		if method != nil && method.Name() == "String" && stringMethodSignature(method) {
 			return true
 		}

@@ -37,7 +37,7 @@ type packageMeta struct {
 // and type-checks them using export data for imports.
 func LoadPackages(patterns []string) ([]*LoadedPackage, error) {
 	if len(patterns) == 0 {
-		patterns = []string{"./..."}
+		patterns = []string{allPackagesPattern}
 	}
 
 	metas, err := goList(patterns)
@@ -162,11 +162,7 @@ func loadPackageTargets(
 
 	var wg sync.WaitGroup
 	for range loadWorkerCount(len(targets)) {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			for idx := range jobs {
 				pkg, err := loadOne(targets[idx], byImportPath)
 				if err != nil {
@@ -176,7 +172,7 @@ func loadPackageTargets(
 
 				loaded[idx] = pkg
 			}
-		}()
+		})
 	}
 
 	for idx := range targets {

@@ -167,8 +167,8 @@ func parseStreamTime([]byte) error {
 	for _, unexpected := range []string{
 		`field "Payload.Kind"`,
 		`field "Payload.Scope"`,
-		`method "MarshalJSON"`,
-		`method "UnmarshalJSON"`,
+		wantMethodMarshalJSON,
+		wantMethodUnmarshalJSON,
 		`function "kindText"`,
 		`function "parseKind"`,
 		`function "parseScope"`,
@@ -315,10 +315,10 @@ func parseCustom([]byte) error {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`field "Payload.Custom"`,
-		`method "MarshalJSON"`,
-		`method "UnmarshalJSON"`,
+		wantFieldPayloadName,
+		wantFieldPayloadCustom,
+		wantMethodMarshalJSON,
+		wantMethodUnmarshalJSON,
 		`function "customText"`,
 		`function "parseCustom"`,
 	} {
@@ -466,8 +466,8 @@ func parseContext(context.Context, []byte) error {
 	for _, unexpected := range []string{
 		`field "PlainPayload.Value"`,
 		`field "ContextPayload.Value"`,
-		`method "MarshalJSON"`,
-		`method "UnmarshalJSON"`,
+		wantMethodMarshalJSON,
+		wantMethodUnmarshalJSON,
 		`function "plainText"`,
 		`function "parsePlain"`,
 		`function "contextText"`,
@@ -629,8 +629,8 @@ func parseCustom(context.Context, []byte) error {
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`field "Payload.Name"`,
-		`field "Payload.Custom"`,
+		wantFieldPayloadName,
+		wantFieldPayloadCustom,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -642,7 +642,7 @@ func parseCustom(context.Context, []byte) error {
 	}
 
 	for _, expected := range []string{
-		`method "MarshalJSON" is unreachable from repo entrypoints; remove it`,
+		wantRemoveMethodMarshalJSON,
 		`method "UnmarshalJSON" is unreachable from repo entrypoints; remove it`,
 		`function "customText" is never used by production code; remove it`,
 		`function "parseCustom" is never used by production code; remove it`,
@@ -713,7 +713,7 @@ func parseCustom([]byte) error {
 	joined := joinMessages(issues)
 
 	for _, expected := range []string{
-		`method "MarshalJSON" is unreachable from repo entrypoints; remove it`,
+		wantRemoveMethodMarshalJSON,
 		`method "UnmarshalJSON" is unreachable from repo entrypoints; remove it`,
 		`function "customText" is never used by production code; remove it`,
 		`function "parseCustom" is never used by production code; remove it`,
@@ -763,7 +763,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`field "Payload.Name" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected shadowed wrapper param to leave field dead, got:\n%s", joined)
 	}

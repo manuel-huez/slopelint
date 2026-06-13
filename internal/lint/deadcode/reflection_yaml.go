@@ -14,7 +14,7 @@ func (graph deadCodeGraph) addReflectedYAMLMarshalReturnUses(
 	call *ast.CallExpr,
 	seen map[string]struct{},
 ) {
-	if tag != reflectedYAMLTag || hook == nil || hook.Name() != "MarshalYAML" {
+	if tag != reflectedYAMLTag || hook == nil || hook.Name() != reflectedMarshalYAMLHook {
 		return
 	}
 

@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -170,7 +171,7 @@ func (l *Runner) commentTextsInRange(start, end token.Pos) []string {
 				continue
 			}
 
-			text := normalizeCommentText(group.Text())
+			text := strings.Join(strings.Fields(strings.TrimSpace(group.Text())), " ")
 			if text == "" {
 				continue
 			}
@@ -351,7 +352,7 @@ func normalizeRenderedIdentifier(text string, name string, replacement string) s
 
 		idx++
 
-		for idx < len(runes) && isIdentifierPart(runes[idx]) {
+		for idx < len(runes) && (isIdentifierStart(runes[idx]) || unicode.IsDigit(runes[idx])) {
 			idx++
 		}
 
@@ -371,9 +372,6 @@ func isIdentifierStart(ch rune) bool {
 	return ch == '_' || unicode.IsLetter(ch)
 }
 
-func isIdentifierPart(ch rune) bool {
-	return isIdentifierStart(ch) || unicode.IsDigit(ch)
-}
 func (l *Runner) objectUseSummary(node ast.Node, target types.Object) objectUseSummary {
 	var out objectUseSummary
 
@@ -405,8 +403,8 @@ func (l *Runner) objectUseSummary(node ast.Node, target types.Object) objectUseS
 }
 
 func objectUseIsUnsafe(ident *ast.Ident, ancestors []ast.Node) bool {
-	for i := len(ancestors) - 1; i >= 0; i-- {
-		switch node := ancestors[i].(type) {
+	for _, ancestor := range slices.Backward(ancestors) {
+		switch node := ancestor.(type) {
 		case *ast.UnaryExpr:
 			if node.Op == token.AND && nodeContains(node.X, ident) {
 				return true

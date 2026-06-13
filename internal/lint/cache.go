@@ -131,7 +131,7 @@ func CacheEnabledFromEnv() bool {
 	}
 
 	switch strings.ToLower(value) {
-	case "0", "false", "off", "no":
+	case zeroIntText, boolFalseText, "off", "no":
 		return false
 	default:
 		return true

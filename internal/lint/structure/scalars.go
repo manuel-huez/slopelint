@@ -107,9 +107,3 @@ func reverseOrderedOp(op token.Token) token.Token {
 
 	return op
 }
-
-func isBoolType(t types.Type) bool {
-	basic, ok := types.Unalias(t).Underlying().(*types.Basic)
-
-	return ok && basic.Info()&types.IsBoolean != 0
-}

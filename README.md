@@ -44,7 +44,7 @@ Structural ceremony:
 
 Package-level smells:
 
-- trivial private wrappers with one production callsite
+- trivial private wrappers with one production use
 - doc comments that only restate private declaration names
 - `IsX` predicates that do not return `bool` or `(bool, error)`
 - redundant `MarshalJSON` methods covered by `MarshalText`
@@ -56,7 +56,7 @@ Package-level smells:
 - single-use private helpers with tiny bodies
 - single-implementation private interfaces
 - functional options around tiny private APIs
-- private parameters always passed as zero value by production callsites
+- private parameters always passed as zero value by production uses
 - private result wrappers that only carry value plus status
 - generic helper names when paired with another smell
 - unused private functions, methods, types, vars, consts, and struct fields in production code
@@ -144,7 +144,7 @@ func defaultName(name string) string {
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.26+
 - For full repo health checks: `golangci-lint`, Node.js, and `npx`
 
 ## Build

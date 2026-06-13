@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"slices"
 )
 
 func (l *packageLinter) deadCodeIgnoredIdentPositions() map[token.Pos]struct{} {
@@ -55,10 +54,6 @@ func (l *packageLinter) reportableDeadCodeFuncWithName(
 
 func reportableDeadCodeName(name string) bool {
 	return name != "" && name != "_" && !ast.IsExported(name)
-}
-
-func valueSpecHasCalls(spec *ast.ValueSpec) bool {
-	return slices.ContainsFunc(spec.Values, exprHasCalls)
 }
 
 func canonicalDeadCodeObject(obj types.Object) types.Object {

@@ -52,7 +52,7 @@ func use(name string) bool {
 
 	if !strings.Contains(
 		joined,
-		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
+		`private helper "run" only forwards to "execute" at one production use; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial forwarder finding, got:\n%s", joined)
 	}
@@ -84,7 +84,7 @@ func use(name string) bool {
 
 	if !strings.Contains(
 		joined,
-		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
+		`private helper "run" only forwards to "execute" at one production use; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial assign-return forwarder finding, got:\n%s", joined)
 	}
@@ -113,7 +113,7 @@ func use(name string) bool {
 
 	if !strings.Contains(
 		joined,
-		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
+		`private helper "run" only forwards to "execute" at one production use; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial var-return forwarder finding, got:\n%s", joined)
 	}
@@ -141,7 +141,7 @@ func use(value string) error {
 
 	if !strings.Contains(
 		joined,
-		`private helper "parseCount" only forwards to "strconv.Atoi" at one production callsite; inline or merge names`,
+		`private helper "parseCount" only forwards to "strconv.Atoi" at one production use; inline or merge names`,
 	) {
 		t.Fatalf("expected imported trivial forwarder finding, got:\n%s", joined)
 	}
@@ -178,7 +178,7 @@ func TestRun(t *testing.T) {
 
 	if !strings.Contains(
 		joined,
-		`private helper "run" only forwards to "execute" at one production callsite; inline or merge names`,
+		`private helper "run" only forwards to "execute" at one production use; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial forwarder finding despite test callsite, got:\n%s", joined)
 	}
@@ -212,7 +212,7 @@ func use(scope CacheScope) error {
 
 	if !strings.Contains(
 		joined,
-		`private helper "fxCacheScopeCurrencies" only forwards to "fxScopeCurrencies" at one production callsite; inline or merge names`,
+		`private helper "fxCacheScopeCurrencies" only forwards to "fxScopeCurrencies" at one production use; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial adapter forwarder finding, got:\n%s", joined)
 	}
@@ -248,7 +248,7 @@ func use(req request, code CurrencyCode) error {
 
 	if !strings.Contains(
 		joined,
-		`private helper "convertRequest" only forwards to "convertScope" at one production callsite; inline or merge names`,
+		`private helper "convertRequest" only forwards to "convertScope" at one production use; inline or merge names`,
 	) {
 		t.Fatalf("expected trivial field/conversion adapter forwarder finding, got:\n%s", joined)
 	}

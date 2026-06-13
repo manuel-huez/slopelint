@@ -3,6 +3,7 @@ package deadcode
 import (
 	"go/ast"
 	"go/types"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -63,6 +64,22 @@ const (
 )
 
 const (
+	reflectedDecodeFunc    = "Decode"
+	reflectedEncodeFunc    = "Encode"
+	reflectedMarshalFunc   = "Marshal"
+	reflectedUnmarshalFunc = "Unmarshal"
+)
+
+const (
+	reflectedMarshalJSONHook   = "MarshalJSON"
+	reflectedMarshalTextHook   = "MarshalText"
+	reflectedMarshalYAMLHook   = "MarshalYAML"
+	reflectedUnmarshalJSONHook = "UnmarshalJSON"
+	reflectedUnmarshalTextHook = "UnmarshalText"
+	reflectedUnmarshalYAMLHook = "UnmarshalYAML"
+)
+
+const (
 	reflectedValueHook reflectedHookContext = iota
 	reflectedAttrHook
 	reflectedMapKeyHook
@@ -74,30 +91,30 @@ var reflectedCodecsByTag = map[string]reflectedCodec{
 	},
 	reflectedJSONTag: {
 		tag:                reflectedJSONTag,
-		decodeHooks:        []string{"UnmarshalJSON", "UnmarshalText"},
-		decodeAttrHooks:    []string{"UnmarshalJSON", "UnmarshalText"},
-		decodeMapKeyHooks:  []string{"UnmarshalText"},
-		marshalHooks:       []string{"MarshalJSON", "MarshalText"},
-		marshalAttrHooks:   []string{"MarshalJSON", "MarshalText"},
-		marshalMapKeyHooks: []string{"MarshalText"},
+		decodeHooks:        []string{reflectedUnmarshalJSONHook, reflectedUnmarshalTextHook},
+		decodeAttrHooks:    []string{reflectedUnmarshalJSONHook, reflectedUnmarshalTextHook},
+		decodeMapKeyHooks:  []string{reflectedUnmarshalTextHook},
+		marshalHooks:       []string{reflectedMarshalJSONHook, reflectedMarshalTextHook},
+		marshalAttrHooks:   []string{reflectedMarshalJSONHook, reflectedMarshalTextHook},
+		marshalMapKeyHooks: []string{reflectedMarshalTextHook},
 	},
 	reflectedXMLTag: {
 		tag:                reflectedXMLTag,
-		decodeHooks:        []string{"UnmarshalXML", "UnmarshalText"},
-		decodeAttrHooks:    []string{"UnmarshalXMLAttr", "UnmarshalText"},
-		decodeMapKeyHooks:  []string{"UnmarshalText"},
-		marshalHooks:       []string{"MarshalXML", "MarshalText"},
-		marshalAttrHooks:   []string{"MarshalXMLAttr", "MarshalText"},
-		marshalMapKeyHooks: []string{"MarshalText"},
+		decodeHooks:        []string{"UnmarshalXML", reflectedUnmarshalTextHook},
+		decodeAttrHooks:    []string{"UnmarshalXMLAttr", reflectedUnmarshalTextHook},
+		decodeMapKeyHooks:  []string{reflectedUnmarshalTextHook},
+		marshalHooks:       []string{"MarshalXML", reflectedMarshalTextHook},
+		marshalAttrHooks:   []string{"MarshalXMLAttr", reflectedMarshalTextHook},
+		marshalMapKeyHooks: []string{reflectedMarshalTextHook},
 	},
 	reflectedYAMLTag: {
 		tag:                 reflectedYAMLTag,
-		decodeHooks:         []string{"UnmarshalYAML", "UnmarshalText"},
-		decodeAttrHooks:     []string{"UnmarshalYAML", "UnmarshalText"},
-		decodeMapKeyHooks:   []string{"UnmarshalYAML", "UnmarshalText"},
-		marshalHooks:        []string{"MarshalYAML", "MarshalText"},
-		marshalAttrHooks:    []string{"MarshalYAML", "MarshalText"},
-		marshalMapKeyHooks:  []string{"MarshalYAML", "MarshalText"},
+		decodeHooks:         []string{reflectedUnmarshalYAMLHook, reflectedUnmarshalTextHook},
+		decodeAttrHooks:     []string{reflectedUnmarshalYAMLHook, reflectedUnmarshalTextHook},
+		decodeMapKeyHooks:   []string{reflectedUnmarshalYAMLHook, reflectedUnmarshalTextHook},
+		marshalHooks:        []string{reflectedMarshalYAMLHook, reflectedMarshalTextHook},
+		marshalAttrHooks:    []string{reflectedMarshalYAMLHook, reflectedMarshalTextHook},
+		marshalMapKeyHooks:  []string{reflectedMarshalYAMLHook, reflectedMarshalTextHook},
 		mapKeyFallbackField: true,
 	},
 }
@@ -109,12 +126,12 @@ var (
 
 var (
 	reflectedLastArgDecodeFuncs = map[string]reflectedCodecFunc{
-		"Decode":    reflectedLastArgDecodeFunc,
-		"Unmarshal": reflectedLastArgDecodeFunc,
+		reflectedDecodeFunc:    reflectedLastArgDecodeFunc,
+		reflectedUnmarshalFunc: reflectedLastArgDecodeFunc,
 	}
 	reflectedEncodeMarshalFuncs = map[string]reflectedCodecFunc{
-		"Encode":  reflectedFirstArgCodecFunc,
-		"Marshal": reflectedFirstArgCodecFunc,
+		reflectedEncodeFunc:  reflectedFirstArgCodecFunc,
+		reflectedMarshalFunc: reflectedFirstArgCodecFunc,
 	}
 )
 
@@ -122,7 +139,7 @@ var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 	"encoding/gob": {
 		tag: "",
 		decodeFuncs: map[string]reflectedCodecFunc{
-			"Decode": reflectedLastArgDecodeFunc,
+			reflectedDecodeFunc: reflectedLastArgDecodeFunc,
 		},
 	},
 	"encoding/json": {
@@ -134,19 +151,19 @@ var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 		tag: reflectedJSONTag,
 		// goccy context hooks are only reachable through APIs that carry context.
 		decodeFuncs: map[string]reflectedCodecFunc{
-			"Decode":              reflectedLastArgDecodeFunc,
-			"DecodeContext":       reflectedContextCodecFunc(reflectedSecondArgIndex),
-			"DecodeWithOption":    reflectedFirstArgCodecFunc,
-			"Unmarshal":           {argIndex: reflectedSecondArgIndex},
-			"UnmarshalContext":    reflectedContextCodecFunc(reflectedGoccyContextUnmarshalIndex),
-			"UnmarshalNoEscape":   {argIndex: reflectedSecondArgIndex},
-			"UnmarshalWithOption": {argIndex: reflectedSecondArgIndex},
+			reflectedDecodeFunc:    reflectedLastArgDecodeFunc,
+			"DecodeContext":        reflectedContextCodecFunc(reflectedSecondArgIndex),
+			"DecodeWithOption":     reflectedFirstArgCodecFunc,
+			reflectedUnmarshalFunc: {argIndex: reflectedSecondArgIndex},
+			"UnmarshalContext":     reflectedContextCodecFunc(reflectedGoccyContextUnmarshalIndex),
+			"UnmarshalNoEscape":    {argIndex: reflectedSecondArgIndex},
+			"UnmarshalWithOption":  {argIndex: reflectedSecondArgIndex},
 		},
 		marshalFuncs: map[string]reflectedCodecFunc{
-			"Encode":                  reflectedFirstArgCodecFunc,
+			reflectedEncodeFunc:       reflectedFirstArgCodecFunc,
 			"EncodeContext":           reflectedContextCodecFunc(reflectedSecondArgIndex),
 			"EncodeWithOption":        reflectedFirstArgCodecFunc,
-			"Marshal":                 reflectedFirstArgCodecFunc,
+			reflectedMarshalFunc:      reflectedFirstArgCodecFunc,
 			"MarshalContext":          reflectedContextCodecFunc(reflectedSecondArgIndex),
 			"MarshalIndent":           reflectedFirstArgCodecFunc,
 			"MarshalIndentWithOption": reflectedFirstArgCodecFunc,
@@ -157,15 +174,15 @@ var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 	reflectedEncodingXML: {
 		tag: reflectedXMLTag,
 		decodeFuncs: map[string]reflectedCodecFunc{
-			"Decode":        reflectedLastArgDecodeFunc,
-			"DecodeElement": reflectedFirstArgCodecFunc,
-			"Unmarshal":     reflectedLastArgDecodeFunc,
+			reflectedDecodeFunc:    reflectedLastArgDecodeFunc,
+			"DecodeElement":        reflectedFirstArgCodecFunc,
+			reflectedUnmarshalFunc: reflectedLastArgDecodeFunc,
 		},
 		marshalFuncs: map[string]reflectedCodecFunc{
-			"Encode":        reflectedFirstArgCodecFunc,
-			"EncodeElement": reflectedFirstArgCodecFunc,
-			"Marshal":       reflectedFirstArgCodecFunc,
-			"MarshalIndent": reflectedFirstArgCodecFunc,
+			reflectedEncodeFunc:  reflectedFirstArgCodecFunc,
+			"EncodeElement":      reflectedFirstArgCodecFunc,
+			reflectedMarshalFunc: reflectedFirstArgCodecFunc,
+			"MarshalIndent":      reflectedFirstArgCodecFunc,
 		},
 	},
 	"github.com/goccy/go-yaml": {
@@ -187,7 +204,7 @@ var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 		tag:         reflectedJSONTag,
 		decodeFuncs: reflectedLastArgDecodeFuncs,
 		marshalFuncs: map[string]reflectedCodecFunc{
-			"Marshal": reflectedFirstArgCodecFunc,
+			reflectedMarshalFunc: reflectedFirstArgCodecFunc,
 		},
 	},
 }
@@ -204,9 +221,7 @@ func reflectedCodecFuncsWith(
 	names ...string,
 ) map[string]reflectedCodecFunc {
 	out := make(map[string]reflectedCodecFunc, len(funcs)+len(names))
-	for name, fn := range funcs {
-		out[name] = fn
-	}
+	maps.Copy(out, funcs)
 
 	for _, name := range names {
 		out[name] = reflectedFirstArgCodecFunc
@@ -216,16 +231,53 @@ func reflectedCodecFuncsWith(
 }
 
 var reflectedHookSignatureValidators = map[string]reflectedHookSignatureValidator{
-	"MarshalJSON":      reflectedNoParamBytesErrorSignature,
-	"MarshalText":      reflectedNoParamBytesErrorSignature,
-	"UnmarshalJSON":    reflectedBytesParamErrorSignature,
-	"UnmarshalText":    reflectedBytesParamErrorSignature,
-	"MarshalYAML":      reflectedNoParamValueErrorSignature,
-	"UnmarshalYAML":    reflectedYAMLUnmarshalSignature,
-	"MarshalXML":       reflectedMarshalXMLSignature,
-	"UnmarshalXML":     reflectedUnmarshalXMLSignature,
-	"MarshalXMLAttr":   reflectedMarshalXMLAttrSignature,
-	"UnmarshalXMLAttr": reflectedUnmarshalXMLAttrSignature,
+	reflectedMarshalJSONHook:   reflectedNoParamBytesErrorSignature,
+	reflectedMarshalTextHook:   reflectedNoParamBytesErrorSignature,
+	reflectedUnmarshalJSONHook: reflectedBytesParamErrorSignature,
+	reflectedUnmarshalTextHook: reflectedBytesParamErrorSignature,
+	reflectedMarshalYAMLHook: func(sig *types.Signature) bool {
+		return tupleLen(sig.Params()) == 0 &&
+			tupleLen(sig.Results()) == 2 &&
+			typeIsAny(sig.Results().At(0).Type()) &&
+			typeIsError(sig.Results().At(1).Type())
+	},
+	reflectedUnmarshalYAMLHook: func(sig *types.Signature) bool {
+		return tupleLen(sig.Params()) == 1 &&
+			reflectedYAMLUnmarshalParamType(sig.Params().At(0).Type()) &&
+			reflectedErrorOnlyResultSignature(sig)
+	},
+	"MarshalXML": func(sig *types.Signature) bool {
+		return tupleLen(sig.Params()) == reflectedXMLHookArgs &&
+			reflectedPointerToNamedType(
+				sig.Params().At(0).Type(),
+				reflectedEncodingXML,
+				"Encoder",
+			) &&
+			namedTypeMatches(sig.Params().At(1).Type(), reflectedEncodingXML, "StartElement") &&
+			reflectedErrorOnlyResultSignature(sig)
+	},
+	"UnmarshalXML": func(sig *types.Signature) bool {
+		return tupleLen(sig.Params()) == reflectedXMLHookArgs &&
+			reflectedPointerToNamedType(
+				sig.Params().At(0).Type(),
+				reflectedEncodingXML,
+				"Decoder",
+			) &&
+			namedTypeMatches(sig.Params().At(1).Type(), reflectedEncodingXML, "StartElement") &&
+			reflectedErrorOnlyResultSignature(sig)
+	},
+	"MarshalXMLAttr": func(sig *types.Signature) bool {
+		return tupleLen(sig.Params()) == 1 &&
+			namedTypeMatches(sig.Params().At(0).Type(), reflectedEncodingXML, "Name") &&
+			tupleLen(sig.Results()) == 2 &&
+			namedTypeMatches(sig.Results().At(0).Type(), reflectedEncodingXML, "Attr") &&
+			typeIsError(sig.Results().At(1).Type())
+	},
+	"UnmarshalXMLAttr": func(sig *types.Signature) bool {
+		return tupleLen(sig.Params()) == 1 &&
+			namedTypeMatches(sig.Params().At(0).Type(), reflectedEncodingXML, "Attr") &&
+			reflectedErrorOnlyResultSignature(sig)
+	},
 }
 
 type reflectedCodecUse struct {
@@ -391,10 +443,18 @@ func reflectedHookSignatureMatchesName(sig *types.Signature, hookTag string, nam
 
 func reflectedGoccyJSONContextHookSignature(sig *types.Signature, name string) bool {
 	switch name {
-	case "MarshalJSON":
-		return reflectedContextParamBytesErrorSignature(sig)
-	case "UnmarshalJSON":
-		return reflectedContextBytesParamErrorSignature(sig)
+	case reflectedMarshalJSONHook:
+		return tupleLen(sig.Params()) == 1 &&
+			namedTypeMatches(sig.Params().At(0).Type(), reflectedContext, "Context") &&
+			tupleLen(sig.Results()) == 2 &&
+			reflectedExactByteSliceType(sig.Results().At(0).Type()) &&
+			typeIsError(sig.Results().At(1).Type())
+	case reflectedUnmarshalJSONHook:
+		return tupleLen(sig.Params()) == 2 &&
+			namedTypeMatches(sig.Params().At(0).Type(), reflectedContext, "Context") &&
+			reflectedExactByteSliceType(sig.Params().At(1).Type()) &&
+			tupleLen(sig.Results()) == 1 &&
+			typeIsError(sig.Results().At(0).Type())
 	default:
 		return false
 	}
@@ -414,35 +474,6 @@ func reflectedBytesParamErrorSignature(sig *types.Signature) bool {
 		typeIsError(sig.Results().At(0).Type())
 }
 
-func reflectedContextParamBytesErrorSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 1 &&
-		namedTypeMatches(sig.Params().At(0).Type(), reflectedContext, "Context") &&
-		tupleLen(sig.Results()) == 2 &&
-		reflectedExactByteSliceType(sig.Results().At(0).Type()) &&
-		typeIsError(sig.Results().At(1).Type())
-}
-
-func reflectedContextBytesParamErrorSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 2 &&
-		namedTypeMatches(sig.Params().At(0).Type(), reflectedContext, "Context") &&
-		reflectedExactByteSliceType(sig.Params().At(1).Type()) &&
-		tupleLen(sig.Results()) == 1 &&
-		typeIsError(sig.Results().At(0).Type())
-}
-
-func reflectedNoParamValueErrorSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 0 &&
-		tupleLen(sig.Results()) == 2 &&
-		typeIsAny(sig.Results().At(0).Type()) &&
-		typeIsError(sig.Results().At(1).Type())
-}
-
-func reflectedYAMLUnmarshalSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 1 &&
-		reflectedYAMLUnmarshalParamType(sig.Params().At(0).Type()) &&
-		reflectedErrorOnlyResultSignature(sig)
-}
-
 func reflectedYAMLUnmarshalParamType(typ types.Type) bool {
 	if reflectedPointerToNamedType(typ, "gopkg.in/yaml.v3", "Node") ||
 		reflectedPointerToNamedType(typ, "github.com/goccy/go-yaml", "Node") {
@@ -454,34 +485,6 @@ func reflectedYAMLUnmarshalParamType(typ types.Type) bool {
 	return ok &&
 		tupleLen(sig.Params()) == reflectedYAMLHookArgs &&
 		typeIsAny(sig.Params().At(0).Type()) &&
-		reflectedErrorOnlyResultSignature(sig)
-}
-
-func reflectedMarshalXMLSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == reflectedXMLHookArgs &&
-		reflectedPointerToNamedType(sig.Params().At(0).Type(), reflectedEncodingXML, "Encoder") &&
-		namedTypeMatches(sig.Params().At(1).Type(), reflectedEncodingXML, "StartElement") &&
-		reflectedErrorOnlyResultSignature(sig)
-}
-
-func reflectedUnmarshalXMLSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == reflectedXMLHookArgs &&
-		reflectedPointerToNamedType(sig.Params().At(0).Type(), reflectedEncodingXML, "Decoder") &&
-		namedTypeMatches(sig.Params().At(1).Type(), reflectedEncodingXML, "StartElement") &&
-		reflectedErrorOnlyResultSignature(sig)
-}
-
-func reflectedMarshalXMLAttrSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 1 &&
-		namedTypeMatches(sig.Params().At(0).Type(), reflectedEncodingXML, "Name") &&
-		tupleLen(sig.Results()) == 2 &&
-		namedTypeMatches(sig.Results().At(0).Type(), reflectedEncodingXML, "Attr") &&
-		typeIsError(sig.Results().At(1).Type())
-}
-
-func reflectedUnmarshalXMLAttrSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 1 &&
-		namedTypeMatches(sig.Params().At(0).Type(), reflectedEncodingXML, "Attr") &&
 		reflectedErrorOnlyResultSignature(sig)
 }
 

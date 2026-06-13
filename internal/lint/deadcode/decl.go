@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 )
 
 func (graph *deadCodeGraph) addDecl(l *packageLinter, decl ast.Decl, mode deadCodeMode) {
@@ -64,30 +65,63 @@ func deadCodeFuncKind(fn *ast.FuncDecl) string {
 	return "function"
 }
 
+var errorHookParamTypeNames = map[string]string{
+	"Is": "error",
+	"As": "any",
+}
+
 func isErrorHookMethod(fn *types.Func) bool {
 	if fn == nil {
 		return false
 	}
 
 	sig, ok := fn.Type().(*types.Signature)
-	if !ok || sig == nil || sig.Recv() == nil {
+	if !ok {
 		return false
 	}
 
-	if !receiverCanBeError(sig.Recv().Type()) {
+	if sig == nil {
 		return false
 	}
 
-	switch fn.Name() {
-	case "Unwrap":
+	recv := sig.Recv()
+	if recv == nil {
+		return false
+	}
+
+	if !receiverCanBeError(recv.Type()) {
+		return false
+	}
+
+	if fn.Name() == "Unwrap" {
 		return unwrapHookSignature(sig)
-	case "Is":
-		return errorIsHookSignature(sig)
-	case "As":
-		return errorAsHookSignature(sig)
-	default:
+	}
+
+	paramTypeName, ok := errorHookParamTypeNames[fn.Name()]
+	if !ok {
 		return false
 	}
+
+	params := sig.Params()
+	if tupleLen(params) != 1 {
+		return false
+	}
+
+	results := sig.Results()
+	if tupleLen(results) != 1 {
+		return false
+	}
+
+	result, ok := types.Unalias(results.At(0).Type()).Underlying().(*types.Basic)
+	if !ok {
+		return false
+	}
+
+	if result.Kind() != types.Bool {
+		return false
+	}
+
+	return typeIsUniverseType(params.At(0).Type(), paramTypeName)
 }
 
 func receiverCanBeError(receiver types.Type) bool {
@@ -130,20 +164,6 @@ func unwrapHookSignature(sig *types.Signature) bool {
 	return ok && typeIsError(slice.Elem())
 }
 
-func errorIsHookSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 1 &&
-		typeIsError(sig.Params().At(0).Type()) &&
-		tupleLen(sig.Results()) == 1 &&
-		typeIsBool(sig.Results().At(0).Type())
-}
-
-func errorAsHookSignature(sig *types.Signature) bool {
-	return tupleLen(sig.Params()) == 1 &&
-		typeIsAny(sig.Params().At(0).Type()) &&
-		tupleLen(sig.Results()) == 1 &&
-		typeIsBool(sig.Results().At(0).Type())
-}
-
 func tupleLen(tuple *types.Tuple) int {
 	if tuple == nil {
 		return 0
@@ -158,12 +178,6 @@ func typeIsError(typ types.Type) bool {
 
 func typeIsAny(typ types.Type) bool {
 	return typeIsUniverseType(typ, "any")
-}
-
-func typeIsBool(typ types.Type) bool {
-	basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
-
-	return ok && basic.Kind() == types.Bool
 }
 
 func typeIsUniverseType(typ types.Type, name string) bool {
@@ -302,7 +316,7 @@ func (graph *deadCodeGraph) addValueSpec(
 		return
 	}
 
-	sideEffect := tok == token.VAR && valueSpecHasCalls(spec)
+	sideEffect := tok == token.VAR && slices.ContainsFunc(spec.Values, exprHasCalls)
 	rootSpec := false
 
 	for _, name := range spec.Names {

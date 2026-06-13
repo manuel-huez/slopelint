@@ -100,10 +100,10 @@ func Live() {}
 	joined := joinMessages(issues)
 
 	for _, unexpected := range []string{
-		`method "MarshalText"`,
+		wantMethodMarshalText,
 		`method "MarshalBinary"`,
-		`method "MarshalJSON"`,
-		`method "MarshalYAML"`,
+		wantMethodMarshalJSON,
+		wantMethodMarshalYAML,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(
@@ -176,7 +176,7 @@ func SaveGoccy() ([]byte, error) {
 
 	for _, unexpected := range []string{
 		`field "Event.Day"`,
-		`method "MarshalText"`,
+		wantMethodMarshalText,
 	} {
 		if strings.Contains(joined, unexpected) {
 			t.Fatalf(

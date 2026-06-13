@@ -57,7 +57,7 @@ func runVisit(body []byte, visit func([]byte) error) error {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("branch-assigned generic callback decode field reported dead, got:\n%s", joined)
 	}
 
@@ -121,7 +121,7 @@ func runVisit(body []byte, visit func([]byte) error) error {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("switch-assigned generic callback decode field reported dead, got:\n%s", joined)
 	}
 

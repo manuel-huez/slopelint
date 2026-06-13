@@ -6,13 +6,13 @@ import (
 	"go/types"
 )
 
-const optionsOverkillMaxCallsites = 2
+const optionsOverkillMaxUses = 2
 
 func (l *Runner) checkOptionsOverkill() {
-	callCounts := l.productionPackageCallCounts()
+	useCounts := l.productionPackageFuncUseCounts()
 
 	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		obj, ok := l.privateFuncWithFunctionalOptions(fn, callCounts)
+		obj, ok := l.privateFuncWithFunctionalOptions(fn, useCounts)
 		if !ok {
 			return
 		}
@@ -21,9 +21,9 @@ func (l *Runner) checkOptionsOverkill() {
 			fn.Name.Pos(),
 			"api_overkill",
 			fmt.Sprintf(
-				`private API %q uses functional options for %d production callsites; pass config directly`,
+				`private API %q uses functional options for %d production uses; pass config directly`,
 				fn.Name.Name,
-				callCounts[funcObjectKey(obj)],
+				useCounts[funcObjectKey(obj)],
 			),
 		)
 	})
@@ -31,7 +31,7 @@ func (l *Runner) checkOptionsOverkill() {
 
 func (l *Runner) privateFuncWithFunctionalOptions(
 	fn *ast.FuncDecl,
-	callCounts map[string]int,
+	useCounts map[string]int,
 ) (*types.Func, bool) {
 	if !isEligiblePrivateSmellFunc(fn) || !privateConstructorName(fn.Name.Name) {
 		return nil, false
@@ -42,8 +42,8 @@ func (l *Runner) privateFuncWithFunctionalOptions(
 		return nil, false
 	}
 
-	count := callCounts[funcObjectKey(obj)]
-	if count == 0 || count > optionsOverkillMaxCallsites {
+	count := useCounts[funcObjectKey(obj)]
+	if count == 0 || count > optionsOverkillMaxUses {
 		return nil, false
 	}
 

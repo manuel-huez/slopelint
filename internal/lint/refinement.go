@@ -265,7 +265,7 @@ func (l *linter) addNot(st state, sym symbol, value scalar, why evidence) (state
 	out, keys := clonedAliasClosure(st, sym)
 
 	for _, key := range keys {
-		if factHasExactValue(out.facts[key], value) {
+		if out.facts[key].exact != nil && out.facts[key].exact.value == value {
 			return out, false
 		}
 	}
@@ -301,8 +301,4 @@ func clonedAliasClosure(st state, sym symbol) (state, []string) {
 	out := st.clone()
 
 	return out, aliasClosure(out, sym.key)
-}
-
-func factHasExactValue(f fact, value scalar) bool {
-	return f.exact != nil && f.exact.value == value
 }

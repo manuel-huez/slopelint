@@ -105,7 +105,14 @@ func (l *Runner) isValidationPredicate(expr ast.Expr) bool {
 	expr = l.unparen(expr)
 
 	binary, ok := expr.(*ast.BinaryExpr)
-	if !ok || !isValidationCompareOp(binary.Op) {
+	if !ok {
+		return false
+	}
+
+	//nolint:exhaustive // Validation predicates only accept comparison tokens.
+	switch binary.Op {
+	case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+	default:
 		return false
 	}
 
@@ -118,13 +125,4 @@ func (l *Runner) isValidationPredicate(expr ast.Expr) bool {
 	}
 
 	return false
-}
-
-func isValidationCompareOp(op token.Token) bool {
-	return op == token.EQL ||
-		op == token.NEQ ||
-		op == token.LSS ||
-		op == token.LEQ ||
-		op == token.GTR ||
-		op == token.GEQ
 }

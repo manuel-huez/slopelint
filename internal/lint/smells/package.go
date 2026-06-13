@@ -37,11 +37,11 @@ type Package struct {
 }
 
 type Runner struct {
-	pkg            *Package
-	findings       []Finding
-	reported       map[string]struct{}
-	renderCache    map[ast.Node]string
-	callCountsProd map[string]int
+	pkg           *Package
+	findings      []Finding
+	reported      map[string]struct{}
+	renderCache   map[ast.Node]string
+	funcUseCounts map[string]int
 }
 
 // RunDefault runs smell checks enabled by default.

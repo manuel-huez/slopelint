@@ -324,8 +324,8 @@ func typeStrictlyComparable(typ types.Type) bool {
 	case *types.Array:
 		return typeStrictlyComparable(typ.Elem())
 	case *types.Struct:
-		for idx := range typ.NumFields() {
-			if !typeStrictlyComparable(typ.Field(idx).Type()) {
+		for field := range typ.Fields() {
+			if !typeStrictlyComparable(field.Type()) {
 				return false
 			}
 		}
@@ -429,10 +429,6 @@ func (l *Runner) renderStmtList(stmts []ast.Stmt) string {
 	}
 
 	return strings.Join(parts, "\n")
-}
-
-func normalizeCommentText(text string) string {
-	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
 func sameCommentTexts(left, right []string) bool {

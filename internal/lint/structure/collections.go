@@ -464,7 +464,7 @@ func (l *Runner) rangeLoopShape(stmt ast.Stmt) (rangeLoopShape, bool) {
 		return rangeLoopShape{}, false
 	}
 
-	if rangeLoopBodyHasComplexControl(loop.Body.List) {
+	if slices.ContainsFunc(loop.Body.List, rangeLoopStmtHasComplexControl) {
 		return rangeLoopShape{}, false
 	}
 
@@ -497,10 +497,6 @@ func (l *Runner) rangeLoopIdent(expr ast.Expr) (string, types.Object) {
 	}
 
 	return id.Name, obj
-}
-
-func rangeLoopBodyHasComplexControl(stmts []ast.Stmt) bool {
-	return slices.ContainsFunc(stmts, rangeLoopStmtHasComplexControl)
 }
 
 func rangeLoopStmtHasComplexControl(stmt ast.Stmt) bool {

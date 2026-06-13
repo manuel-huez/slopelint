@@ -7,10 +7,6 @@ import (
 	"unicode/utf8"
 )
 
-func normalizeCommentText(text string) string {
-	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-}
-
 func splitIdentifierWords(name string) []string {
 	var words []string
 

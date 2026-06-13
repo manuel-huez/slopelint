@@ -82,16 +82,99 @@ func run() {
 
 	if !strings.Contains(
 		joined,
-		`private helper "setupHelper" has one production callsite and a tiny body; inline or give it a stronger role`,
+		`private helper "setupHelper" has one production use and a tiny body; inline or give it a stronger role`,
 	) {
 		t.Fatalf("expected single-use helper finding, got:\n%s", joined)
 	}
 
 	if !strings.Contains(
 		joined,
-		`private helper "setupHelper" has generic name and one tiny callsite; rename or inline`,
+		`private helper "setupHelper" has generic name and one tiny use; rename or inline`,
 	) {
 		t.Fatalf("expected paired generic-name finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsSingleUsePrivateWrapperWithReturnValue(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func labelWrapper(value string) string {
+	return "scope:" + value
+}
+
+func run(value string) string {
+	return labelWrapper(value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "labelWrapper" has one production use and a tiny body; inline or give it a stronger role`,
+	) {
+		t.Fatalf("expected single-use helper finding for return value, got:\n%s", joined)
+	}
+
+	if !strings.Contains(
+		joined,
+		`private helper "labelWrapper" has generic name and one tiny use; rename or inline`,
+	) {
+		t.Fatalf("expected paired generic-name finding for return value, got:\n%s", joined)
+	}
+}
+
+func TestDetectsSingleUsePrivateHelperReturnValueWithSpecificName(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func prefixedLabel(value string) string {
+	return "scope:" + value
+}
+
+func run(value string) string {
+	return prefixedLabel(value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "prefixedLabel" has one production use and a tiny body; inline or give it a stronger role`,
+	) {
+		t.Fatalf("expected single-use helper finding for specific name, got:\n%s", joined)
+	}
+}
+
+func TestSkipsSingleUsePrivateHelperWithFunctionValueUse(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+var setupHooks = []func(*int){setupHelper}
+
+func setupHelper(value *int) {
+	*value = 1
+	println(*value)
+}
+
+func run() {
+	var value int
+	setupHelper(&value)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `private helper "setupHelper" has one production use`) {
+		t.Fatalf("unexpected single-use helper finding for function-value use, got:\n%s", joined)
 	}
 }
 
@@ -116,7 +199,7 @@ func run(values []int) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `has one production callsite and a tiny body`) {
+	if strings.Contains(joined, `has one production use and a tiny body`) {
 		t.Fatalf("unexpected single-use helper finding for complex body, got:\n%s", joined)
 	}
 }
@@ -184,7 +267,7 @@ func run() int {
 
 	if !strings.Contains(
 		joined,
-		`private API "newThing" uses functional options for 1 production callsites; pass config directly`,
+		`private API "newThing" uses functional options for 1 production uses; pass config directly`,
 	) {
 		t.Fatalf("expected options-overkill finding, got:\n%s", joined)
 	}

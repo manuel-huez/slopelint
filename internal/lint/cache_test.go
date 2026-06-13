@@ -397,7 +397,7 @@ func loadPackagesInDir(t *testing.T, dir string) []*LoadedPackage {
 		}
 	}()
 
-	pkgs, err := LoadPackages([]string{"./..."})
+	pkgs, err := LoadPackages([]string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("load packages in %s: %v", dir, err)
 	}

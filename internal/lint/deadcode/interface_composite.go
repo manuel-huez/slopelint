@@ -119,8 +119,7 @@ func compositeLitFieldType(structType *types.Struct, key ast.Expr) types.Type {
 		return nil
 	}
 
-	for index := range structType.NumFields() {
-		field := structType.Field(index)
+	for field := range structType.Fields() {
 		if field != nil && field.Name() == ident.Name {
 			return field.Type()
 		}

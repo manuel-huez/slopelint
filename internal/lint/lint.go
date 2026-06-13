@@ -1,20 +1,22 @@
 package lint
 
 import (
-	structurecheck "github.com/manuel-huez/slopelint/internal/lint/structure"
-
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
+
+	structurecheck "github.com/manuel-huez/slopelint/internal/lint/structure"
 )
 
 const (
-	boolTrueText  = "true"
-	boolFalseText = "false"
-	zeroIntText   = "0"
-	panicText     = "panic"
-	mainPkgName   = "main"
-	unknownPos    = "unknown position"
+	allPackagesPattern = "./..."
+	boolTrueText       = "true"
+	boolFalseText      = "false"
+	zeroIntText        = "0"
+	panicText          = "panic"
+	mainPkgName        = "main"
+	unknownPos         = "unknown position"
 )
 
 // Options controls linter behavior.
@@ -104,9 +106,7 @@ func cloneReturnKinds(in map[int]returnKind) map[int]returnKind {
 	}
 
 	out := make(map[int]returnKind, len(in))
-	for index, kind := range in {
-		out[index] = kind
-	}
+	maps.Copy(out, in)
 
 	return out
 }

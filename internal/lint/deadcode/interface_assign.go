@@ -199,8 +199,7 @@ func (graph deadCodeGraph) addInterfaceMethodsForType(
 		return
 	}
 
-	for index := range iface.NumMethods() {
-		method := iface.Method(index)
+	for method := range iface.Methods() {
 		if method == nil {
 			continue
 		}
@@ -224,8 +223,7 @@ func typeSatisfiesInterface(l *packageLinter, source types.Type, target types.Ty
 		return false
 	}
 
-	for index := range iface.NumMethods() {
-		method := iface.Method(index)
+	for method := range iface.Methods() {
 		if lookupInterfaceMethodImplementation(l, source, method) == nil {
 			return false
 		}

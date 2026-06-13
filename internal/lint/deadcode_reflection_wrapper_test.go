@@ -51,7 +51,7 @@ func Save() ([]byte, error) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if strings.Contains(joined, `field "Payload.Name"`) {
+	if strings.Contains(joined, wantFieldPayloadName) {
 		t.Fatalf("cyclic local wrapper field reported dead, got:\n%s", joined)
 	}
 }

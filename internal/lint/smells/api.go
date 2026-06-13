@@ -244,16 +244,13 @@ func signatureReturnsValueOKError(sig *types.Signature) bool {
 		isBoolType(results.At(optionalResultTripleOKIndex).Type()) &&
 		isErrorType(results.At(optionalResultTripleErrorIndex).Type())
 }
-func privateFuncOrMethod(fn *ast.FuncDecl) bool {
-	return fn != nil &&
-		fn.Name != nil &&
-		fn.Body != nil &&
-		!ast.IsExported(fn.Name.Name) &&
-		!hasTypeParams(fn.Type)
-}
-
 func (l *Runner) privateFuncObject(fn *ast.FuncDecl) (*types.Func, bool) {
-	if !privateFuncOrMethod(fn) || fn.Name.Name == initFuncName {
+	if fn == nil ||
+		fn.Name == nil ||
+		fn.Body == nil ||
+		ast.IsExported(fn.Name.Name) ||
+		hasTypeParams(fn.Type) ||
+		fn.Name.Name == initFuncName {
 		return nil, false
 	}
 

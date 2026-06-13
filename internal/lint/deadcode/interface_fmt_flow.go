@@ -865,8 +865,8 @@ func (graph deadCodeGraph) fmtStringerConcreteTypesForExpr(
 	typ := reflectedValueType(info, expr)
 	if tuple, ok := typ.(*types.Tuple); ok {
 		out := make([]types.Type, 0, tuple.Len())
-		for index := range tuple.Len() {
-			item := tuple.At(index).Type()
+		for variable := range tuple.Variables() {
+			item := variable.Type()
 			if !typeIsInterface(item) {
 				out = append(out, item)
 			}

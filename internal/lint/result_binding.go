@@ -102,7 +102,7 @@ func (l *linter) applyBoundContracts(st state, contracts []boundContract) []stat
 	return applyContractSequence(
 		st,
 		contracts,
-		dedupeStates,
+		dedupeStateSlice,
 		func(currentState state, contract boundContract) []state {
 			var (
 				next state
@@ -199,10 +199,6 @@ func boundContractKey(contract boundContract) string {
 	return contract.symKey + "|" + contract.value.key() + "|" +
 		strconv.FormatBool(contract.wantEq) + "|" + contract.why.text + "|" +
 		strconv.Itoa(int(contract.why.pos))
-}
-
-func dedupeStates(states []state) []state {
-	return dedupeStateSlice(states)
 }
 
 func instantiateResultBinding(

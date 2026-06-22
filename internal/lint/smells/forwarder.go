@@ -58,8 +58,9 @@ func funcUseExprIsDeclarationOrSelectorName(expr ast.Expr, stack []ast.Node) boo
 }
 
 const (
-	trivialForwarderDirectStmtCount = 1
-	trivialForwarderAssignStmtCount = 2
+	trivialForwarderDirectStmtCount   = 1
+	trivialForwarderAssignStmtCount   = 2
+	trivialForwarderMaxShortBodyLines = 3
 )
 
 func (l *Runner) checkTrivialForwarders() {
@@ -75,7 +76,7 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, useCounts map[string]in
 		return
 	}
 
-	obj, ok := l.trivialForwarderObject(fn, useCounts)
+	obj, ok := l.trivialForwarderObject(fn)
 	if !ok {
 		return
 	}
@@ -89,61 +90,171 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, useCounts map[string]in
 		return
 	}
 
+	useCount := useCounts[funcObjectKey(obj)]
+	reason := " at one production use"
+
+	switch {
+	case useCount == 0:
+		return
+	case useCount > 1:
+		bodyStart := l.pkg.FSet.Position(fn.Body.List[0].Pos()).Line
+		bodyEnd := l.pkg.FSet.Position(fn.Body.List[len(fn.Body.List)-1].End()).Line
+
+		if bodyStart == 0 ||
+			bodyEnd == 0 ||
+			bodyEnd < bodyStart ||
+			bodyEnd-bodyStart+1 > trivialForwarderMaxShortBodyLines {
+			return
+		}
+
+		reason = " in a body of 3 lines or less"
+	}
+
 	l.report(
 		fn.Name.Pos(),
 		"trivial_wrapper",
 		fmt.Sprintf(
-			`private helper %q only forwards to %q at one production use; inline or merge names`,
+			`%s %q only forwards to %q%s; inline or merge names`,
+			trivialForwarderSubject(fn),
 			fn.Name.Name,
 			l.render(call.Fun),
+			reason,
 		),
 	)
 
-	l.reportGenericNameForTrivialForwarder(fn)
+	if !ast.IsExported(fn.Name.Name) {
+		l.reportGenericNameForTrivialForwarder(fn)
+	}
+}
+
+func trivialForwarderSubject(fn *ast.FuncDecl) string {
+	if fn.Recv != nil && ast.IsExported(fn.Name.Name) {
+		return "exported method"
+	}
+
+	return "private helper"
 }
 
 func isEligibleTrivialForwarderDecl(fn *ast.FuncDecl) bool {
-	if fn == nil || fn.Name == nil || fn.Body == nil || fn.Doc != nil || fn.Recv != nil {
+	if fn == nil {
 		return false
 	}
 
-	if ast.IsExported(fn.Name.Name) || hasTypeParams(fn.Type) {
+	if fn.Name == nil {
+		return false
+	}
+
+	if fn.Body == nil {
+		return false
+	}
+
+	if trivialForwarderDeclIsSuppressed(fn) {
 		return false
 	}
 
 	bodyLen := len(fn.Body.List)
+	if bodyLen == trivialForwarderDirectStmtCount {
+		return true
+	}
 
-	return bodyLen == 1 || bodyLen == 2
+	return bodyLen == trivialForwarderAssignStmtCount
+}
+
+func trivialForwarderDeclIsSuppressed(fn *ast.FuncDecl) bool {
+	if fn.Doc != nil {
+		if fn.Recv == nil {
+			return true
+		}
+
+		if !ast.IsExported(fn.Name.Name) {
+			return true
+		}
+	}
+
+	if hasTypeParams(fn.Type) {
+		return true
+	}
+
+	if ast.IsExported(fn.Name.Name) {
+		if fn.Recv == nil {
+			return true
+		}
+	}
+
+	if fn.Recv != nil {
+		if exportedCodecHookMethod(fn.Name.Name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func exportedCodecHookMethod(name string) bool {
+	switch name {
+	case "MarshalJSON", "MarshalText", "MarshalYAML", "MarshalXML", "MarshalXMLAttr",
+		"UnmarshalJSON", "UnmarshalText", "UnmarshalYAML", "UnmarshalXML", "UnmarshalXMLAttr":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasTypeParams(fnType *ast.FuncType) bool {
 	return fnType != nil && fnType.TypeParams != nil && len(fnType.TypeParams.List) != 0
 }
 
-func (l *Runner) trivialForwarderObject(
-	fn *ast.FuncDecl,
-	useCounts map[string]int,
-) (*types.Func, bool) {
+func (l *Runner) trivialForwarderObject(fn *ast.FuncDecl) (*types.Func, bool) {
 	for _, stmt := range fn.Body.List {
-		if l.hasAttachedComment(stmt) {
+		if l.hasAttachedComment(stmt, nil) {
 			return nil, false
 		}
 	}
 
-	if l.hasAttachedComment(fn.Body) {
+	if l.hasAttachedComment(fn.Body, fn.Doc) {
 		return nil, false
 	}
 
-	obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-	if !ok || obj == nil {
-		return nil, false
+	if ast.IsExported(fn.Name.Name) {
+		if l.funcUsesPrivateReceiverMember(fn) {
+			return nil, false
+		}
+
+		obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
+		if !ok || obj == nil {
+			return nil, false
+		}
+
+		return obj, true
 	}
 
-	if useCounts[funcObjectKey(obj)] != 1 {
-		return nil, false
+	return l.privateFuncObject(fn)
+}
+
+func (l *Runner) funcUsesPrivateReceiverMember(fn *ast.FuncDecl) bool {
+	receiver := funcReceiverObject(l.pkg.TypesInfo, fn.Recv)
+	if receiver == nil {
+		return false
 	}
 
-	return obj, true
+	usesPrivate := false
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || !identRefersToObject(l.pkg.TypesInfo, l.unparen(sel.X), receiver) {
+			return true
+		}
+
+		selection := l.pkg.TypesInfo.Selections[sel]
+		if selection != nil && !ast.IsExported(selection.Obj().Name()) {
+			usesPrivate = true
+			return false
+		}
+
+		return true
+	})
+
+	return usesPrivate
 }
 
 func (l *Runner) trivialForwarderBodyCall(
@@ -160,10 +271,10 @@ func (l *Runner) trivialForwarderBodyCall(
 		return nil, false
 	}
 
-	if !forwardedCallMatchesParams(
+	if !forwardedCallMatchesFuncInputs(
 		l.pkg.TypesInfo,
 		call,
-		funcParamObjects(l.pkg.TypesInfo, fn.Type.Params),
+		fn,
 		sig.Variadic(),
 	) {
 		return nil, false
@@ -370,26 +481,60 @@ func funcParamObjects(info *types.Info, fields *ast.FieldList) []*types.Var {
 	return params
 }
 
-func forwardedCallMatchesParams(
+func forwardedCallMatchesFuncInputs(
+	info *types.Info,
+	call *ast.CallExpr,
+	fn *ast.FuncDecl,
+	variadic bool,
+) bool {
+	params := funcParamObjects(info, fn.Type.Params)
+	if forwardedCallMatchesParamRefs(info, call, params, 0, variadic) {
+		return true
+	}
+
+	receiver := funcReceiverObject(info, fn.Recv)
+	if receiver == nil ||
+		!forwardedCallMatchesParamRefs(info, call, params, 1, variadic) {
+		return false
+	}
+
+	return exprForwardsSource(info, call.Args[0], receiver)
+}
+
+func funcReceiverObject(info *types.Info, fields *ast.FieldList) *types.Var {
+	if fields == nil || len(fields.List) != 1 || len(fields.List[0].Names) != 1 {
+		return nil
+	}
+
+	obj, _ := info.ObjectOf(fields.List[0].Names[0]).(*types.Var)
+
+	return obj
+}
+
+func forwardedCallMatchesParamRefs(
 	info *types.Info,
 	call *ast.CallExpr,
 	params []*types.Var,
+	argOffset int,
 	variadic bool,
 ) bool {
 	if call == nil {
 		return false
 	}
 
+	expectedArgs := len(params) + argOffset
 	if variadic {
-		if len(params) == 0 || len(call.Args) != len(params) || call.Ellipsis == token.NoPos {
+		if expectedArgs == 0 ||
+			len(call.Args) != expectedArgs ||
+			call.Ellipsis == token.NoPos {
 			return false
 		}
-	} else if len(call.Args) != len(params) || call.Ellipsis != token.NoPos {
+	} else if len(call.Args) != expectedArgs || call.Ellipsis != token.NoPos {
 		return false
 	}
 
-	for idx, arg := range call.Args {
-		if !exprForwardsParam(info, arg, params[idx]) {
+	for idx, param := range params {
+		if !exprForwardsSource(info, call.Args[idx+argOffset], param) {
 			return false
 		}
 	}
@@ -397,7 +542,7 @@ func forwardedCallMatchesParams(
 	return true
 }
 
-func exprForwardsParam(info *types.Info, expr ast.Expr, obj types.Object) bool {
+func exprForwardsSource(info *types.Info, expr ast.Expr, obj types.Object) bool {
 	if identRefersToObject(info, expr, obj) {
 		return true
 	}

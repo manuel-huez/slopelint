@@ -44,7 +44,8 @@ Structural ceremony:
 
 Package-level smells:
 
-- trivial private wrappers with one production use
+- trivial private function/method wrappers, plus exported method wrappers that
+  do not touch private receiver fields or methods
 - doc comments that only restate private declaration names
 - `IsX` predicates that do not return `bool` or `(bool, error)`
 - redundant `MarshalJSON` methods covered by `MarshalText`

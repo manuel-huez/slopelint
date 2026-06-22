@@ -350,7 +350,7 @@ func use(name string) bool {
 	}
 }
 
-func TestSkipsTrivialForwarderWithMultipleCallsites(t *testing.T) {
+func TestDetectsShortTrivialForwarderWithMultipleCallsites(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -368,8 +368,239 @@ func b(name string) bool { return run(name) }
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
+	if !strings.Contains(
+		joined,
+		`private helper "run" only forwards to "execute" in a body of 3 lines or less; inline or merge names`,
+	) {
+		t.Fatalf(
+			"expected short trivial forwarder finding with multiple callsites, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestSkipsUnusedPrivateTrivialForwarder(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(name string) bool { return name != "" }
+
+func run(name string) bool {
+	return execute(name)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `private helper "run" only forwards to "execute"`) {
+		t.Fatalf("unexpected trivial forwarder finding for unused helper, got:\n%s", joined)
+	}
+}
+
+func TestSkipsLongTrivialForwarderWithMultipleCallsites(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func execute(first string, second string, third string) bool {
+	return first != "" || second != "" || third != ""
+}
+
+func run(first string, second string, third string) bool {
+	return execute(
+		first,
+		second,
+		third,
+	)
+}
+
+func a(name string) bool { return run(name, "", "") }
+func b(name string) bool { return run("", name, "") }
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
 	if strings.Contains(joined, `only forwards to "execute"`) {
-		t.Fatalf("unexpected trivial forwarder finding with multiple callsites, got:\n%s", joined)
+		t.Fatalf(
+			"unexpected long trivial forwarder finding with multiple callsites, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestDetectsPrivateTrivialForwarderMethod(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type runner struct {
+	name string
+}
+
+func execute(name string) bool { return name != "" }
+
+func (r runner) run() bool {
+	return execute(r.name)
+}
+
+func use(r runner) bool { return r.run() }
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "run" only forwards to "execute" at one production use; inline or merge names`,
+	) {
+		t.Fatalf("expected private method trivial forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsExportedTrivialForwarderMethodWithoutPrivateReceiverUse(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Runner struct{}
+
+func execute(name string) bool { return name != "" }
+
+func (r Runner) Run(name string) bool {
+	return execute(name)
+}
+
+func a(r Runner) bool { return r.Run("a") }
+func b(r Runner) bool { return r.Run("b") }
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`exported method "Run" only forwards to "execute" in a body of 3 lines or less; inline or merge names`,
+	) {
+		t.Fatalf("expected exported method trivial forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsDocumentedExportedTrivialForwarderMethod(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Runner struct{}
+
+func execute(name string) bool { return name != "" }
+
+// Run reports whether name can run.
+func (r Runner) Run(name string) bool {
+	return execute(name)
+}
+
+func a(r Runner) bool { return r.Run("a") }
+func b(r Runner) bool { return r.Run("b") }
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`exported method "Run" only forwards to "execute" in a body of 3 lines or less; inline or merge names`,
+	) {
+		t.Fatalf("expected documented exported method trivial forwarder finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsExportedTrivialForwarderMethodWithPrivateReceiverField(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Runner struct {
+	name string
+}
+
+func execute(name string) bool { return name != "" }
+
+func (r Runner) Run() bool {
+	return execute(r.name)
+}
+
+func a(r Runner) bool { return r.Run() }
+func b(r Runner) bool { return r.Run() }
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only forwards to "execute"`) {
+		t.Fatalf("unexpected trivial forwarder finding for exported method, got:\n%s", joined)
+	}
+}
+
+func TestSkipsExportedTrivialForwarderMethodWithPrivateReceiverMethod(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Runner struct {
+	name string
+}
+
+func execute(name string) bool { return name != "" }
+
+func (r Runner) value() string {
+	return r.name
+}
+
+func (r Runner) Run() bool {
+	return execute(r.value())
+}
+
+func a(r Runner) bool { return r.Run() }
+func b(r Runner) bool { return r.Run() }
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `only forwards to "execute"`) {
+		t.Fatalf(
+			"unexpected trivial forwarder finding for exported method using private method, got:\n%s",
+			joined,
+		)
+	}
+}
+
+func TestSkipsExportedCodecHookForwarderMethod(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "encoding/json"
+
+type Payload string
+
+func (p Payload) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(p))
+}
+
+func encode(p Payload) ([]byte, error) {
+	return json.Marshal(p)
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if strings.Contains(joined, `exported method "MarshalJSON" only forwards to "json.Marshal"`) {
+		t.Fatalf("unexpected trivial forwarder finding for codec hook, got:\n%s", joined)
 	}
 }
 

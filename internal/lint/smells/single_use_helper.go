@@ -71,12 +71,12 @@ func (l *Runner) privateHelperOverlapsTrivialForwarder(fn *ast.FuncDecl, obj *ty
 }
 
 func (l *Runner) privateHelperBodyIsTiny(body *ast.BlockStmt) bool {
-	if l.hasAttachedComment(body) {
+	if l.hasAttachedComment(body, nil) {
 		return false
 	}
 
 	for _, stmt := range body.List {
-		if l.hasAttachedComment(stmt) || !privateHelperStmtIsTiny(stmt) {
+		if l.hasAttachedComment(stmt, nil) || !privateHelperStmtIsTiny(stmt) {
 			return false
 		}
 	}

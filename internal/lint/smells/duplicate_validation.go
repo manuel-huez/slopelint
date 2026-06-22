@@ -76,7 +76,7 @@ func (l *Runner) validationLadderForFunc(fn *ast.FuncDecl) (validationLadder, bo
 }
 
 func (l *Runner) validationGuardShape(stmt ast.Stmt) (string, bool) {
-	if l.hasAttachedComment(stmt) {
+	if l.hasAttachedComment(stmt, nil) {
 		return "", false
 	}
 

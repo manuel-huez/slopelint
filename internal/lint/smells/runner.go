@@ -160,7 +160,7 @@ func (l *Runner) fileName(file *ast.File) string {
 	return ""
 }
 
-func (l *Runner) hasAttachedComment(node ast.Node) bool {
+func (l *Runner) hasAttachedComment(node ast.Node, ignored *ast.CommentGroup) bool {
 	if node == nil || l.pkg.FSet == nil {
 		return false
 	}
@@ -175,6 +175,10 @@ func (l *Runner) hasAttachedComment(node ast.Node) bool {
 
 	for _, file := range l.pkg.Files {
 		for _, group := range file.Comments {
+			if group == ignored {
+				continue
+			}
+
 			if l.pkg.FSet.File(group.Pos()) != nodeFile {
 				continue
 			}

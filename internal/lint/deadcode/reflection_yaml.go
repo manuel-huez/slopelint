@@ -240,30 +240,16 @@ func (scan yamlMarshalReturnScan) caseClauses(
 	state yamlMarshalReturnState,
 	body *ast.BlockStmt,
 ) yamlMarshalReturnState {
-	merged := emptyYAMLMarshalReturnState()
-
-	if body == nil {
-		return cloneYAMLMarshalReturnState(state)
-	}
-
-	hasDefault := false
-
-	for _, stmt := range body.List {
-		clause, ok := stmt.(*ast.CaseClause)
-		if !ok {
-			continue
-		}
-
-		hasDefault = hasDefault || len(clause.List) == 0
-		clauseState := scan.block(cloneYAMLMarshalReturnState(state), clause.Body)
-		merged = mergeYAMLMarshalReturnStates(merged, clauseState)
-	}
-
-	if !hasDefault {
-		merged = mergeYAMLMarshalReturnStates(merged, state)
-	}
-
-	return merged
+	return walkCaseClauseStates(
+		state,
+		body,
+		emptyYAMLMarshalReturnState,
+		cloneYAMLMarshalReturnState,
+		mergeYAMLMarshalReturnStates,
+		func(clauseState yamlMarshalReturnState, clause *ast.CaseClause) yamlMarshalReturnState {
+			return scan.block(clauseState, clause.Body)
+		},
+	)
 }
 
 func (scan yamlMarshalReturnScan) forStmt(
@@ -445,27 +431,16 @@ func (scan yamlMarshalReturnScan) appendSliceExprsForState(
 		return nil, false
 	}
 
-	out := make([]ast.Expr, 0, len(call.Args))
-	if len(call.Args) > 0 {
-		if exprs, ok := scan.sliceExprsForState(state, call.Args[0]); ok {
-			out = append(out, exprs...)
-		}
-	}
-
-	for index := 1; index < len(call.Args); index++ {
-		arg := call.Args[index]
-		if call.Ellipsis.IsValid() && index == len(call.Args)-1 {
-			if exprs, ok := scan.sliceExprsForState(state, arg); ok {
-				out = append(out, exprs...)
-			}
-
-			continue
-		}
-
-		out = append(out, scan.exprsForState(state, arg)...)
-	}
-
-	return dedupeYAMLMarshalReturnExprs(out), true
+	return fmtStringerAppendArgValues(
+		call,
+		func(expr ast.Expr) ([]ast.Expr, bool) {
+			return scan.sliceExprsForState(state, expr)
+		},
+		func(expr ast.Expr) ([]ast.Expr, bool) {
+			return scan.exprsForState(state, expr), true
+		},
+		dedupeYAMLMarshalReturnExprs,
+	), true
 }
 
 func yamlMarshalExprsForState(

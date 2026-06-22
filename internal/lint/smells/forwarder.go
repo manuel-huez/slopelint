@@ -123,7 +123,7 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, useCounts map[string]in
 	)
 
 	if !ast.IsExported(fn.Name.Name) {
-		l.reportGenericNameForTrivialForwarder(fn)
+		l.reportGenericNameForHelper(fn, "only forwards")
 	}
 }
 
@@ -220,7 +220,7 @@ func (l *Runner) trivialForwarderObject(fn *ast.FuncDecl) (*types.Func, bool) {
 			return nil, false
 		}
 
-		obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
+		obj, ok := l.funcDeclObject(fn)
 		if !ok || obj == nil {
 			return nil, false
 		}

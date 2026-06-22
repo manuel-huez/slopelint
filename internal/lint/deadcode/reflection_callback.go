@@ -403,7 +403,7 @@ func (graph deadCodeGraph) invokedFuncParamIndexes(
 
 	out := make(map[int]struct{})
 
-	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
+	inspectReflectedCalls(decl.Body, func(call *ast.CallExpr) {
 		graph.collectInvokedFuncParamIndexes(pkg, call, paramIndexes, funcsSeen, out)
 	})
 

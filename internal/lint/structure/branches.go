@@ -53,7 +53,7 @@ func (l *Runner) identicalIfBranches(stmt *ast.IfStmt) bool {
 		return false
 	}
 
-	if !sameCommentTexts(
+	if !sameStrings(
 		l.commentTextsInRange(stmt.Body.Pos(), stmt.Body.End()),
 		l.commentTextsInRange(elseBlock.Pos(), elseBlock.End()),
 	) {
@@ -91,7 +91,7 @@ func (l *Runner) checkIdenticalSwitchBranches(stmt *ast.SwitchStmt) {
 
 		if prior != nil &&
 			shape.key == prior.key &&
-			sameCommentTexts(shape.comments, prior.comments) {
+			sameStrings(shape.comments, prior.comments) {
 			l.report(
 				clause.Case,
 				"control_flow_merge",
@@ -431,7 +431,7 @@ func (l *Runner) renderStmtList(stmts []ast.Stmt) string {
 	return strings.Join(parts, "\n")
 }
 
-func sameCommentTexts(left, right []string) bool {
+func sameStrings(left, right []string) bool {
 	if len(left) != len(right) {
 		return false
 	}

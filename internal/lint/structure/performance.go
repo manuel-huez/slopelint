@@ -411,25 +411,10 @@ func (l *Runner) bodyComparesObjects(
 	left types.Object,
 	right types.Object,
 ) bool {
-	found := false
-
-	ast.Inspect(body, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-
-		switch n := n.(type) {
-		case *ast.FuncLit:
-			return false
-		case *ast.BinaryExpr:
-			found = l.binaryComparesObjects(n, left, right)
-			return !found
-		}
-
-		return true
+	return blockContains(body, func(n ast.Node) bool {
+		binary, ok := n.(*ast.BinaryExpr)
+		return ok && l.binaryComparesObjects(binary, left, right)
 	})
-
-	return found
 }
 
 func (l *Runner) exprComparesObjects(expr ast.Expr, left types.Object, right types.Object) bool {
@@ -493,6 +478,13 @@ func (l *Runner) rangeValueObject(loop *ast.RangeStmt) types.Object {
 }
 
 func blockHasBranch(body *ast.BlockStmt, tok token.Token) bool {
+	return blockContains(body, func(n ast.Node) bool {
+		branch, ok := n.(*ast.BranchStmt)
+		return ok && branch.Tok == tok
+	})
+}
+
+func blockContains(body *ast.BlockStmt, match func(ast.Node) bool) bool {
 	found := false
 
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -503,12 +495,10 @@ func blockHasBranch(body *ast.BlockStmt, tok token.Token) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
 			return false
-		case *ast.BranchStmt:
-			found = n.Tok == tok
+		default:
+			found = match(n)
 			return !found
 		}
-
-		return true
 	})
 
 	return found

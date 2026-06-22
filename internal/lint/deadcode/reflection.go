@@ -112,12 +112,12 @@ func (graph deadCodeGraph) reflectedUses(
 	return out
 }
 
-func inspectReflectedBodyCalls(body *ast.BlockStmt, visit func(*ast.CallExpr)) {
-	if body == nil || visit == nil {
+func inspectReflectedCalls(node ast.Node, visit func(*ast.CallExpr)) {
+	if node == nil || visit == nil {
 		return
 	}
 
-	ast.Inspect(body, func(n ast.Node) bool {
+	ast.Inspect(node, func(n ast.Node) bool {
 		if _, ok := n.(*ast.FuncLit); ok {
 			return false
 		}

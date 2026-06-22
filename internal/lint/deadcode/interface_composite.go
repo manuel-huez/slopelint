@@ -84,36 +84,51 @@ func (graph deadCodeGraph) compositeLitStructInterfaceMethodUses(
 	}
 
 	out := make(map[string]struct{})
+
+	forEachCompositeLitStructField(lit, structType, func(elt ast.Expr, field *types.Var, _ string) {
+		var target types.Type
+		if field != nil {
+			target = field.Type()
+		}
+
+		graph.addInterfaceMethodsForValue(l, out, elt, target)
+	})
+
+	return out
+}
+
+func forEachCompositeLitStructField(
+	lit *ast.CompositeLit,
+	structType *types.Struct,
+	visit func(ast.Expr, *types.Var, string),
+) {
+	if structType == nil {
+		return
+	}
+
 	positionalIndex := 0
 
 	for _, elt := range lit.Elts {
 		if keyValue, ok := elt.(*ast.KeyValueExpr); ok {
-			target := compositeLitFieldType(structType, keyValue.Key)
-			graph.addInterfaceMethodsForValue(l, out, keyValue.Value, target)
+			visit(
+				keyValue.Value,
+				compositeLitField(structType, keyValue.Key),
+				compositeLitFieldName(keyValue.Key),
+			)
 
 			continue
 		}
 
 		if positionalIndex < structType.NumFields() {
-			graph.addInterfaceMethodsForValue(
-				l,
-				out,
-				elt,
-				structType.Field(positionalIndex).Type(),
-			)
+			field := structType.Field(positionalIndex)
+			visit(elt, field, field.Name())
 		}
 
 		positionalIndex++
 	}
-
-	return out
 }
 
-func compositeLitFieldType(structType *types.Struct, key ast.Expr) types.Type {
-	if structType == nil {
-		return nil
-	}
-
+func compositeLitField(structType *types.Struct, key ast.Expr) *types.Var {
 	ident, ok := key.(*ast.Ident)
 	if !ok || ident == nil {
 		return nil
@@ -121,11 +136,20 @@ func compositeLitFieldType(structType *types.Struct, key ast.Expr) types.Type {
 
 	for field := range structType.Fields() {
 		if field != nil && field.Name() == ident.Name {
-			return field.Type()
+			return field
 		}
 	}
 
 	return nil
+}
+
+func compositeLitFieldName(key ast.Expr) string {
+	ident, ok := key.(*ast.Ident)
+	if !ok || ident == nil {
+		return ""
+	}
+
+	return ident.Name
 }
 
 func compositeElementType(typ types.Type) types.Type {

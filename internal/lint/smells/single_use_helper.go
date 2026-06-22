@@ -29,7 +29,7 @@ func (l *Runner) checkSingleUsePrivateHelpers() {
 			),
 		)
 
-		l.reportGenericNameForSingleUseHelper(fn)
+		l.reportGenericNameForHelper(fn, "one tiny use")
 	})
 }
 

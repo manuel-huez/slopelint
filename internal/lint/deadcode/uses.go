@@ -135,24 +135,18 @@ func (graph deadCodeGraph) compositeLitFieldUses(
 	}
 
 	out := make(map[string]struct{})
-	positionalIndex := 0
 
-	for _, elt := range lit.Elts {
-		if keyValue, ok := elt.(*ast.KeyValueExpr); ok {
-			ident, ok := keyValue.Key.(*ast.Ident)
-			if ok && ident != nil {
-				addStructFieldUse(out, named, ident.Name)
+	forEachCompositeLitStructField(
+		lit,
+		structType,
+		func(_ ast.Expr, _ *types.Var, fieldName string) {
+			if fieldName == "" {
+				return
 			}
 
-			continue
-		}
-
-		if positionalIndex < structType.NumFields() {
-			addStructFieldUse(out, named, structType.Field(positionalIndex).Name())
-		}
-
-		positionalIndex++
-	}
+			addStructFieldUse(out, named, fieldName)
+		},
+	)
 
 	return out
 }

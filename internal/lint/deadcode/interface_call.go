@@ -449,6 +449,26 @@ const (
 	fmtStringerDedupeMinLen = 2
 )
 
+func dedupeComparable[T comparable](values []T, minLen int) []T {
+	if len(values) < minLen {
+		return values
+	}
+
+	seen := make(map[T]struct{}, len(values))
+	out := make([]T, 0, len(values))
+
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+
+	return out
+}
+
 func (graph deadCodeGraph) fmtStringerForwardedParamUses(
 	pkg *Package,
 	decl *ast.FuncDecl,
@@ -505,29 +525,12 @@ func (graph deadCodeGraph) fmtStringerParamFlowOps(
 	seen map[fmtStringerParamUse]struct{},
 	out *[]fmtStringerParamUse,
 ) fmtStringerFlowOps[fmtStringerParamState] {
-	return fmtStringerFlowOps[fmtStringerParamState]{
-		expr: func(state fmtStringerParamState, node ast.Node) {
-			graph.collectFmtStringerParamExprUses(info, state, node, funcsSeen, seen, out)
-		},
-		assign: func(state fmtStringerParamState, left []ast.Expr, right []ast.Expr) {
-			graph.updateFmtStringerAssignAliases(info, state, left, right, funcsSeen)
-		},
-		rangeValue: func(state fmtStringerParamState, stmt *ast.RangeStmt) {
-			rangeUses := fmtStringerSliceParamUsesForExpr(info, state.aliases, state.slices, stmt.X)
-			if len(rangeUses) > 0 {
-				setFmtStringerForwardedVarUses(
-					info,
-					state.aliases,
-					state.slices,
-					stmt.Value,
-					rangeUses,
-				)
-			}
-		},
-		empty: emptyFmtStringerParamState,
-		clone: cloneFmtStringerParamState,
-		merge: mergeFmtStringerParamStates,
+	ops := graph.fmtStringerBaseParamFlowOps(info, funcsSeen)
+	ops.expr = func(state fmtStringerParamState, node ast.Node) {
+		graph.collectFmtStringerParamExprUses(info, state, node, funcsSeen, seen, out)
 	}
+
+	return ops
 }
 
 func (graph deadCodeGraph) collectFmtStringerParamExprUses(
@@ -538,20 +541,7 @@ func (graph deadCodeGraph) collectFmtStringerParamExprUses(
 	seen map[fmtStringerParamUse]struct{},
 	out *[]fmtStringerParamUse,
 ) {
-	if node == nil {
-		return
-	}
-
-	ast.Inspect(node, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
-			return false
-		}
-
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
+	inspectReflectedCalls(node, func(call *ast.CallExpr) {
 		appendUniqueFmtStringerParamUses(
 			seen,
 			out,
@@ -563,9 +553,26 @@ func (graph deadCodeGraph) collectFmtStringerParamExprUses(
 				funcsSeen,
 			),
 		)
-
-		return true
 	})
+}
+
+func updateFmtStringerParamRangeValue(
+	info *types.Info,
+	state fmtStringerParamState,
+	stmt *ast.RangeStmt,
+) {
+	rangeUses := fmtStringerSliceParamUsesForExpr(info, state.aliases, state.slices, stmt.X)
+	if len(rangeUses) == 0 {
+		return
+	}
+
+	setFmtStringerForwardedVarUses(
+		info,
+		state.aliases,
+		state.slices,
+		stmt.Value,
+		rangeUses,
+	)
 }
 
 func setFmtStringerForwardedVarUses(
@@ -582,13 +589,6 @@ func setFmtStringerForwardedVarUses(
 
 	aliases[ref] = uses
 	delete(sliceAliases, ref)
-}
-
-func emptyFmtStringerParamState() fmtStringerParamState {
-	return fmtStringerParamState{
-		aliases: make(map[fmtStringerVarRef][]fmtStringerParamUse),
-		slices:  make(map[fmtStringerVarRef][]fmtStringerParamUse),
-	}
 }
 
 func cloneFmtStringerParamState(state fmtStringerParamState) fmtStringerParamState {
@@ -609,23 +609,13 @@ func cloneFmtStringerParamUseMap(
 	return out
 }
 
-func mergeFmtStringerParamStates(
-	first fmtStringerParamState,
-	second fmtStringerParamState,
-) fmtStringerParamState {
-	return fmtStringerParamState{
-		aliases: mergeFmtStringerParamUseMaps(first.aliases, second.aliases),
-		slices:  mergeFmtStringerParamUseMaps(first.slices, second.slices),
-	}
-}
-
 func mergeFmtStringerParamUseMaps(
 	first map[fmtStringerVarRef][]fmtStringerParamUse,
 	second map[fmtStringerVarRef][]fmtStringerParamUse,
 ) map[fmtStringerVarRef][]fmtStringerParamUse {
 	out := cloneFmtStringerParamUseMap(first)
 	for key, uses := range second {
-		out[key] = dedupeFmtStringerParamUses(append(out[key], uses...))
+		out[key] = dedupeComparable(append(out[key], uses...), fmtStringerDedupeMinLen)
 	}
 
 	return out
@@ -809,7 +799,7 @@ func (graph deadCodeGraph) fmtStringerCallerParamUseList(
 		)
 	}
 
-	return dedupeFmtStringerParamUses(out)
+	return dedupeComparable(out, fmtStringerDedupeMinLen)
 }
 
 func (graph deadCodeGraph) fmtStringerForwardedResultUses(
@@ -869,29 +859,39 @@ func (graph deadCodeGraph) fmtStringerResultFlowOps(
 	namedResults []*types.Var,
 	out *fmtStringerResultState,
 ) fmtStringerFlowOps[fmtStringerParamState] {
+	ops := graph.fmtStringerBaseParamFlowOps(info, funcsSeen)
+	ops.expr = func(fmtStringerParamState, ast.Node) {}
+	ops.returns = func(state fmtStringerParamState, stmt *ast.ReturnStmt) {
+		graph.collectFmtStringerResultUses(info, state, stmt, namedResults, out, funcsSeen)
+	}
+
+	return ops
+}
+
+func (graph deadCodeGraph) fmtStringerBaseParamFlowOps(
+	info *types.Info,
+	funcsSeen map[string]struct{},
+) fmtStringerFlowOps[fmtStringerParamState] {
 	return fmtStringerFlowOps[fmtStringerParamState]{
-		expr: func(fmtStringerParamState, ast.Node) {},
 		assign: func(state fmtStringerParamState, left []ast.Expr, right []ast.Expr) {
 			graph.updateFmtStringerAssignAliases(info, state, left, right, funcsSeen)
 		},
 		rangeValue: func(state fmtStringerParamState, stmt *ast.RangeStmt) {
-			rangeUses := fmtStringerSliceParamUsesForExpr(info, state.aliases, state.slices, stmt.X)
-			if len(rangeUses) > 0 {
-				setFmtStringerForwardedVarUses(
-					info,
-					state.aliases,
-					state.slices,
-					stmt.Value,
-					rangeUses,
-				)
+			updateFmtStringerParamRangeValue(info, state, stmt)
+		},
+		empty: func() fmtStringerParamState {
+			return fmtStringerParamState{
+				aliases: make(map[fmtStringerVarRef][]fmtStringerParamUse),
+				slices:  make(map[fmtStringerVarRef][]fmtStringerParamUse),
 			}
 		},
-		returns: func(state fmtStringerParamState, stmt *ast.ReturnStmt) {
-			graph.collectFmtStringerResultUses(info, state, stmt, namedResults, out, funcsSeen)
-		},
-		empty: emptyFmtStringerParamState,
 		clone: cloneFmtStringerParamState,
-		merge: mergeFmtStringerParamStates,
+		merge: func(first fmtStringerParamState, second fmtStringerParamState) fmtStringerParamState {
+			return fmtStringerParamState{
+				aliases: mergeFmtStringerParamUseMaps(first.aliases, second.aliases),
+				slices:  mergeFmtStringerParamUseMaps(first.slices, second.slices),
+			}
+		},
 	}
 }
 
@@ -977,11 +977,17 @@ func emptyFmtStringerResultState() fmtStringerResultState {
 }
 
 func (state fmtStringerResultState) addValueUses(index int, uses []fmtStringerParamUse) {
-	state.values[index] = dedupeFmtStringerParamUses(append(state.values[index], uses...))
+	state.values[index] = dedupeComparable(
+		append(state.values[index], uses...),
+		fmtStringerDedupeMinLen,
+	)
 }
 
 func (state fmtStringerResultState) addSliceUses(index int, uses []fmtStringerParamUse) {
-	state.slices[index] = dedupeFmtStringerParamUses(append(state.slices[index], uses...))
+	state.slices[index] = dedupeComparable(
+		append(state.slices[index], uses...),
+		fmtStringerDedupeMinLen,
+	)
 }
 
 func identExprs(idents []*ast.Ident) []ast.Expr {
@@ -1016,27 +1022,36 @@ func (graph deadCodeGraph) fmtStringerForwardedCallParamUses(
 		)
 	}
 
-	argIndexes := fmtStringerArgIndexes(info, call, fn.Name())
-
-	out := make([]fmtStringerParamUse, 0, len(argIndexes))
-	for argIndex := range argIndexes {
-		if argIndex < 0 || argIndex >= len(call.Args) {
-			continue
-		}
-
-		arg := call.Args[argIndex]
-		if call.Ellipsis.IsValid() && argIndex == len(call.Args)-1 {
+	out := make([]fmtStringerParamUse, 0, len(call.Args))
+	forEachFmtStringerArg(info, call, fn.Name(), func(arg ast.Expr, ellipsis bool) {
+		if ellipsis {
 			uses := fmtStringerSliceParamUsesForExpr(info, aliases, sliceAliases, arg)
 			if len(uses) > 0 {
 				out = append(out, uses...)
-				continue
+				return
 			}
 		}
 
 		out = append(out, fmtStringerParamUsesForExpr(info, aliases, arg)...)
-	}
+	})
 
-	return dedupeFmtStringerParamUses(out)
+	return dedupeComparable(out, fmtStringerDedupeMinLen)
+}
+
+func forEachFmtStringerArg(
+	info *types.Info,
+	call *ast.CallExpr,
+	fnName string,
+	visit func(ast.Expr, bool),
+) {
+	for argIndex := range fmtStringerArgIndexes(info, call, fnName) {
+		if argIndex < 0 || argIndex >= len(call.Args) {
+			continue
+		}
+
+		ellipsis := call.Ellipsis.IsValid() && argIndex == len(call.Args)-1
+		visit(call.Args[argIndex], ellipsis)
+	}
 }
 
 func (graph deadCodeGraph) fmtStringerDelegatedCallParamUses(
@@ -1067,7 +1082,7 @@ func (graph deadCodeGraph) fmtStringerDelegatedCallParamUses(
 		)
 	}
 
-	return dedupeFmtStringerParamUses(out)
+	return dedupeComparable(out, fmtStringerDedupeMinLen)
 }
 
 func fmtStringerCallerParamUses(
@@ -1081,32 +1096,10 @@ func fmtStringerCallerParamUses(
 		return nil
 	}
 
-	if use.slice {
-		return fmtStringerCallerSliceParamUses(info, aliases, sliceAliases, call, use)
-	}
-
-	if !use.variadic {
-		return fmtStringerParamUsesForExpr(info, aliases, call.Args[use.index])
-	}
-
-	if call.Ellipsis.IsValid() && use.index == len(call.Args)-1 {
-		return fmtStringerCallerVariadicSliceUses(
-			info,
-			aliases,
-			sliceAliases,
-			call.Args[use.index],
-		)
-	}
-
-	out := make([]fmtStringerParamUse, 0, len(call.Args)-use.index)
-	for index := use.index; index < len(call.Args); index++ {
-		out = append(out, fmtStringerParamUsesForExpr(info, aliases, call.Args[index])...)
-	}
-
-	return dedupeFmtStringerParamUses(out)
+	return fmtStringerCallerForwardedArgUses(info, aliases, sliceAliases, call, use)
 }
 
-func fmtStringerCallerSliceParamUses(
+func fmtStringerCallerForwardedArgUses(
 	info *types.Info,
 	aliases map[fmtStringerVarRef][]fmtStringerParamUse,
 	sliceAliases map[fmtStringerVarRef][]fmtStringerParamUse,
@@ -1114,6 +1107,10 @@ func fmtStringerCallerSliceParamUses(
 	use fmtStringerParamUse,
 ) []fmtStringerParamUse {
 	if !use.variadic {
+		if !use.slice {
+			return fmtStringerParamUsesForExpr(info, aliases, call.Args[use.index])
+		}
+
 		return fmtStringerCallerVariadicSliceUses(
 			info,
 			aliases,
@@ -1131,12 +1128,7 @@ func fmtStringerCallerSliceParamUses(
 		)
 	}
 
-	out := make([]fmtStringerParamUse, 0, len(call.Args)-use.index)
-	for index := use.index; index < len(call.Args); index++ {
-		out = append(out, fmtStringerParamUsesForExpr(info, aliases, call.Args[index])...)
-	}
-
-	return dedupeFmtStringerParamUses(out)
+	return fmtStringerCallerVariadicArgUses(info, aliases, call, use.index)
 }
 
 func fmtStringerCallerVariadicSliceUses(
@@ -1150,6 +1142,20 @@ func fmtStringerCallerVariadicSliceUses(
 	}
 
 	return fmtStringerParamUsesForExpr(info, aliases, expr)
+}
+
+func fmtStringerCallerVariadicArgUses(
+	info *types.Info,
+	aliases map[fmtStringerVarRef][]fmtStringerParamUse,
+	call *ast.CallExpr,
+	startIndex int,
+) []fmtStringerParamUse {
+	out := make([]fmtStringerParamUse, 0, len(call.Args)-startIndex)
+	for index := startIndex; index < len(call.Args); index++ {
+		out = append(out, fmtStringerParamUsesForExpr(info, aliases, call.Args[index])...)
+	}
+
+	return dedupeComparable(out, fmtStringerDedupeMinLen)
 }
 
 func fmtStringerParamUsesForExpr(
@@ -1199,7 +1205,7 @@ func fmtStringerCompositeParamUses(
 		out = append(out, fmtStringerParamUsesForExpr(info, aliases, flowElementValue(elt))...)
 	}
 
-	return dedupeFmtStringerParamUses(out)
+	return dedupeComparable(out, fmtStringerDedupeMinLen)
 }
 
 func fmtStringerAppendParamUses(
@@ -1212,29 +1218,49 @@ func fmtStringerAppendParamUses(
 		return nil
 	}
 
-	out := make([]fmtStringerParamUse, 0, len(call.Args))
+	return fmtStringerAppendArgValues(
+		call,
+		func(expr ast.Expr) ([]fmtStringerParamUse, bool) {
+			return fmtStringerSliceParamUsesForExpr(info, aliases, sliceAliases, expr), true
+		},
+		func(expr ast.Expr) ([]fmtStringerParamUse, bool) {
+			return fmtStringerParamUsesForExpr(info, aliases, expr), true
+		},
+		func(uses []fmtStringerParamUse) []fmtStringerParamUse {
+			return dedupeComparable(uses, fmtStringerDedupeMinLen)
+		},
+	)
+}
+
+func fmtStringerAppendArgValues[T any](
+	call *ast.CallExpr,
+	sliceValues func(ast.Expr) ([]T, bool),
+	valueValues func(ast.Expr) ([]T, bool),
+	dedupe func([]T) []T,
+) []T {
+	out := make([]T, 0, len(call.Args))
 	if len(call.Args) > 0 {
-		out = append(
-			out,
-			fmtStringerSliceParamUsesForExpr(info, aliases, sliceAliases, call.Args[0])...,
-		)
+		if values, ok := sliceValues(call.Args[0]); ok {
+			out = append(out, values...)
+		}
 	}
 
 	for index := 1; index < len(call.Args); index++ {
 		arg := call.Args[index]
 		if call.Ellipsis.IsValid() && index == len(call.Args)-1 {
-			out = append(
-				out,
-				fmtStringerSliceParamUsesForExpr(info, aliases, sliceAliases, arg)...,
-			)
+			if values, ok := sliceValues(arg); ok {
+				out = append(out, values...)
+			}
 
 			continue
 		}
 
-		out = append(out, fmtStringerParamUsesForExpr(info, aliases, arg)...)
+		if values, ok := valueValues(arg); ok {
+			out = append(out, values...)
+		}
 	}
 
-	return dedupeFmtStringerParamUses(out)
+	return dedupe(out)
 }
 
 func fmtStringerVarForExpr(info *types.Info, expr ast.Expr) (fmtStringerVarRef, bool) {
@@ -1324,26 +1350,6 @@ func fmtStringerAnySliceType(typ types.Type) bool {
 	iface, ok := types.Unalias(slice.Elem()).Underlying().(*types.Interface)
 
 	return ok && iface.NumMethods() == 0
-}
-
-func dedupeFmtStringerParamUses(uses []fmtStringerParamUse) []fmtStringerParamUse {
-	if len(uses) < fmtStringerDedupeMinLen {
-		return uses
-	}
-
-	seen := make(map[fmtStringerParamUse]struct{}, len(uses))
-
-	out := make([]fmtStringerParamUse, 0, len(uses))
-	for _, use := range uses {
-		if _, ok := seen[use]; ok {
-			continue
-		}
-
-		seen[use] = struct{}{}
-		out = append(out, use)
-	}
-
-	return out
 }
 
 func interfaceRequiresStringMethod(iface *types.Interface) bool {

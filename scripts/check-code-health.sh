@@ -80,7 +80,7 @@ run_slopelint() {
 run_jscpd() {
   # Enforce zero production-code clones while ignoring intentionally repetitive
   # test scaffolding and harness setup.
-  npx --yes jscpd internal/ \
+  npx --yes jscpd@5.0.11 internal/ \
     --ignore "**/*_test.go" \
     --threshold 0
 }

@@ -244,6 +244,7 @@ func signatureReturnsValueOKError(sig *types.Signature) bool {
 		isBoolType(results.At(optionalResultTripleOKIndex).Type()) &&
 		isErrorType(results.At(optionalResultTripleErrorIndex).Type())
 }
+
 func (l *Runner) privateFuncObject(fn *ast.FuncDecl) (*types.Func, bool) {
 	if fn == nil ||
 		fn.Name == nil ||
@@ -254,12 +255,17 @@ func (l *Runner) privateFuncObject(fn *ast.FuncDecl) (*types.Func, bool) {
 		return nil, false
 	}
 
-	obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-	if !ok || obj == nil {
+	return l.funcDeclObject(fn)
+}
+
+func (l *Runner) funcDeclObject(fn *ast.FuncDecl) (*types.Func, bool) {
+	if fn == nil || fn.Name == nil {
 		return nil, false
 	}
 
-	return obj, true
+	obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
+
+	return obj, ok && obj != nil
 }
 
 func (l *Runner) isPackageFuncCall(call *ast.CallExpr, pkgPath, name string) bool {

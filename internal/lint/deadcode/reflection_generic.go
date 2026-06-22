@@ -72,7 +72,7 @@ func fallbackGenericDecodeTypeParamDecodes(
 ) []reflectedTypeParamUse {
 	uses, inspected := sourceGenericDecodeTypeParamDecodes(fn, fset)
 	if inspected {
-		return dedupeReflectedTypeParamUses(uses)
+		return dedupeComparable(uses, reflectedDedupeMinLen)
 	}
 
 	return nameFallbackGenericDecodeTypeParamDecodes(fn, count)
@@ -108,7 +108,7 @@ func nameFallbackGenericDecodeTypeParamDecodes(
 		)
 	}
 
-	out = dedupeReflectedTypeParamUses(out)
+	out = dedupeComparable(out, reflectedDedupeMinLen)
 	if len(out) == 0 {
 		return nil
 	}
@@ -132,38 +132,30 @@ func sourceGenericMarshalTypeParamUses(
 	fn *types.Func,
 	fset *token.FileSet,
 ) []reflectedMarshalTypeParamUse {
-	sig, ok := genericFallbackSignature(fn)
-	if !ok {
-		return nil
-	}
-
-	file, decl, ok := sourceFuncFileDecl(fn, fset)
-	if !ok {
-		return nil
-	}
-
-	importCodecs := sourceCodecImportCodecs(
-		file,
+	scan, ok := sourceGenericCodecScanFor(
+		fn,
+		fset,
 		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
 			return codec.marshalFuncs
 		},
 	)
-	paramTypes := sourceFuncParamTypes(sig, decl)
-	indexes := genericTypeParamIndexes(fn)
+	if !ok {
+		return nil
+	}
 
 	out := make([]reflectedMarshalTypeParamUse, 0)
 
-	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
-		codec, argIndex, ok := sourceCodecCall(importCodecs, call)
-		if !ok || argIndex < 0 || argIndex >= len(call.Args) {
+	inspectReflectedCalls(scan.decl.Body, func(call *ast.CallExpr) {
+		codec, arg, ok := scan.callArg(call)
+		if !ok {
 			return
 		}
 
-		if ident, ok := unparenReflectedExpr(call.Args[argIndex]).(*ast.Ident); ok {
+		if ident, ok := unparenReflectedExpr(arg).(*ast.Ident); ok {
 			addReflectedMarshalTypeParamUse(
-				sourceFuncParamTypeAt(paramTypes, decl.Body, ident),
+				sourceFuncParamTypeAt(scan.paramTypes, scan.decl.Body, ident),
 				codec,
-				indexes,
+				scan.indexes,
 				&out,
 			)
 		}
@@ -176,38 +168,73 @@ func sourceGenericDecodeTypeParamDecodes(
 	fn *types.Func,
 	fset *token.FileSet,
 ) ([]reflectedTypeParamUse, bool) {
-	sig, ok := genericFallbackSignature(fn)
-	if !ok {
-		return nil, false
-	}
-
-	file, decl, ok := sourceFuncFileDecl(fn, fset)
-	if !ok {
-		return nil, false
-	}
-
-	importCodecs := sourceCodecImportCodecs(
-		file,
+	scan, ok := sourceGenericCodecScanFor(
+		fn,
+		fset,
 		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
 			return codec.decodeFuncs
 		},
 	)
-	paramTypes := sourceFuncParamTypes(sig, decl)
-	indexes := genericTypeParamIndexes(fn)
+	if !ok {
+		return nil, false
+	}
 
 	out := make([]reflectedTypeParamUse, 0)
 
-	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
-		codec, argIndex, ok := sourceCodecCall(importCodecs, call)
-		if !ok || argIndex < 0 || argIndex >= len(call.Args) {
+	inspectReflectedCalls(scan.decl.Body, func(call *ast.CallExpr) {
+		codec, arg, ok := scan.callArg(call)
+		if !ok {
 			return
 		}
 
-		typ := sourceDecodeTargetType(sig, paramTypes, decl.Body, call.Args[argIndex])
-		collectReflectedDecodeTargetTypeParamDecodes(typ, codec, indexes, &out)
+		typ := sourceDecodeTargetType(scan.sig, scan.paramTypes, scan.decl.Body, arg)
+		collectReflectedDecodeTargetTypeParamDecodes(typ, codec, scan.indexes, &out)
 	})
 
 	return out, true
+}
+
+type sourceGenericCodecScan struct {
+	sig          *types.Signature
+	decl         *ast.FuncDecl
+	importCodecs map[string]sourceCodecImport
+	paramTypes   map[string]types.Type
+	indexes      map[*types.TypeParam]int
+}
+
+func sourceGenericCodecScanFor(
+	fn *types.Func,
+	fset *token.FileSet,
+	funcs func(reflectedPackageCodec) map[string]reflectedCodecFunc,
+) (sourceGenericCodecScan, bool) {
+	sig, ok := genericFallbackSignature(fn)
+	if !ok {
+		return sourceGenericCodecScan{}, false
+	}
+
+	file, decl, ok := sourceFuncFileDecl(fn, fset)
+	if !ok {
+		return sourceGenericCodecScan{}, false
+	}
+
+	return sourceGenericCodecScan{
+		sig:          sig,
+		decl:         decl,
+		importCodecs: sourceCodecImportCodecs(file, funcs),
+		paramTypes:   sourceFuncParamTypes(sig, decl),
+		indexes:      genericTypeParamIndexes(fn),
+	}, true
+}
+
+func (scan sourceGenericCodecScan) callArg(
+	call *ast.CallExpr,
+) (reflectedCodecUse, ast.Expr, bool) {
+	codec, argIndex, ok := sourceCodecCall(scan.importCodecs, call)
+	if !ok || argIndex < 0 || argIndex >= len(call.Args) {
+		return reflectedCodecUse{}, nil, false
+	}
+
+	return codec, call.Args[argIndex], true
 }
 
 func sourceFuncFileDecl(
@@ -945,7 +972,7 @@ func (graph deadCodeGraph) reflectedDecodeTypeParamDecodesSeen(
 		return nil, false
 	}
 
-	return dedupeReflectedTypeParamUses(out), true
+	return dedupeComparable(out, reflectedDedupeMinLen), true
 }
 
 func (graph deadCodeGraph) reflectedMarshalTypeParamUses(
@@ -1016,7 +1043,7 @@ func (graph deadCodeGraph) inspectReflectedFuncTypeParamUsesSeen(
 		defer delete(funcsSeen, key)
 	}
 
-	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
+	inspectReflectedCalls(decl.Body, func(call *ast.CallExpr) {
 		visit(pkg, call, typeParamIndexes, decl.Body)
 	})
 
@@ -1031,7 +1058,7 @@ func (graph deadCodeGraph) collectReflectedDecodeCallTypeParamDecodes(
 	funcsSeen map[string]struct{},
 	out *[]reflectedTypeParamUse,
 ) {
-	if fn, codec, ok := reflectedDecodeTargetCall(pkg, call); ok {
+	if fn, codec, ok := reflectedTargetCall(pkg, call, reflectedDecodeFuncCodec); ok {
 		argIndex := reflectedDecodeTargetArgIndex(fn, call)
 		if argIndex < 0 || argIndex >= len(call.Args) {
 			return
@@ -1129,7 +1156,7 @@ func (graph deadCodeGraph) collectReflectedMarshalCallTypeParamUses(
 	funcsSeen map[string]struct{},
 	out *[]reflectedMarshalTypeParamUse,
 ) {
-	if fn, codec, ok := reflectedMarshalTargetCall(pkg, call); ok {
+	if fn, codec, ok := reflectedTargetCall(pkg, call, reflectedMarshalFuncCodec); ok {
 		argIndex := reflectedMarshalTargetArgIndex(fn, call)
 		if argIndex < 0 || argIndex >= len(call.Args) {
 			return
@@ -1192,28 +1219,6 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamMarshals(
 	}
 }
 
-func dedupeReflectedTypeParamUses(
-	decodes []reflectedTypeParamUse,
-) []reflectedTypeParamUse {
-	if len(decodes) < reflectedDedupeMinLen {
-		return decodes
-	}
-
-	seen := make(map[reflectedTypeParamUse]struct{}, len(decodes))
-
-	out := make([]reflectedTypeParamUse, 0, len(decodes))
-	for _, decode := range decodes {
-		if _, ok := seen[decode]; ok {
-			continue
-		}
-
-		seen[decode] = struct{}{}
-		out = append(out, decode)
-	}
-
-	return out
-}
-
 func addReflectedMarshalTypeParamUse(
 	typ types.Type,
 	codec reflectedCodecUse,
@@ -1264,30 +1269,17 @@ func genericFuncObject(pkg *Package, decl *ast.FuncDecl) *types.Func {
 	return obj
 }
 
-func reflectedDecodeTargetCall(
+func reflectedTargetCall(
 	pkg *Package,
 	call *ast.CallExpr,
+	codecForFunc func(*types.Func) (reflectedCodecUse, bool),
 ) (*types.Func, reflectedCodecUse, bool) {
 	if len(call.Args) == 0 {
 		return nil, reflectedCodecUse{}, false
 	}
 
 	fn := calledFunc(pkg.TypesInfo, call)
-	codec, ok := reflectedDecodeFuncCodec(fn)
-
-	return fn, codec, ok
-}
-
-func reflectedMarshalTargetCall(
-	pkg *Package,
-	call *ast.CallExpr,
-) (*types.Func, reflectedCodecUse, bool) {
-	if len(call.Args) == 0 {
-		return nil, reflectedCodecUse{}, false
-	}
-
-	fn := calledFunc(pkg.TypesInfo, call)
-	codec, ok := reflectedMarshalFuncCodec(fn)
+	codec, ok := codecForFunc(fn)
 
 	return fn, codec, ok
 }

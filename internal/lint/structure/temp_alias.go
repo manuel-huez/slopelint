@@ -231,7 +231,7 @@ func tempAliasNameLooksDisposable(name string, rhs ast.Expr) bool {
 	nameWords := stripAliasNoise(splitIdentifierWords(name))
 	leafWords := stripAliasNoise(splitIdentifierWords(leaf))
 
-	return len(nameWords) != 0 && sameWords(nameWords, leafWords)
+	return len(nameWords) != 0 && sameStrings(nameWords, leafWords)
 }
 
 func tempAliasLeafName(expr ast.Expr) (string, bool) {
@@ -313,20 +313,6 @@ func stripAliasNoise(words []string) []string {
 	}
 
 	return out
-}
-
-func sameWords(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-
-	for idx := range left {
-		if left[idx] != right[idx] {
-			return false
-		}
-	}
-
-	return true
 }
 
 func normalizeRenderedIdentifier(text string, name string, replacement string) string {

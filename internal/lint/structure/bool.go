@@ -191,7 +191,7 @@ func (l *Runner) commentsMatch(
 	secondStart token.Pos,
 	secondEnd token.Pos,
 ) bool {
-	return sameCommentTexts(
+	return sameStrings(
 		l.commentTextsInRange(firstStart, firstEnd),
 		l.commentTextsInRange(secondStart, secondEnd),
 	)

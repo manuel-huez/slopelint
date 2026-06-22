@@ -130,7 +130,7 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 	out := make([]reflectedWrapperArgUse, 0)
 	complete := true
 
-	inspectReflectedBodyCalls(decl.Body, func(call *ast.CallExpr) {
+	inspectReflectedCalls(decl.Body, func(call *ast.CallExpr) {
 		if !graph.collectReflectedWrapperCall(
 			pkg,
 			call,
@@ -143,7 +143,7 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 		}
 	})
 
-	out = dedupeReflectedWrapperArgUses(out)
+	out = dedupeComparable(out, reflectedDedupeMinLen)
 	if complete {
 		graph.cacheReflectedWrapperUses(key, cache, out)
 	}
@@ -247,7 +247,7 @@ func (graph deadCodeGraph) collectDirectReflectedWrapperCall(
 ) bool {
 	switch kind {
 	case reflectedWrapperDecode:
-		codecFn, codec, ok := reflectedDecodeTargetCall(pkg, call)
+		codecFn, codec, ok := reflectedTargetCall(pkg, call, reflectedDecodeFuncCodec)
 		if !ok {
 			return false
 		}
@@ -262,7 +262,7 @@ func (graph deadCodeGraph) collectDirectReflectedWrapperCall(
 			*out = append(*out, reflectedWrapperArgUse{index: index, codec: codec})
 		}
 	case reflectedWrapperMarshal:
-		codecFn, codec, ok := reflectedMarshalTargetCall(pkg, call)
+		codecFn, codec, ok := reflectedTargetCall(pkg, call, reflectedMarshalFuncCodec)
 		if !ok {
 			return false
 		}
@@ -353,26 +353,4 @@ func reflectedWrapperParamIndex(
 	}
 
 	return 0, false
-}
-
-func dedupeReflectedWrapperArgUses(
-	uses []reflectedWrapperArgUse,
-) []reflectedWrapperArgUse {
-	if len(uses) < reflectedDedupeMinLen {
-		return uses
-	}
-
-	seen := make(map[reflectedWrapperArgUse]struct{}, len(uses))
-	out := make([]reflectedWrapperArgUse, 0, len(uses))
-
-	for _, use := range uses {
-		if _, ok := seen[use]; ok {
-			continue
-		}
-
-		seen[use] = struct{}{}
-		out = append(out, use)
-	}
-
-	return out
 }

@@ -485,11 +485,35 @@ func walkFmtStringerFlowCases[T any](
 	body *ast.BlockStmt,
 	ops fmtStringerFlowOps[T],
 ) T {
+	return walkCaseClauseStates(
+		state,
+		body,
+		ops.empty,
+		ops.clone,
+		ops.merge,
+		func(clauseState T, clause *ast.CaseClause) T {
+			for _, expr := range clause.List {
+				ops.expr(clauseState, expr)
+			}
+
+			return walkFmtStringerFlowBlock(clauseState, clause.Body, ops)
+		},
+	)
+}
+
+func walkCaseClauseStates[T any](
+	state T,
+	body *ast.BlockStmt,
+	empty func() T,
+	clone func(T) T,
+	merge func(T, T) T,
+	walkClause func(T, *ast.CaseClause) T,
+) T {
 	if body == nil {
-		return ops.clone(state)
+		return clone(state)
 	}
 
-	merged := ops.empty()
+	merged := empty()
 	hasDefault := false
 
 	for _, stmt := range body.List {
@@ -499,18 +523,12 @@ func walkFmtStringerFlowCases[T any](
 		}
 
 		hasDefault = hasDefault || len(clause.List) == 0
-		clauseState := ops.clone(state)
-
-		for _, expr := range clause.List {
-			ops.expr(clauseState, expr)
-		}
-
-		clauseState = walkFmtStringerFlowBlock(clauseState, clause.Body, ops)
-		merged = ops.merge(merged, clauseState)
+		clauseState := walkClause(clone(state), clause)
+		merged = merge(merged, clauseState)
 	}
 
 	if !hasDefault {
-		merged = ops.merge(merged, state)
+		merged = merge(merged, state)
 	}
 
 	return merged
@@ -702,23 +720,12 @@ func (graph deadCodeGraph) collectFmtStringerConcreteExprUses(
 	state fmtStringerConcreteState,
 	node ast.Node,
 ) {
-	if node == nil || out == nil {
+	if out == nil {
 		return
 	}
 
-	ast.Inspect(node, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
-			return false
-		}
-
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
+	inspectReflectedCalls(node, func(call *ast.CallExpr) {
 		graph.addFmtStringerConcreteCallUses(l, out, state, call)
-
-		return true
 	})
 }
 
@@ -739,24 +746,19 @@ func (graph deadCodeGraph) addFmtStringerConcreteCallUses(
 		return
 	}
 
-	for argIndex := range fmtStringerArgIndexes(l.pkg.TypesInfo, call, fn.Name()) {
-		if argIndex < 0 || argIndex >= len(call.Args) {
-			continue
-		}
-
-		arg := call.Args[argIndex]
-		if call.Ellipsis.IsValid() && argIndex == len(call.Args)-1 {
+	forEachFmtStringerArg(l.pkg.TypesInfo, call, fn.Name(), func(arg ast.Expr, ellipsis bool) {
+		if ellipsis {
 			for _, typ := range graph.fmtStringerConcreteSliceTypesForExpr(l.pkg.TypesInfo, state, arg) {
 				graph.addStringMethodsForType(l, out, typ)
 			}
 
-			continue
+			return
 		}
 
 		for _, typ := range graph.fmtStringerConcreteTypesForExpr(l.pkg.TypesInfo, state, arg) {
 			graph.addStringMethodsForType(l, out, typ)
 		}
-	}
+	})
 }
 
 func (graph deadCodeGraph) addFmtStringerConcreteForwardedCallUses(
@@ -799,52 +801,51 @@ func (graph deadCodeGraph) fmtStringerConcreteTypesForForwardedArg(
 		return nil
 	}
 
-	if use.slice {
-		return graph.fmtStringerConcreteSliceTypesForForwardedArg(info, state, call, use)
-	}
-
-	if !use.variadic {
-		return graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[use.index])
-	}
-
-	if call.Ellipsis.IsValid() && use.index == len(call.Args)-1 {
-		types := graph.fmtStringerConcreteSliceTypesForExpr(info, state, call.Args[use.index])
-		if len(types) > 0 {
-			return types
-		}
-
-		return graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[use.index])
-	}
-
-	out := make([]types.Type, 0, len(call.Args)-use.index)
-	for index := use.index; index < len(call.Args); index++ {
-		out = append(out, graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[index])...)
-	}
-
-	return dedupeFmtStringerConcreteTypes(out)
+	return graph.fmtStringerConcreteForwardedArgTypes(info, state, call, use)
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteSliceTypesForForwardedArg(
+func (graph deadCodeGraph) fmtStringerConcreteForwardedArgTypes(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	call *ast.CallExpr,
 	use fmtStringerParamUse,
 ) []types.Type {
 	if !use.variadic {
+		if !use.slice {
+			return graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[use.index])
+		}
+
 		return graph.fmtStringerConcreteSliceTypesForExpr(info, state, call.Args[use.index])
 	}
 
 	if call.Ellipsis.IsValid() && use.index == len(call.Args)-1 {
-		types := graph.fmtStringerConcreteSliceTypesForExpr(info, state, call.Args[use.index])
-		if len(types) > 0 {
-			return types
-		}
-
-		return graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[use.index])
+		return graph.fmtStringerConcreteVariadicSliceTypes(info, state, call.Args[use.index])
 	}
 
-	out := make([]types.Type, 0, len(call.Args)-use.index)
-	for index := use.index; index < len(call.Args); index++ {
+	return graph.fmtStringerConcreteVariadicArgTypes(info, state, call, use.index)
+}
+
+func (graph deadCodeGraph) fmtStringerConcreteVariadicSliceTypes(
+	info *types.Info,
+	state fmtStringerConcreteState,
+	expr ast.Expr,
+) []types.Type {
+	types := graph.fmtStringerConcreteSliceTypesForExpr(info, state, expr)
+	if len(types) > 0 {
+		return types
+	}
+
+	return graph.fmtStringerConcreteTypesForExpr(info, state, expr)
+}
+
+func (graph deadCodeGraph) fmtStringerConcreteVariadicArgTypes(
+	info *types.Info,
+	state fmtStringerConcreteState,
+	call *ast.CallExpr,
+	startIndex int,
+) []types.Type {
+	out := make([]types.Type, 0, len(call.Args)-startIndex)
+	for index := startIndex; index < len(call.Args); index++ {
 		out = append(out, graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[index])...)
 	}
 
@@ -1043,23 +1044,16 @@ func (graph deadCodeGraph) fmtStringerConcreteAppendTypes(
 		return nil
 	}
 
-	out := make([]types.Type, 0, len(call.Args))
-	if len(call.Args) > 0 {
-		out = append(out, graph.fmtStringerConcreteSliceTypesForExpr(info, state, call.Args[0])...)
-	}
-
-	for index := 1; index < len(call.Args); index++ {
-		arg := call.Args[index]
-		if call.Ellipsis.IsValid() && index == len(call.Args)-1 {
-			out = append(out, graph.fmtStringerConcreteSliceTypesForExpr(info, state, arg)...)
-
-			continue
-		}
-
-		out = append(out, graph.fmtStringerConcreteTypesForExpr(info, state, arg)...)
-	}
-
-	return dedupeFmtStringerConcreteTypes(out)
+	return fmtStringerAppendArgValues(
+		call,
+		func(expr ast.Expr) ([]types.Type, bool) {
+			return graph.fmtStringerConcreteSliceTypesForExpr(info, state, expr), true
+		},
+		func(expr ast.Expr) ([]types.Type, bool) {
+			return graph.fmtStringerConcreteTypesForExpr(info, state, expr), true
+		},
+		dedupeFmtStringerConcreteTypes,
+	)
 }
 
 func cloneFmtStringerConcreteState(state fmtStringerConcreteState) fmtStringerConcreteState {

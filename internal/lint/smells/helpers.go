@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-func (l *Runner) reportGenericNameForTrivialForwarder(fn *ast.FuncDecl) {
+func (l *Runner) reportGenericNameForHelper(fn *ast.FuncDecl, reason string) {
 	if fn == nil || fn.Name == nil || !genericPrivateName(fn.Name.Name) {
 		return
 	}
@@ -15,23 +15,9 @@ func (l *Runner) reportGenericNameForTrivialForwarder(fn *ast.FuncDecl) {
 		fn.Name.Pos(),
 		"generic_naming",
 		fmt.Sprintf(
-			`private helper %q has generic name and only forwards; rename or inline`,
+			`private helper %q has generic name and %s; rename or inline`,
 			fn.Name.Name,
-		),
-	)
-}
-
-func (l *Runner) reportGenericNameForSingleUseHelper(fn *ast.FuncDecl) {
-	if fn == nil || fn.Name == nil || !genericPrivateName(fn.Name.Name) {
-		return
-	}
-
-	l.report(
-		fn.Name.Pos(),
-		"generic_naming",
-		fmt.Sprintf(
-			`private helper %q has generic name and one tiny use; rename or inline`,
-			fn.Name.Name,
+			reason,
 		),
 	)
 }

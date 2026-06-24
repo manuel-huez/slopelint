@@ -39,7 +39,6 @@ func isEligiblePrivateSmellFunc(fn *ast.FuncDecl) bool {
 	return fn != nil &&
 		fn.Name != nil &&
 		fn.Body != nil &&
-		fn.Doc == nil &&
 		fn.Recv == nil &&
 		!ast.IsExported(fn.Name.Name) &&
 		!hasTypeParams(fn.Type)

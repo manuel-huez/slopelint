@@ -58,7 +58,7 @@ func (l *Runner) isSingleUsePrivateHelper(
 		return false
 	}
 
-	return l.privateHelperBodyIsTiny(fn.Body)
+	return l.privateHelperBodyIsTiny(fn)
 }
 
 func (l *Runner) privateHelperOverlapsTrivialForwarder(fn *ast.FuncDecl, obj *types.Func) bool {
@@ -70,13 +70,13 @@ func (l *Runner) privateHelperOverlapsTrivialForwarder(fn *ast.FuncDecl, obj *ty
 	return l.validForwardTarget(obj, call)
 }
 
-func (l *Runner) privateHelperBodyIsTiny(body *ast.BlockStmt) bool {
-	if l.hasAttachedComment(body, nil) {
+func (l *Runner) privateHelperBodyIsTiny(fn *ast.FuncDecl) bool {
+	if l.hasAttachedComment(fn.Body, fn.Doc) {
 		return false
 	}
 
-	for _, stmt := range body.List {
-		if l.hasAttachedComment(stmt, nil) || !privateHelperStmtIsTiny(stmt) {
+	for _, stmt := range fn.Body.List {
+		if l.hasAttachedComment(stmt, fn.Doc) || !privateHelperStmtIsTiny(stmt) {
 			return false
 		}
 	}

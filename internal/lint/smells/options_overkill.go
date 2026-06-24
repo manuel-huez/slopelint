@@ -33,7 +33,7 @@ func (l *Runner) privateFuncWithFunctionalOptions(
 	fn *ast.FuncDecl,
 	useCounts map[string]int,
 ) (*types.Func, bool) {
-	if !isEligiblePrivateSmellFunc(fn) || !privateConstructorName(fn.Name.Name) {
+	if !isEligiblePrivateSmellFunc(fn) || fn.Doc != nil || !privateConstructorName(fn.Name.Name) {
 		return nil, false
 	}
 

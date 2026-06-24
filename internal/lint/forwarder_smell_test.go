@@ -38,6 +38,7 @@ func TestDetectsTrivialForwarder(t *testing.T) {
 
 func execute(name string) bool { return name != "" }
 
+// run keeps call-site naming visible.
 func run(name string) bool {
 	return execute(name)
 }

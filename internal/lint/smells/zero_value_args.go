@@ -63,7 +63,7 @@ func (l *Runner) zeroValueArgCandidateFuncs() map[string]zeroValueArgFunc {
 	out := make(map[string]zeroValueArgFunc)
 
 	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if !isEligiblePrivateSmellFunc(fn) || fn.Name.Name == initFuncName {
+		if !isEligiblePrivateSmellFunc(fn) || fn.Doc != nil || fn.Name.Name == initFuncName {
 			return
 		}
 

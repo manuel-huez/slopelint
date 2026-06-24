@@ -161,16 +161,6 @@ func isEligibleTrivialForwarderDecl(fn *ast.FuncDecl) bool {
 }
 
 func trivialForwarderDeclIsSuppressed(fn *ast.FuncDecl) bool {
-	if fn.Doc != nil {
-		if fn.Recv == nil {
-			return true
-		}
-
-		if !ast.IsExported(fn.Name.Name) {
-			return true
-		}
-	}
-
 	if hasTypeParams(fn.Type) {
 		return true
 	}

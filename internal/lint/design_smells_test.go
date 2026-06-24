@@ -152,6 +152,36 @@ func run(value string) string {
 	}
 }
 
+func TestDetectsDocCommentedSingleUsePrivateHelper(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+// Date math stays named so parser assumptions remain visible.
+func daysBetween(start int, end int) int {
+	return end - start
+}
+
+func bucket(start int, end int) string {
+	days := daysBetween(start, end)
+	if days < 7 {
+		return "week"
+	}
+	return "long"
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	if !strings.Contains(
+		joined,
+		`private helper "daysBetween" has one production use and a tiny body; inline or give it a stronger role`,
+	) {
+		t.Fatalf("expected single-use helper finding despite doc comment, got:\n%s", joined)
+	}
+}
+
 func TestSkipsSingleUsePrivateHelperWithFunctionValueUse(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")

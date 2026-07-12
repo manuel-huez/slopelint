@@ -167,12 +167,10 @@ func (l *linter) invalidateRangeLoopTargets(out *state, stmt *ast.RangeStmt) {
 	}
 }
 
-//nolint:cyclop,gocognit // Side-effect invalidation must branch by call shape and argument semantics.
 func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
 	return l.invalidateForCallOneSeen(st, call, make(map[*ast.FuncLit]struct{}))
 }
 
-//nolint:cyclop,gocognit // Side-effect invalidation must branch by call shape and argument semantics.
 func (l *linter) invalidateForCallOneSeen(
 	st state,
 	call *ast.CallExpr,
@@ -183,16 +181,6 @@ func (l *linter) invalidateForCallOneSeen(
 	}
 
 	out := st.clone()
-	addFull := func(expr ast.Expr) {
-		for root := range l.rootsInExpr(expr) {
-			l.invalidatePrefix(&out, root)
-		}
-	}
-	addDescendants := func(expr ast.Expr) {
-		for root := range l.rootsInExpr(expr) {
-			l.invalidateDescendants(&out, root)
-		}
-	}
 
 	if lit, ok := l.unparen(call.Fun).(*ast.FuncLit); ok {
 		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
@@ -200,51 +188,9 @@ func (l *linter) invalidateForCallOneSeen(
 		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
 	}
 
-	if sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr); ok {
-		if s := l.pkg.TypesInfo.Selections[sel]; s != nil {
-			if s.Kind() == types.MethodVal && isPointerLike(s.Recv()) {
-				addDescendants(sel.X)
-			}
-		}
-	}
-
-	for _, arg := range call.Args {
-		if lit, ok := l.unparen(arg).(*ast.FuncLit); ok {
-			out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
-			continue
-		}
-
-		if lit, ok := l.localFuncLitForExpr(arg); ok {
-			out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
-			continue
-		}
-
-		if u, ok := l.unparen(arg).(*ast.UnaryExpr); ok && u.Op == token.AND {
-			addFull(u.X)
-			continue
-		}
-
-		tv, ok := l.pkg.TypesInfo.Types[arg]
-		if !ok {
-			continue
-		}
-
-		if isPointerLike(tv.Type) {
-			addDescendants(arg)
-		}
-	}
-
-	// Handle mutating built-ins with simple heuristics.
-	if id, ok := l.unparen(call.Fun).(*ast.Ident); ok {
-		if obj, ok := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin); ok {
-			switch obj.Name() {
-			case "copy", "clear", "delete", "append", "close":
-				for _, arg := range call.Args {
-					addDescendants(arg)
-				}
-			}
-		}
-	}
+	l.invalidateCallReceiver(&out, call.Fun)
+	out = l.invalidateCallArguments(out, call.Args, seen)
+	l.invalidateMutatingBuiltinArgs(&out, call)
 
 	summary := l.summaryForCall(call)
 
@@ -254,6 +200,104 @@ func (l *linter) invalidateForCallOneSeen(
 	}
 
 	return nextStates[0]
+}
+
+func (l *linter) invalidateCallReceiver(out *state, fun ast.Expr) {
+	sel, ok := l.unparen(fun).(*ast.SelectorExpr)
+	if !ok {
+		return
+	}
+
+	selection := l.pkg.TypesInfo.Selections[sel]
+	if selection == nil || selection.Kind() != types.MethodVal || !isPointerLike(selection.Recv()) {
+		return
+	}
+
+	l.forEachExprRoot(sel.X, func(root string) {
+		l.invalidateDescendants(out, root)
+	})
+}
+
+func (l *linter) invalidateCallArguments(
+	out state,
+	args []ast.Expr,
+	seen map[*ast.FuncLit]struct{},
+) state {
+	for _, arg := range args {
+		out = l.invalidateForFuncLitsInExprSeen(out, arg, seen)
+
+		if lit, ok := l.localFuncLitForExpr(arg); ok {
+			out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
+			continue
+		}
+
+		if address, ok := l.unparen(arg).(*ast.UnaryExpr); ok && address.Op == token.AND {
+			l.forEachExprRoot(address.X, func(root string) {
+				l.invalidatePrefix(&out, root)
+			})
+
+			continue
+		}
+
+		tv, ok := l.pkg.TypesInfo.Types[arg]
+		if !ok || !isPointerLike(tv.Type) {
+			continue
+		}
+
+		l.forEachExprRoot(arg, func(root string) {
+			l.invalidateDescendants(&out, root)
+		})
+	}
+
+	return out
+}
+
+func (l *linter) invalidateMutatingBuiltinArgs(out *state, call *ast.CallExpr) {
+	id, ok := l.unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return
+	}
+
+	builtin, ok := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin)
+	if !ok {
+		return
+	}
+
+	switch builtin.Name() {
+	case "copy", "clear", "delete", "append", "close":
+		for _, arg := range call.Args {
+			l.forEachExprRoot(arg, func(root string) {
+				l.invalidateDescendants(out, root)
+			})
+		}
+	}
+}
+
+func (l *linter) forEachExprRoot(expr ast.Expr, visit func(string)) {
+	for root := range l.rootsInExpr(expr) {
+		visit(root)
+	}
+}
+
+func (l *linter) invalidateForFuncLitsInExprSeen(
+	st state,
+	expr ast.Expr,
+	seen map[*ast.FuncLit]struct{},
+) state {
+	out := st
+
+	ast.Inspect(expr, func(node ast.Node) bool {
+		lit, ok := node.(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+
+		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
+
+		return false
+	})
+
+	return out
 }
 
 func (l *linter) rootsInExpr(expr ast.Expr) map[string]struct{} {

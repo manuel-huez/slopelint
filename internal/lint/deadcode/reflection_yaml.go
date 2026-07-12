@@ -6,7 +6,6 @@ import (
 )
 
 func (graph deadCodeGraph) addReflectedYAMLMarshalReturnUses(
-	l *packageLinter,
 	out map[string]struct{},
 	hook *types.Func,
 	typ types.Type,

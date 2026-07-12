@@ -7,8 +7,7 @@ import (
 )
 
 func TestContractCommentsEstablishFactsAfterCall(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -22,6 +21,7 @@ func f(req *Req) {
 	if req == nil { println("bad") }
 	if req.Name == "" { println("bad") }
 }
+
 `)
 
 	issues := lintInDir(t, tmp)
@@ -36,9 +36,23 @@ func f(req *Req) {
 	}
 }
 
+func TestReportsMalformedContractComments(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+// check validates value.
+//slopelint:ensures missing != nil
+func check(value *int) {}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(joined, `invalid slopelint:ensures contract`) {
+		t.Fatalf("expected malformed contract diagnostic, got:\n%s", joined)
+	}
+}
+
 func TestInfersGuardHelperFactsAcrossCallBoundary(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -68,8 +82,7 @@ func f(req *Req) {
 }
 
 func TestInfersPredicateFactsAcrossCallBoundary(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -100,8 +113,7 @@ func f(req *Req) {
 }
 
 func TestInfersPredicateFactsAcrossMultipleCalls(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -136,8 +148,7 @@ func f(req *Req) {
 }
 
 func TestPropagatesPredicateFactsViaBoolVariable(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -169,8 +180,7 @@ func f(req *Req) {
 }
 
 func TestPropagatesPredicateFactsViaCopiedBoolVariable(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -203,8 +213,7 @@ func f(req *Req) {
 }
 
 func TestPropagatesNilFactsViaErrorVariable(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "errors"
@@ -238,8 +247,7 @@ func f(req *Req) {
 }
 
 func TestInfersFactsAcrossPackages(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "guard", "guard.go"), `package guard
 
 import "errors"
@@ -286,5 +294,77 @@ func g(req *guard.Req) {
 
 	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
 		t.Fatalf("expected cross-package field check, got:\n%s", joined)
+	}
+}
+
+func TestSkipsInferredFactsWhenDeferMutatesParameter(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type req struct{ name string }
+
+func valid(value *req) (ok bool) {
+	if value == nil || value.name == "" { return false }
+	defer func() { value.name = "" }()
+	return true
+}
+
+func use(value *req) {
+	if !valid(value) { return }
+	if value.name == "" { println("reachable") }
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `condition "value.name == \"\"" is always false`) {
+		t.Fatalf("unexpected deferred-mutation summary finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsExpandedVariadicParameterFacts(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func nonempty(values ...[]int) bool { return values != nil }
+
+func use(value []int) {
+	if !nonempty(value) { return }
+	if value == nil { println("reachable") }
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `condition "value == nil" is always false`) {
+		t.Fatalf("unexpected expanded-variadic summary finding, got:\n%s", joined)
+	}
+}
+
+func TestDeclarationCallContradictionDropsPath(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func require(value *int) int {
+	if value == nil {
+		panic("nil")
+	}
+	return *value
+}
+
+func run(value *int) {
+	if value != nil {
+		return
+	}
+
+	result := require(value)
+	_ = result
+	if value == nil {
+		println("unreachable")
+	}
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `condition "value == nil" is always true`) {
+		t.Fatalf("impossible path survived declaration call:\n%s", joined)
 	}
 }

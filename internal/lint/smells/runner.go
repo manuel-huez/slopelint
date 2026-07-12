@@ -111,6 +111,21 @@ func (l *Runner) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
 	return obj, funcObjectKey(obj), true
 }
 
+func (l *Runner) isBuiltinCall(call *ast.CallExpr, name string) bool {
+	if call == nil {
+		return false
+	}
+
+	ident, ok := l.unparen(call.Fun).(*ast.Ident)
+	if !ok || ident.Name != name {
+		return false
+	}
+
+	builtin, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Builtin)
+
+	return ok && builtin != nil && builtin.Name() == name
+}
+
 func (l *Runner) funcObject(expr ast.Expr) *types.Func {
 	switch expr := expr.(type) {
 	case *ast.Ident:
@@ -210,4 +225,27 @@ func (l *Runner) positionText(pos token.Pos) string {
 	}
 
 	return fmt.Sprintf("%s:%d", position.Filename, position.Line)
+}
+
+func inspectNodesBetween(
+	root ast.Node,
+	after token.Pos,
+	before token.Pos,
+	visit func(ast.Node) bool,
+) {
+	ast.Inspect(root, func(node ast.Node) bool {
+		if node == nil {
+			return false
+		}
+
+		if node.End() <= after || node.Pos() >= before {
+			return false
+		}
+
+		if node.Pos() <= after {
+			return true
+		}
+
+		return visit(node)
+	})
 }

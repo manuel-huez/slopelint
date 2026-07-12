@@ -154,7 +154,6 @@ func (l *linter) execIncDecStmt(stmt *ast.IncDecStmt, states []state) []state {
 	return l.normalizeStates(states)
 }
 
-//nolint:cyclop,gocognit // Var declaration handling needs explicit step-wise flow for precision.
 func (l *linter) execDeclStmt(stmt *ast.DeclStmt, states []state) []state {
 	gen, ok := stmt.Decl.(*ast.GenDecl)
 	if !ok || gen.Tok != token.VAR {
@@ -164,6 +163,7 @@ func (l *linter) execDeclStmt(stmt *ast.DeclStmt, states []state) []state {
 	out := make([]state, 0, len(states))
 	for _, st0 := range states {
 		st := st0.clone()
+		reachable := true
 
 		for _, spec := range gen.Specs {
 			vs, ok := spec.(*ast.ValueSpec)
@@ -171,54 +171,68 @@ func (l *linter) execDeclStmt(stmt *ast.DeclStmt, states []state) []state {
 				continue
 			}
 
-			for _, value := range vs.Values {
-				st = l.invalidateForExprSideEffectsOne(st, value)
-			}
-
-			if call, ok := l.singleCall(vs.Values); ok {
-				next, ok := l.applyCallEffects(st, call)
-				if !ok {
-					continue
-				}
-
-				st = next
-				l.bindCallResultsToIdents(&st, call, vs.Names)
-			}
-
-			for idx, name := range vs.Names {
-				if name.Name == "_" {
-					continue
-				}
-
-				sym, ok := l.symbolOf(name)
-				if !ok {
-					continue
-				}
-
-				l.invalidatePrefix(&st, sym.key)
-
-				if len(vs.Values) == len(vs.Names) {
-					st = l.assignValue(st, sym, vs.Values[idx], st0)
-					continue
-				}
-
-				if zero, ok := zeroScalarOfType(sym.typ); ok {
-					if next, ok := l.setExact(
-						st,
-						sym,
-						zero,
-						evidence{pos: name.Pos(), text: l.relationText(sym, "==", zero)},
-					); ok {
-						st = next
-					}
-				}
+			st, reachable = l.execValueSpec(st, st0, vs)
+			if !reachable {
+				break
 			}
 		}
 
-		out = append(out, st)
+		if reachable {
+			out = append(out, st)
+		}
 	}
 
 	return l.normalizeStates(out)
+}
+
+func (l *linter) execValueSpec(st state, source state, spec *ast.ValueSpec) (state, bool) {
+	for _, value := range spec.Values {
+		st = l.invalidateForExprSideEffectsOne(st, value)
+	}
+
+	if call, ok := l.singleCall(spec.Values); ok {
+		next, ok := l.applyCallEffects(st, call)
+		if !ok {
+			return state{}, false
+		}
+
+		st = next
+		l.bindCallResultsToIdents(&st, call, spec.Names)
+	}
+
+	for index, name := range spec.Names {
+		if name.Name == "_" {
+			continue
+		}
+
+		sym, ok := l.symbolOf(name)
+		if !ok {
+			continue
+		}
+
+		l.invalidatePrefix(&st, sym.key)
+
+		if len(spec.Values) == len(spec.Names) {
+			st = l.assignValue(st, sym, spec.Values[index], source)
+			continue
+		}
+
+		zero, ok := zeroScalarOfType(sym.typ)
+		if !ok {
+			continue
+		}
+
+		if next, ok := l.setExact(
+			st,
+			sym,
+			zero,
+			evidence{pos: name.Pos(), text: l.relationText(sym, "==", zero)},
+		); ok {
+			st = next
+		}
+	}
+
+	return st, true
 }
 
 func (l *linter) singleCall(exprs []ast.Expr) (*ast.CallExpr, bool) {
@@ -269,7 +283,6 @@ func (l *linter) bindCallResultsToIdents(st *state, call *ast.CallExpr, names []
 	}
 }
 
-//nolint:cyclop,gocognit // Assignment flow needs explicit invalidation and tuple handling for precision.
 func (l *linter) execAssignStmt(stmt *ast.AssignStmt, states []state) []state {
 	out := make([]state, 0, len(states))
 	for _, st0 := range states {

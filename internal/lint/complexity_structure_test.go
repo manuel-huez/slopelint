@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsBehaviorPreservingComplexityCluster(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(dst []int, src []int, items []string, ok bool) []int {
@@ -48,8 +47,7 @@ func f(dst []int, src []int, items []string, ok bool) []int {
 }
 
 func TestDetectsScatteredInputGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type req struct {
@@ -97,8 +95,7 @@ var errBad error
 }
 
 func TestSkipsTopInputGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type req struct {
@@ -135,8 +132,7 @@ var errBad error
 }
 
 func TestSkipsInterleavedErrorGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(first func() error, second func() error, third func() error) error {
@@ -168,8 +164,7 @@ func f(first func() error, second func() error, third func() error) error {
 }
 
 func TestSkipsInterleavedNilSuccessReturns(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type req struct {
@@ -210,8 +205,7 @@ var errBad error
 }
 
 func TestSkipsPackageVarStateChecksAsInputGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 var featureEnabled bool
@@ -250,8 +244,7 @@ var errBad error
 }
 
 func TestSkipsConstantOnlyChecksAsInputGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 const featureEnabled = true
@@ -290,8 +283,7 @@ var errBad error
 }
 
 func TestSkipsNewConstructorErrorGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type store struct{}
@@ -352,8 +344,7 @@ func f(root string, universeID string, modelRef string) (manifestResult, refResu
 }
 
 func TestSkipsComparatorDecisionLadder(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type row struct {
@@ -388,8 +379,7 @@ func less(left row, right row) bool {
 }
 
 func TestSkipsMethodPredicateInputGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type id string
@@ -426,8 +416,7 @@ var errBad error
 }
 
 func TestSkipsValidationPrepBetweenInputGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "strings"
@@ -484,8 +473,7 @@ var errBad error
 }
 
 func TestSkipsExportedValidationPrepBetweenInputGuards(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "strings"

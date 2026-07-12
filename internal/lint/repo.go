@@ -13,6 +13,8 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 		return nil
 	}
 
+	pkgs = append([]*LoadedPackage(nil), pkgs...)
+
 	cache, err := newRepoAnalysisCache(pkgs, opts)
 	if err == nil {
 		if entry, ok := cache.load(); ok {
@@ -25,7 +27,7 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 	}
 
 	explicitFacts, inferredFacts := inferRepoSummaries(pkgs, opts)
-	repoDeadCode := hasMainPackage(pkgs)
+	repoDeadCode := opts.ClosedWorld && hasMainPackage(pkgs)
 	repoOpts := opts
 	repoOpts.skipDeadCode = repoDeadCode
 
@@ -42,9 +44,10 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 		l := newLinter(pkg, repoOpts)
 		l.explicitFacts = explicitFacts
 		l.inferredFacts = inferredFacts
+		l.checkContractComments()
 		l.collectLocalFuncLits()
 		l.analyzeFiles()
-		sortIssues(pkg.FSet, l.issues)
+		sortIssues(l.issues)
 		issues = append(issues, l.issues...)
 
 		if repoDeadCode {
@@ -56,7 +59,10 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 		issues = append(issues, repoDeadCodeIssues(deadPkgs)...)
 	}
 
+	sortIssues(issues)
+
 	if cache != nil {
+		// Cache persistence is best-effort; analysis results remain valid without it.
 		_ = cache.store(issues)
 	}
 

@@ -157,7 +157,7 @@ func (graph deadCodeGraph) candidateReceiverTypes() []types.Type {
 			continue
 		}
 
-		key := types.TypeString(receiver, nil)
+		key := deadCodeTypeString(receiver)
 		if _, ok := seen[key]; ok {
 			continue
 		}

@@ -27,13 +27,18 @@ func dedupeStateSlice(states []state) []state {
 		return nil
 	}
 
-	seen := make(map[string]state, len(states))
-	for _, st := range states {
-		seen[st.hash()] = st
-	}
+	// Diagnostics retain evidence from the first equivalent state.
+	seen := make(map[string]struct{}, len(states))
+	out := make([]state, 0, len(states))
 
-	out := make([]state, 0, len(seen))
-	for _, st := range seen {
+	for _, st := range states {
+		key := st.hash()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
 		out = append(out, st)
 	}
 

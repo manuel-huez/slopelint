@@ -14,7 +14,6 @@ func (l *linter) refineStates(states []state, expr ast.Expr, wantTrue bool) []st
 	return l.normalizeStates(out)
 }
 
-//nolint:cyclop,gocognit // Refinement intentionally enumerates boolean operators and propagation paths.
 func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 	expr = l.unparen(expr)
 	if tri, _ := l.truth(st, expr); tri == triTrue {
@@ -37,108 +36,165 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 			return l.refineState(st, expr.X, !wantTrue)
 		}
 	case *ast.CallExpr:
-		if sym, ok := l.predicateCallSymbolOf(expr); ok {
-			states := []state{st}
-			if next, ok := l.refineCallExpr(st, expr, wantTrue); ok {
-				states = next
-			}
-
-			return l.refinePredicateCallStates(states, sym, expr.Pos(), wantTrue)
-		}
-
-		if next, ok := l.refineCallExpr(st, expr, wantTrue); ok {
-			return next
-		}
+		return l.refineCallCondition(st, expr, wantTrue)
 	case *ast.BinaryExpr:
-		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
-		switch expr.Op {
-		case token.LAND:
-			if wantTrue {
-				left := l.refineState(st, expr.X, true)
-				return l.refineStates(left, expr.Y, true)
-			}
-
-			out := l.refineState(st, expr.X, false)
-			leftTrue := l.refineState(st, expr.X, true)
-			out = append(out, l.refineStates(leftTrue, expr.Y, false)...)
-
-			return l.normalizeStates(out)
-		case token.LOR:
-			if !wantTrue {
-				left := l.refineState(st, expr.X, false)
-				return l.refineStates(left, expr.Y, false)
-			}
-
-			out := l.refineState(st, expr.X, true)
-			leftFalse := l.refineState(st, expr.X, false)
-			out = append(out, l.refineStates(leftFalse, expr.Y, true)...)
-
-			return l.normalizeStates(out)
-		case token.EQL:
-			if next, ok := l.refineCallScalar(st, expr.X, expr.Y, wantTrue); ok {
-				return next
-			}
-
-			if sym, scalar, ok := l.symbolScalar(expr.X, expr.Y); ok {
-				return l.refineSymbolScalar(st, sym, scalar, wantTrue, expr.Pos())
-			}
-
-			if sym, scalar, ok := l.symbolScalar(expr.Y, expr.X); ok {
-				return l.refineSymbolScalar(st, sym, scalar, wantTrue, expr.Pos())
-			}
-		case token.NEQ:
-			if next, ok := l.refineCallScalar(st, expr.X, expr.Y, !wantTrue); ok {
-				return next
-			}
-
-			if sym, scalar, ok := l.symbolScalar(expr.X, expr.Y); ok {
-				return l.refineSymbolScalar(st, sym, scalar, !wantTrue, expr.Pos())
-			}
-
-			if sym, scalar, ok := l.symbolScalar(expr.Y, expr.X); ok {
-				return l.refineSymbolScalar(st, sym, scalar, !wantTrue, expr.Pos())
-			}
-		case token.GTR, token.GEQ, token.LSS, token.LEQ:
-			if sym, scalar, ok := l.symbolScalar(expr.X, expr.Y); ok {
-				return l.refineSymbolOrdered(st, sym, scalar, expr.Op, wantTrue, expr.Pos())
-			}
-
-			if sym, scalar, ok := l.symbolScalar(expr.Y, expr.X); ok {
-				return l.refineSymbolOrdered(
-					st,
-					sym,
-					scalar,
-					reverseOrderedOp(expr.Op),
-					wantTrue,
-					expr.Pos(),
-				)
-			}
-		}
+		return l.refineBinary(st, expr, wantTrue)
 	case *ast.Ident, *ast.SelectorExpr:
-		if sym, ok := l.symbolOf(expr); ok && isBoolType(sym.typ) {
-			val := scalar{
-				kind: scalarBool,
-				text: map[bool]string{true: boolTrueText, false: boolFalseText}[wantTrue],
-			}
-
-			next, ok := l.setExact(
-				st,
-				sym,
-				val,
-				evidence{pos: expr.Pos(), text: l.relationText(sym, "==", val)},
-			)
-			if !ok {
-				return nil
-			}
-
-			return l.applyBindingCondition(next, sym, map[bool]returnKind{
-				true:  returnBoolTrue,
-				false: returnBoolFalse,
-			}[wantTrue])
-		}
+		return l.refineBoolSymbol(st, expr, wantTrue)
 	}
 
 	return []state{st}
+}
+
+func (l *linter) refineCallCondition(
+	st state,
+	call *ast.CallExpr,
+	wantTrue bool,
+) []state {
+	sym, predicate := l.predicateCallSymbolOf(call)
+
+	states := []state{st}
+	if next, ok := l.refineCallExpr(st, call, wantTrue); ok {
+		states = next
+	}
+
+	if !predicate {
+		return states
+	}
+
+	return l.refinePredicateCallStates(states, sym, call.Pos(), wantTrue)
+}
+
+func (l *linter) refineBinary(
+	st state,
+	expr *ast.BinaryExpr,
+	wantTrue bool,
+) []state {
+	//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
+	switch expr.Op {
+	case token.LAND:
+		return l.refineLogicalAnd(st, expr.X, expr.Y, wantTrue)
+	case token.LOR:
+		return l.refineLogicalOr(st, expr.X, expr.Y, wantTrue)
+	case token.EQL:
+		return l.refineEquality(st, expr.X, expr.Y, wantTrue, expr.Pos())
+	case token.NEQ:
+		return l.refineEquality(st, expr.X, expr.Y, !wantTrue, expr.Pos())
+	case token.GTR, token.GEQ, token.LSS, token.LEQ:
+		return l.refineOrderedComparison(st, expr, wantTrue)
+	default:
+		return []state{st}
+	}
+}
+
+func (l *linter) refineLogicalAnd(
+	st state,
+	lhs ast.Expr,
+	rhs ast.Expr,
+	wantTrue bool,
+) []state {
+	if wantTrue {
+		left := l.refineState(st, lhs, true)
+
+		return l.refineStates(left, rhs, true)
+	}
+
+	out := l.refineState(st, lhs, false)
+	leftTrue := l.refineState(st, lhs, true)
+	out = append(out, l.refineStates(leftTrue, rhs, false)...)
+
+	return l.normalizeStates(out)
+}
+
+func (l *linter) refineLogicalOr(
+	st state,
+	lhs ast.Expr,
+	rhs ast.Expr,
+	wantTrue bool,
+) []state {
+	if !wantTrue {
+		left := l.refineState(st, lhs, false)
+
+		return l.refineStates(left, rhs, false)
+	}
+
+	out := l.refineState(st, lhs, true)
+	leftFalse := l.refineState(st, lhs, false)
+	out = append(out, l.refineStates(leftFalse, rhs, true)...)
+
+	return l.normalizeStates(out)
+}
+
+func (l *linter) refineEquality(
+	st state,
+	lhs ast.Expr,
+	rhs ast.Expr,
+	wantEqual bool,
+	pos token.Pos,
+) []state {
+	if next, ok := l.refineCallScalar(st, lhs, rhs, wantEqual); ok {
+		return next
+	}
+
+	if sym, value, ok := l.symbolScalar(lhs, rhs); ok {
+		return l.refineSymbolScalar(st, sym, value, wantEqual, pos)
+	}
+
+	if sym, value, ok := l.symbolScalar(rhs, lhs); ok {
+		return l.refineSymbolScalar(st, sym, value, wantEqual, pos)
+	}
+
+	return []state{st}
+}
+
+func (l *linter) refineOrderedComparison(
+	st state,
+	expr *ast.BinaryExpr,
+	wantTrue bool,
+) []state {
+	if sym, value, ok := l.symbolScalar(expr.X, expr.Y); ok {
+		return l.refineSymbolOrdered(st, sym, value, expr.Op, wantTrue, expr.Pos())
+	}
+
+	if sym, value, ok := l.symbolScalar(expr.Y, expr.X); ok {
+		return l.refineSymbolOrdered(
+			st,
+			sym,
+			value,
+			reverseOrderedOp(expr.Op),
+			wantTrue,
+			expr.Pos(),
+		)
+	}
+
+	return []state{st}
+}
+
+func (l *linter) refineBoolSymbol(st state, expr ast.Expr, wantTrue bool) []state {
+	sym, ok := l.symbolOf(expr)
+	if !ok || !isBoolType(sym.typ) {
+		return []state{st}
+	}
+
+	value := scalar{kind: scalarBool, text: boolFalseText}
+	resultKind := returnBoolFalse
+
+	if wantTrue {
+		value.text = boolTrueText
+		resultKind = returnBoolTrue
+	}
+
+	next, ok := l.setExact(
+		st,
+		sym,
+		value,
+		evidence{pos: expr.Pos(), text: l.relationText(sym, "==", value)},
+	)
+	if !ok {
+		return nil
+	}
+
+	return l.applyBindingCondition(next, sym, resultKind)
 }
 
 func (l *linter) refinePredicateCallStates(

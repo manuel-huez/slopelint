@@ -1,13 +1,33 @@
 package lint
 
 import (
+	"go/token"
 	"path/filepath"
 	"testing"
 )
 
+func TestSortIssuesAcrossFileSetsUsesNumericLines(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	contents := []byte("1\n2\n3\n4\n5\n6\n7\n8\n9\n10")
+	file := fset.AddFile("sample.go", -1, len(contents))
+	file.SetLinesForContent(contents)
+
+	issues := []Issue{
+		{Pos: file.LineStart(10), Message: "line ten", fset: fset},
+		{Pos: file.LineStart(2), Message: "line two", fset: fset},
+	}
+
+	sortIssues(issues)
+
+	if issues[0].Message != "line two" {
+		t.Fatalf("first issue = %q, want line two", issues[0].Message)
+	}
+}
+
 func TestFindingsExposeKinds(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func F(s string) {

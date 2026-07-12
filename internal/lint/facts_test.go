@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsRedundantChecksAfterFiltering(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(s string, p *int) {
@@ -32,8 +31,7 @@ func f(s string, p *int) {
 }
 
 func TestRuntimeTargetConstantsDoNotBecomeRedundantConditions(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "runtime"
@@ -58,8 +56,7 @@ func f() {
 }
 
 func TestPointerCallsKeepRootNilnessButInvalidateFields(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -87,8 +84,7 @@ func f(r *Req) {
 }
 
 func TestSyncOnceClosureWriteInvalidatesLocalFact(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "sync"
@@ -112,8 +108,7 @@ func f() {
 }
 
 func TestGoFuncClosureWriteInvalidatesOuterFact(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "sync"
@@ -142,8 +137,7 @@ func f() {
 }
 
 func TestLocalFuncCallbackArgInvalidatesOuterFact(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(writeRows func(func([]int) error) error) error {
@@ -174,8 +168,7 @@ func f(writeRows func(func([]int) error) error) error {
 }
 
 func TestTracksAliasesBackToOriginalSelector(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -196,8 +189,7 @@ func f(req Req) {
 }
 
 func TestAliasWriteInvalidatesBackPropagation(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -219,8 +211,7 @@ func f(req Req) {
 }
 
 func TestTracksLenBasedRedundantChecks(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items []int) {
@@ -228,6 +219,7 @@ func f(items []int) {
 	if len(items) == 0 { println("bad") }
 	if len(items) > 0 { println("known") }
 }
+
 `)
 
 	issues := lintInDir(t, tmp)
@@ -239,5 +231,57 @@ func f(items []int) {
 
 	if !strings.Contains(joined, `condition "len(items) > 0" is always true here`) {
 		t.Fatalf("expected redundant positive len check, got:\n%s", joined)
+	}
+}
+
+func TestStateDedupePreservesFirstSeenOrder(t *testing.T) {
+	t.Parallel()
+
+	first := newState()
+	first.facts["first"] = fact{not: map[string]evidence{"nil": {text: "first"}}}
+	second := newState()
+	second.facts["second"] = fact{not: map[string]evidence{"nil": {text: "second"}}}
+
+	states := dedupeStateSlice([]state{first, second, first})
+	if len(states) != 2 {
+		t.Fatalf("dedupeStateSlice length = %d, want 2", len(states))
+	}
+
+	if states[0].hash() != first.hash() || states[1].hash() != second.hash() {
+		t.Fatalf("dedupeStateSlice reordered first-seen states")
+	}
+
+	returns := dedupeReturnStates([]returnState{
+		{state: first},
+		{state: second},
+		{state: first},
+	})
+	if len(returns) != 2 {
+		t.Fatalf("dedupeReturnStates length = %d, want 2", len(returns))
+	}
+
+	if returns[0].state.hash() != first.hash() || returns[1].state.hash() != second.hash() {
+		t.Fatalf("dedupeReturnStates reordered first-seen states")
+	}
+}
+
+func TestNestedCallbackArgInvalidatesCapturedFact(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type callbacks struct{ run func() }
+
+func invoke(callbacks) {}
+
+func f(ok bool) {
+	if !ok { return }
+	invoke(callbacks{run: func() { ok = false }})
+	if !ok { println("reachable") }
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `condition "!ok" is always false`) {
+		t.Fatalf("nested callback did not invalidate captured fact:\n%s", joined)
 	}
 }

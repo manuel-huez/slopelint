@@ -104,3 +104,56 @@ func (l *Runner) testAssignedFunctionVars(
 
 	return out
 }
+
+func (l *Runner) checkTestFatalPanics() {
+	for _, file := range l.pkg.TestFiles {
+		ast.Inspect(file, func(node ast.Node) bool {
+			block, ok := node.(*ast.BlockStmt)
+			if !ok {
+				return true
+			}
+
+			for index := 1; index < len(block.List); index++ {
+				if !l.testingFatalStmt(block.List[index-1]) {
+					continue
+				}
+
+				panicCall, ok := exprStmtCall(block.List[index])
+				if !ok || !l.isBuiltinCall(panicCall, panicText) {
+					continue
+				}
+
+				l.report(
+					panicCall.Pos(),
+					"test_fatal_panic",
+					`panic after testing fatal call is unreachable test ceremony; return the required zero value instead`,
+				)
+			}
+
+			return true
+		})
+	}
+}
+
+func (l *Runner) testingFatalStmt(stmt ast.Stmt) bool {
+	call, ok := exprStmtCall(stmt)
+	if !ok {
+		return false
+	}
+
+	fn, _, ok := l.calledFunc(call)
+
+	return ok && fn.Pkg() != nil && fn.Pkg().Path() == "testing" &&
+		(fn.Name() == "Fatal" || fn.Name() == "Fatalf")
+}
+
+func exprStmtCall(stmt ast.Stmt) (*ast.CallExpr, bool) {
+	exprStmt, ok := stmt.(*ast.ExprStmt)
+	if !ok {
+		return nil, false
+	}
+
+	call, ok := ast.Unparen(exprStmt.X).(*ast.CallExpr)
+
+	return call, ok
+}

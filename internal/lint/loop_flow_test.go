@@ -8,8 +8,7 @@ import (
 )
 
 func TestRangeLoopDoesNotKeepInitialNilFactAcrossIterations(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(values []int) {
@@ -33,8 +32,7 @@ func f(values []int) {
 }
 
 func TestRangeLoopLocalHelperWriteInvalidatesAfterLoopFact(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import (
@@ -80,8 +78,7 @@ func f(values []int) error {
 }
 
 func TestRangeLoopTracksLocalHelperClosureWrites(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "sync"
@@ -133,8 +130,7 @@ func f(values []int) {
 }
 
 func TestRangeLoopDoesNotDiscardBodyEffectsAtExit(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(values []string) {
@@ -159,8 +155,7 @@ func f(values []string) {
 }
 
 func TestRangeLoopExitStatesStayUnknownAfterLocalHelperWrites(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import (
@@ -220,8 +215,7 @@ func f(values []int) error {
 }
 
 func TestRunAnalysisRangeLoopDoesNotKeepInitialFacts(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(values []string) {

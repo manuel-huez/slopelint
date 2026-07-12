@@ -76,39 +76,50 @@ func interfaceEligibleForSingleImpl(iface *types.Interface) bool {
 		return false
 	}
 
+	hasPackagePrivateMethod := false
+
 	for method := range iface.Methods() {
 		if !method.Exported() {
-			return false
+			hasPackagePrivateMethod = true
 		}
 	}
 
-	return true
+	// An exported-only method set can always be implemented by types from other packages.
+	return hasPackagePrivateMethod
 }
 
 func (l *Runner) namedConcreteTypes() []*types.Named {
 	out := make([]*types.Named, 0)
 
-	l.forEachProductionTypeSpec(func(typeSpec *ast.TypeSpec) {
-		if typeSpec.Name == nil {
-			return
-		}
+	for _, file := range l.pkg.Files {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
 
-		obj, ok := l.pkg.TypesInfo.Defs[typeSpec.Name].(*types.TypeName)
-		if !ok || obj == nil {
-			return
-		}
+			for _, spec := range gen.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok || typeSpec.Name == nil {
+					continue
+				}
 
-		named, ok := obj.Type().(*types.Named)
-		if !ok {
-			return
-		}
+				obj, ok := l.pkg.TypesInfo.Defs[typeSpec.Name].(*types.TypeName)
+				if !ok || obj == nil {
+					continue
+				}
 
-		if _, isIface := named.Underlying().(*types.Interface); isIface {
-			return
-		}
+				named, ok := obj.Type().(*types.Named)
+				if !ok {
+					continue
+				}
 
-		out = append(out, named)
-	})
+				if _, isIface := named.Underlying().(*types.Interface); !isIface {
+					out = append(out, named)
+				}
+			}
+		}
+	}
 
 	return out
 }

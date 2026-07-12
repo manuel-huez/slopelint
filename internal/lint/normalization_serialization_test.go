@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsRedundantJSONMarshalText(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "encoding/json"
@@ -44,8 +43,7 @@ func (value Symbol) MarshalJSON() ([]byte, error) {
 }
 
 func TestSkipsJSONMarshalWhenNoMarshalText(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "encoding/json"
@@ -69,9 +67,38 @@ func (value Status) MarshalJSON() ([]byte, error) {
 	}
 }
 
+func TestSkipsJSONMarshalWhenMarshalTextDiffersFromString(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+type Symbol string
+
+func (value Symbol) String() string {
+	return strings.ToUpper(string(value))
+}
+
+func (value Symbol) MarshalText() ([]byte, error) {
+	return []byte(strings.ToLower(string(value))), nil
+}
+
+func (value Symbol) MarshalJSON() ([]byte, error) {
+	return json.Marshal(value.String())
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `only marshals String while MarshalText exists`) {
+		t.Fatalf("unexpected behavior-changing serialization finding, got:\n%s", joined)
+	}
+}
+
 func TestDetectsRedundantTrimSpaceGuardReturn(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "strings"
@@ -101,8 +128,7 @@ func defaultName(name string) string {
 }
 
 func TestSkipsTrimSpaceGuardReturnWhenReturnDiffers(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "strings"
@@ -114,6 +140,7 @@ func defaultName(name string) string {
 
 	return "fallback"
 }
+
 `)
 
 	issues := lintInDir(t, tmp)
@@ -124,9 +151,30 @@ func defaultName(name string) string {
 	}
 }
 
+func TestSkipsRepeatedNormalizationAfterInputWrite(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "strings"
+
+func normalize(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+
+	name = " changed "
+	return strings.TrimSpace(name)
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `computed multiple times`) {
+		t.Fatalf("unexpected normalization finding across write, got:\n%s", joined)
+	}
+}
+
 func TestDetectsRepeatedNestedNormalizationCall(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "strings"
@@ -154,8 +202,7 @@ func complete(value string, candidates []string) []string {
 }
 
 func TestDetectsRepeatedNormalizationInFuncLiteral(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "strings"

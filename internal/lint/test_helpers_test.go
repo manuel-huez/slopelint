@@ -31,27 +31,119 @@ func lintInDir(t *testing.T, dir string) []Issue {
 func lintInDirWithOptions(t *testing.T, dir string, opts Options) []Issue {
 	t.Helper()
 
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
+	opts.ClosedWorld = true
 
-	defer func() {
-		if err := os.Chdir(oldWD); err != nil {
-			t.Fatalf("restore cwd: %v", err)
-		}
-	}()
-
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-
-	pkgs, err := LoadPackages([]string{allPackagesPattern})
+	pkgs, err := loadPackages([]string{allPackagesPattern}, dir)
 	if err != nil {
 		t.Fatalf("load packages: %v", err)
 	}
 
 	return LintPackages(pkgs, opts)
+}
+
+func newTestModule(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	writeTestGoMod(t, dir, "example.com/sample")
+
+	return dir
+}
+
+func newYAMLTestModule(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require gopkg.in/yaml.v3 v3.0.0
+
+replace gopkg.in/yaml.v3 => ./yaml
+`)
+	writeTestGoMod(t, filepath.Join(dir, "yaml"), "gopkg.in/yaml.v3")
+
+	return dir
+}
+
+func newGoccyJSONTestModule(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require github.com/goccy/go-json v0.0.0
+
+replace github.com/goccy/go-json => ./gojson
+`)
+	writeTestGoMod(t, filepath.Join(dir, "gojson"), "github.com/goccy/go-json")
+
+	return dir
+}
+
+func newJSONCodecTestModule(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require example.com/jsoncodec v0.0.0
+
+replace example.com/jsoncodec => ./jsoncodec
+`)
+	writeTestGoMod(t, filepath.Join(dir, "jsoncodec"), "example.com/jsoncodec")
+
+	return dir
+}
+
+func writeTestGoMod(t *testing.T, dir string, modulePath string) {
+	t.Helper()
+
+	writeFile(t, filepath.Join(dir, "go.mod"), "module "+modulePath+"\n\ngo 1.22\n")
+}
+
+func writeYAMLMarshalStub(t *testing.T, dir string) {
+	t.Helper()
+
+	writeFile(t, filepath.Join(dir, "yaml", "yaml.go"), `package yaml
+
+func Marshal(any) ([]byte, error) { return nil, nil }
+`)
+}
+
+func writeJSONCodecPayloadSave(t *testing.T, dir string) {
+	t.Helper()
+
+	writeFile(t, filepath.Join(dir, "lib", "lib.go"), `package lib
+
+import "example.com/jsoncodec"
+
+type Payload struct {
+	Name string `+"`json:\"name\"`"+`
+}
+
+func Save() ([]byte, error) {
+	return jsoncodec.Encode(Payload{})
+}
+`)
+}
+
+func writeTestMain(t *testing.T, dir string, body string) {
+	t.Helper()
+
+	writeFile(t, filepath.Join(dir, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+`+body+`
+}
+`)
 }
 
 func writeFile(t *testing.T, path string, contents string) {
@@ -88,31 +180,24 @@ func hasIssueKind(issues []Issue, kind string) bool {
 func loadOnePackageForTest(t *testing.T, dir string) *LoadedPackage {
 	t.Helper()
 
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-
-	defer func() {
-		if err := os.Chdir(oldWD); err != nil {
-			t.Fatalf("restore cwd: %v", err)
-		}
-	}()
-
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-
-	pkgs, err := LoadPackages([]string{allPackagesPattern})
-	if err != nil {
-		t.Fatalf("load packages: %v", err)
-	}
+	pkgs := loadPackagesForTest(t, dir)
 
 	if len(pkgs) != 1 {
 		t.Fatalf("loaded %d packages, want 1", len(pkgs))
 	}
 
 	return pkgs[0]
+}
+
+func loadPackagesForTest(t *testing.T, dir string) []*LoadedPackage {
+	t.Helper()
+
+	pkgs, err := loadPackages([]string{allPackagesPattern}, dir)
+	if err != nil {
+		t.Fatalf("load packages: %v", err)
+	}
+
+	return pkgs
 }
 
 func firstRangeStmt(files []*ast.File) *ast.RangeStmt {

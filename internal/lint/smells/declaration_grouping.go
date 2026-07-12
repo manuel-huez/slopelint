@@ -8,6 +8,30 @@ import (
 	"strings"
 )
 
+const ownerFileLineLimit = 1000
+
+func (l *Runner) checkOversizedOwnerFiles() {
+	for _, file := range l.pkg.Files {
+		if file == nil || ast.IsGenerated(file) {
+			continue
+		}
+
+		tokenFile := l.pkg.FSet.File(file.Pos())
+		if tokenFile == nil || tokenFile.LineCount() <= ownerFileLineLimit {
+			continue
+		}
+
+		l.report(
+			file.Package,
+			"oversized_owner_file",
+			fmt.Sprintf(
+				"source file has %d lines; split by responsibility so whole-file review stays tractable",
+				tokenFile.LineCount(),
+			),
+		)
+	}
+}
+
 const (
 	ungroupedDeclItemLimit        = 10
 	constNamePrefixMinimumWords   = 2

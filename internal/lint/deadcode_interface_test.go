@@ -16,14 +16,7 @@ require github.com/ulikunitz/xz v0.0.0
 
 replace github.com/ulikunitz/xz => ./xz
 `)
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_ = lib.Live()
-}
-`)
+	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "xz", "go.mod"), "module github.com/ulikunitz/xz\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "xz", "lzma", "reader.go"), `package lzma
 

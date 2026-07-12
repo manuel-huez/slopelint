@@ -7,20 +7,7 @@ import (
 )
 
 func TestRepoDeadCodeKeepsHooksThroughLocalGoccyJSONWrapper(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
-
-go 1.22
-
-require github.com/goccy/go-json v0.0.0
-
-replace github.com/goccy/go-json => ./gojson
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "gojson", "go.mod"),
-		"module github.com/goccy/go-json\n\ngo 1.22\n",
-	)
+	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
 type Decoder struct{}
@@ -30,16 +17,9 @@ func Unmarshal([]byte, any) error { return nil }
 func NewDecoder(any) *Decoder { return nil }
 func (*Decoder) Decode(any) error { return nil }
 `)
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_ = lib.Load(nil)
+	writeTestMain(t, tmp, `	_ = lib.Load(nil)
 	_ = lib.LoadMany(nil)
-	_, _ = lib.Save()
-}
-`)
+	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "jsonio", "jsonio.go"), `package jsonio
 
 import (
@@ -193,20 +173,7 @@ func parseStreamTime([]byte) error {
 }
 
 func TestRepoDeadCodeKeepsGoccyJSONOptionAndContextCodecUses(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
-
-go 1.22
-
-require github.com/goccy/go-json v0.0.0
-
-replace github.com/goccy/go-json => ./gojson
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "gojson", "go.mod"),
-		"module github.com/goccy/go-json\n\ngo 1.22\n",
-	)
+	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
 import "context"
@@ -340,20 +307,7 @@ func parseCustom([]byte) error {
 }
 
 func TestRepoDeadCodeKeepsGoccyJSONStreamOptionAndContextCodecUses(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
-
-go 1.22
-
-require github.com/goccy/go-json v0.0.0
-
-replace github.com/goccy/go-json => ./gojson
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "gojson", "go.mod"),
-		"module github.com/goccy/go-json\n\ngo 1.22\n",
-	)
+	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
 import "context"
@@ -484,20 +438,7 @@ func parseContext(context.Context, []byte) error {
 }
 
 func TestRepoDeadCodeDoesNotKeepGoccyJSONContextHooksThroughPlainCodecUses(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
-
-go 1.22
-
-require github.com/goccy/go-json v0.0.0
-
-replace github.com/goccy/go-json => ./gojson
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "gojson", "go.mod"),
-		"module github.com/goccy/go-json\n\ngo 1.22\n",
-	)
+	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
 type DecodeOptionFunc func()
@@ -521,12 +462,7 @@ func NewDecoder(any) *Decoder { return nil }
 func (*Decoder) Decode(any) error { return nil }
 func (*Decoder) DecodeWithOption(any, ...DecodeOptionFunc) error { return nil }
 `)
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_ = lib.LoadDecode()
+	writeTestMain(t, tmp, `	_ = lib.LoadDecode()
 	_ = lib.LoadDecodeWithOption()
 	_ = lib.LoadNoEscape(nil)
 	_ = lib.LoadPlain(nil)
@@ -536,9 +472,7 @@ func main() {
 	_, _ = lib.SaveIndentWithOption()
 	_, _ = lib.SaveNoEscape()
 	_, _ = lib.SavePlain()
-	_, _ = lib.SaveWithOption()
-}
-`)
+	_, _ = lib.SaveWithOption()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
 
 import (
@@ -656,17 +590,9 @@ func parseCustom(context.Context, []byte) error {
 }
 
 func TestRepoDeadCodeDoesNotKeepStdlibJSONContextHooks(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_ = lib.Load(nil)
-	_, _ = lib.Save()
-}
-`)
+	tmp := newTestModule(t)
+	writeTestMain(t, tmp, `	_ = lib.Load(nil)
+	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
 
 import (
@@ -721,16 +647,8 @@ func parseCustom([]byte) error {
 }
 
 func TestRepoDeadCodeDoesNotKeepLocalWrapperShadowedParamFields(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_, _ = lib.Save()
-}
-`)
+	tmp := newTestModule(t)
+	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
 
 import "encoding/json"

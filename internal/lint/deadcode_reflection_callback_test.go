@@ -7,16 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsBranchAssignedGenericCallbackDecodeFields(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_ = lib.Load(nil, true)
-}
-`)
+	tmp := newTestModule(t)
+	writeTestMain(t, tmp, `	_ = lib.Load(nil, true)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
 
 import "encoding/json"
@@ -70,16 +62,8 @@ func runVisit(body []byte, visit func([]byte) error) error {
 }
 
 func TestRepoDeadCodeKeepsSwitchAssignedGenericCallbackDecodeFields(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_ = lib.Load(nil, "primary")
-}
-`)
+	tmp := newTestModule(t)
+	writeTestMain(t, tmp, `	_ = lib.Load(nil, "primary")`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
 
 import "encoding/json"

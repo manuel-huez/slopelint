@@ -6,9 +6,10 @@ import (
 	"testing"
 )
 
+const oversizedOwnerFixtureLines = 1000
+
 func TestDetectsDuplicateValidationLadder(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type req struct {
@@ -62,8 +63,7 @@ var errBad error
 }
 
 func TestDetectsSingleUsePrivateHelper(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func setupHelper(value *int) {
@@ -96,8 +96,7 @@ func run() {
 }
 
 func TestDetectsSingleUsePrivateWrapperWithReturnValue(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func labelWrapper(value string) string {
@@ -128,8 +127,7 @@ func run(value string) string {
 }
 
 func TestDetectsSingleUsePrivateHelperReturnValueWithSpecificName(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func prefixedLabel(value string) string {
@@ -153,8 +151,7 @@ func run(value string) string {
 }
 
 func TestDetectsDocCommentedSingleUsePrivateHelper(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 // Date math stays named so parser assumptions remain visible.
@@ -183,8 +180,7 @@ func bucket(start int, end int) string {
 }
 
 func TestSkipsSingleUsePrivateHelperWithFunctionValueUse(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 var setupHooks = []func(*int){setupHelper}
@@ -209,8 +205,7 @@ func run() {
 }
 
 func TestSkipsSingleUsePrivateHelperWithComplexBody(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "sort"
@@ -235,20 +230,19 @@ func run(values []int) {
 }
 
 func TestDetectsSingleImplInterface(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type writer interface {
-	Write(string)
+	write(string)
 }
 
 type fileWriter struct{}
 
-func (fileWriter) Write(value string) {}
+func (fileWriter) write(value string) {}
 
 func use(value writer) {
-	value.Write("x")
+	value.write("x")
 }
 
 func run() {
@@ -267,9 +261,34 @@ func run() {
 	}
 }
 
+func TestSkipsExportedOnlySingleImplInterface(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type writer interface {
+	Write([]byte) (int, error)
+}
+
+type localWriter struct{}
+
+func (localWriter) Write(value []byte) (int, error) { return len(value), nil }
+
+func use(value writer) {
+	_, _ = value.Write(nil)
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `private interface "writer" has one in-package implementation`) {
+		t.Fatalf(
+			"unexpected single-impl finding for externally implementable interface, got:\n%s",
+			joined,
+		)
+	}
+}
+
 func TestDetectsOptionsOverkill(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type config struct { name string }
@@ -304,8 +323,7 @@ func run() int {
 }
 
 func TestDetectsLargeUngroupedConstChunk(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type state string
@@ -344,8 +362,7 @@ func use(state) {}
 }
 
 func TestSkipsLargeConstBlockWithGroupBreaks(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type state string
@@ -378,8 +395,7 @@ func use(state) {}
 }
 
 func TestDetectsLargeUngroupedConstChunkInTestFile(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func use(state) {}
@@ -416,8 +432,7 @@ const (
 }
 
 func TestDetectsAdjacentUngroupedConstDecls(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type state string
@@ -454,8 +469,7 @@ func use(state) {}
 }
 
 func TestDetectsLargeUngroupedVarChunk(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 var (
@@ -490,8 +504,7 @@ var (
 }
 
 func TestDetectsAdjacentUngroupedTypeDecls(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type reqA struct{}
@@ -524,8 +537,7 @@ type reqL struct{}
 }
 
 func TestDetectsMixedConstPrefixes(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 const (
@@ -554,8 +566,7 @@ const (
 }
 
 func TestSkipsMixedConstPrefixesWithGroupBreaks(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 const (
@@ -579,8 +590,7 @@ const (
 }
 
 func TestDetectsUnnamedLargeTableTest(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
 import "testing"
@@ -622,8 +632,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestSkipsNamedLargeTableTest(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
 import "testing"
@@ -659,8 +668,7 @@ func TestParse(t *testing.T) {
 }
 
 func TestSkipsAdjacentConstDeclsWithGroupBreaks(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type state string
@@ -691,8 +699,7 @@ func use(state) {}
 }
 
 func TestSkipsOptionsOverkillWhenPrefixIsNotConstructorWord(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type config struct { name string }
@@ -727,8 +734,7 @@ func run() int {
 }
 
 func TestDetectsInternalResultWrapper(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type parseResult struct {
@@ -753,5 +759,87 @@ func run() bool {
 		`private result wrapper "parseResult" only carries value plus status; return ordinary Go results`,
 	) {
 		t.Fatalf("expected result-wrapper finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsRepeatedTestFixtureContent(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+import "testing"
+
+func writeFile(*testing.T, string, string) {}
+
+func TestOne(t *testing.T) { writeFile(t, "go.mod", "module example.com/repeated\n\ngo 1.22\n") }
+func TestTwo(t *testing.T) { writeFile(t, "go.mod", "module example.com/repeated\n\ngo 1.22\n") }
+func TestThree(t *testing.T) { writeFile(t, "go.mod", "module example.com/repeated\n\ngo 1.22\n") }
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(joined, `test fixture content is repeated 3 times`) {
+		t.Fatalf("expected repeated-test-fixture finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsPanicAfterTestingFatal(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+import "testing"
+
+func mustValue(t *testing.T) *int {
+	t.Helper()
+	t.Fatalf("missing value")
+	panic("unreachable")
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(joined, "panic after testing fatal call is unreachable test ceremony") {
+		t.Fatalf("expected test-fatal-panic finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsOversizedOwnerFile(t *testing.T) {
+	tmp := newTestModule(t)
+	source := "package sample\n\n" + strings.Repeat("var _ = 0\n", oversizedOwnerFixtureLines)
+	writeFile(t, filepath.Join(tmp, "sample.go"), source)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(joined, "split by responsibility so whole-file review stays tractable") {
+		t.Fatalf("expected oversized-owner-file finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsOversizedGeneratedFile(t *testing.T) {
+	tmp := newTestModule(t)
+	source := "// Code generated by test. DO NOT EDIT.\npackage sample\n\n" +
+		strings.Repeat("var _ = 0\n", oversizedOwnerFixtureLines)
+	writeFile(t, filepath.Join(tmp, "sample.go"), source)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, "oversized_owner_file") {
+		t.Fatalf("unexpected oversized-owner-file finding for generated code:\n%s", joined)
+	}
+}
+
+func TestSkipsSingleImplInterfaceWithTestImplementation(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type writer interface{ write(string) }
+type fileWriter struct{}
+func (fileWriter) write(string) {}
+func use(value writer) { value.write("x") }
+`)
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+type mockWriter struct{}
+func (mockWriter) write(string) {}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `private interface "writer" has one in-package implementation`) {
+		t.Fatalf("unexpected single-impl finding with test implementation, got:\n%s", joined)
 	}
 }

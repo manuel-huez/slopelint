@@ -36,11 +36,15 @@ type packageMeta struct {
 // LoadPackages resolves Go package patterns using `go list`, parses the matched packages,
 // and type-checks them using export data for imports.
 func LoadPackages(patterns []string) ([]*LoadedPackage, error) {
+	return loadPackages(patterns, ".")
+}
+
+func loadPackages(patterns []string, dir string) ([]*LoadedPackage, error) {
 	if len(patterns) == 0 {
 		patterns = []string{allPackagesPattern}
 	}
 
-	metas, err := goList(patterns)
+	metas, err := goList(patterns, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -67,9 +71,10 @@ func LoadPackages(patterns []string) ([]*LoadedPackage, error) {
 	return loadPackageTargets(targets, byImportPath)
 }
 
-func goList(patterns []string) ([]*packageMeta, error) {
+func goList(patterns []string, dir string) ([]*packageMeta, error) {
 	args := append([]string{"list", "-deps", "-test", "-export", "-compiled", "-json"}, patterns...)
 	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
 
 	var (
 		stdout bytes.Buffer

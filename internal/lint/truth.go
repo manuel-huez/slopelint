@@ -51,44 +51,15 @@ func truthAcrossStates(
 	return triUnknown, nil
 }
 
-//nolint:cyclop,gocognit,nestif // Boolean reasoning is intentionally explicit for analyzer correctness.
 func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 	expr = l.unparen(expr)
-	if scalar, ok := l.scalarOf(expr); ok && scalar.kind == scalarBool {
-		if scalar.text == boolTrueText {
-			return triTrue, nil
-		}
-
-		return triFalse, nil
-	}
-
-	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok && tv.Value != nil &&
-		!l.containsRuntimeTargetConstant(expr) {
-		if scalar, ok := scalarFromConstantValue(tv.Value); ok && scalar.kind == scalarBool {
-			if scalar.text == boolTrueText {
-				return triTrue, nil
-			}
-
-			return triFalse, nil
-		}
+	if result, known := l.constantBoolTruth(expr); known {
+		return result, nil
 	}
 
 	switch expr := expr.(type) {
 	case *ast.Ident, *ast.SelectorExpr:
-		if sym, ok := l.symbolOf(expr); ok && isBoolType(sym.typ) {
-			if f, ok := st.facts[sym.key]; ok {
-				if f.exact != nil && f.exact.value.kind == scalarBool {
-					if f.exact.value.text == boolTrueText {
-						copyWhy := f.exact.why
-						return triTrue, &copyWhy
-					}
-
-					copyWhy := f.exact.why
-
-					return triFalse, &copyWhy
-				}
-			}
-		}
+		return l.truthBoolSymbol(st, expr)
 	case *ast.CallExpr:
 		if sym, ok := l.predicateCallSymbolOf(expr); ok {
 			return l.truthSymbolScalar(
@@ -99,69 +70,135 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 			)
 		}
 	case *ast.UnaryExpr:
-		if expr.Op == token.NOT {
-			tri, ev := l.truth(st, expr.X)
-			//exhaustive:ignore triState unknown falls through to conservative unknown.
-			switch tri {
-			case triTrue:
-				return triFalse, ev
-			case triFalse:
-				return triTrue, ev
-			default:
-				return triUnknown, nil
-			}
+		if expr.Op != token.NOT {
+			return triUnknown, nil
 		}
+
+		return l.truthNegation(st, expr.X)
 	case *ast.BinaryExpr:
-		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
-		switch expr.Op {
-		case token.LAND:
-			left, leftEv := l.truth(st, expr.X)
-			if left == triFalse {
-				return triFalse, leftEv
-			}
-
-			right, rightEv := l.truth(st, expr.Y)
-			if right == triFalse {
-				return triFalse, rightEv
-			}
-
-			if left == triTrue && right == triTrue {
-				if leftEv != nil {
-					return triTrue, leftEv
-				}
-
-				return triTrue, rightEv
-			}
-
-			return triUnknown, nil
-		case token.LOR:
-			left, leftEv := l.truth(st, expr.X)
-			if left == triTrue {
-				return triTrue, leftEv
-			}
-
-			right, rightEv := l.truth(st, expr.Y)
-			if right == triTrue {
-				return triTrue, rightEv
-			}
-
-			if left == triFalse && right == triFalse {
-				if leftEv != nil {
-					return triFalse, leftEv
-				}
-
-				return triFalse, rightEv
-			}
-
-			return triUnknown, nil
-		case token.EQL, token.NEQ:
-			return l.truthCompare(st, expr.X, expr.Y, expr.Op == token.EQL)
-		case token.GTR, token.GEQ, token.LSS, token.LEQ:
-			return l.truthOrderedCompare(st, expr.X, expr.Y, expr.Op)
-		}
+		return l.truthBinary(st, expr)
 	}
 
 	return triUnknown, nil
+}
+
+func (l *linter) constantBoolTruth(expr ast.Expr) (triState, bool) {
+	if value, ok := l.scalarOf(expr); ok && value.kind == scalarBool {
+		return boolTextTruth(value.text), true
+	}
+
+	tv, ok := l.pkg.TypesInfo.Types[expr]
+	if !ok || tv.Value == nil || l.containsRuntimeTargetConstant(expr) {
+		return triUnknown, false
+	}
+
+	value, ok := scalarFromConstantValue(tv.Value)
+	if !ok || value.kind != scalarBool {
+		return triUnknown, false
+	}
+
+	return boolTextTruth(value.text), true
+}
+
+func boolTextTruth(text string) triState {
+	if text == boolTrueText {
+		return triTrue
+	}
+
+	return triFalse
+}
+
+func (l *linter) truthBoolSymbol(st state, expr ast.Expr) (triState, *evidence) {
+	sym, ok := l.symbolOf(expr)
+	if !ok || !isBoolType(sym.typ) {
+		return triUnknown, nil
+	}
+
+	f, ok := st.facts[sym.key]
+	if !ok || f.exact == nil || f.exact.value.kind != scalarBool {
+		return triUnknown, nil
+	}
+
+	copyWhy := f.exact.why
+	if f.exact.value.text == boolTrueText {
+		return triTrue, &copyWhy
+	}
+
+	return triFalse, &copyWhy
+}
+
+func (l *linter) truthNegation(st state, expr ast.Expr) (triState, *evidence) {
+	tri, ev := l.truth(st, expr)
+
+	//exhaustive:ignore triState unknown falls through to conservative unknown.
+	switch tri {
+	case triTrue:
+		return triFalse, ev
+	case triFalse:
+		return triTrue, ev
+	default:
+		return triUnknown, nil
+	}
+}
+
+func (l *linter) truthBinary(st state, expr *ast.BinaryExpr) (triState, *evidence) {
+	//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
+	switch expr.Op {
+	case token.LAND:
+		return l.truthAnd(st, expr.X, expr.Y)
+	case token.LOR:
+		return l.truthOr(st, expr.X, expr.Y)
+	case token.EQL, token.NEQ:
+		return l.truthCompare(st, expr.X, expr.Y, expr.Op == token.EQL)
+	case token.GTR, token.GEQ, token.LSS, token.LEQ:
+		return l.truthOrderedCompare(st, expr.X, expr.Y, expr.Op)
+	default:
+		return triUnknown, nil
+	}
+}
+
+func (l *linter) truthAnd(st state, lhs, rhs ast.Expr) (triState, *evidence) {
+	left, leftEv := l.truth(st, lhs)
+	if left == triFalse {
+		return triFalse, leftEv
+	}
+
+	right, rightEv := l.truth(st, rhs)
+	if right == triFalse {
+		return triFalse, rightEv
+	}
+
+	if left != triTrue || right != triTrue {
+		return triUnknown, nil
+	}
+
+	if leftEv != nil {
+		return triTrue, leftEv
+	}
+
+	return triTrue, rightEv
+}
+
+func (l *linter) truthOr(st state, lhs, rhs ast.Expr) (triState, *evidence) {
+	left, leftEv := l.truth(st, lhs)
+	if left == triTrue {
+		return triTrue, leftEv
+	}
+
+	right, rightEv := l.truth(st, rhs)
+	if right == triTrue {
+		return triTrue, rightEv
+	}
+
+	if left != triFalse || right != triFalse {
+		return triUnknown, nil
+	}
+
+	if leftEv != nil {
+		return triFalse, leftEv
+	}
+
+	return triFalse, rightEv
 }
 
 func (l *linter) truthCompare(st state, lhs, rhs ast.Expr, wantEq bool) (triState, *evidence) {

@@ -242,11 +242,11 @@ func (graph deadCodeGraph) addReflectedMarshalUses(
 		typ,
 		reflectedHookNames(codec.hookTag, reflectedMarshalStructFields, reflectedValueHook),
 		codec.hookTag,
-		reflectedMarshalHookAddressability(typ, codec.tag, addressable),
+		reflectedMarshalHookAddressability(codec.tag, addressable),
 	)
 	if hook != nil {
 		addReflectedHookFuncUse(out, hook)
-		graph.addReflectedYAMLMarshalReturnUses(l, out, hook, typ, codec.tag, call, seen)
+		graph.addReflectedYAMLMarshalReturnUses(out, hook, typ, codec.tag, call, seen)
 
 		return
 	}
@@ -360,7 +360,6 @@ func (graph deadCodeGraph) addReflectedMarshalMapKeyUses(
 }
 
 func reflectedMarshalHookAddressability(
-	typ types.Type,
 	tag string,
 	addressable reflectedMarshalAddressability,
 ) reflectedMarshalAddressability {

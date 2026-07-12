@@ -13,10 +13,10 @@ type Issue struct {
 	fset    *token.FileSet
 }
 
-func sortIssues(fset *token.FileSet, issues []Issue) {
+func sortIssues(issues []Issue) {
 	sort.Slice(issues, func(i, j int) bool {
-		pi := fset.Position(issues[i].Pos)
-		pj := fset.Position(issues[j].Pos)
+		pi := issuePosition(issues[i])
+		pj := issuePosition(issues[j])
 
 		if pi.Filename != pj.Filename {
 			return pi.Filename < pj.Filename
@@ -34,13 +34,17 @@ func sortIssues(fset *token.FileSet, issues []Issue) {
 	})
 }
 
-// FormatIssuePosition returns a stable source position for an issue.
-func FormatIssuePosition(issue Issue) string {
+func issuePosition(issue Issue) token.Position {
 	if issue.fset == nil {
-		return unknownPos
+		return token.Position{}
 	}
 
-	position := issue.fset.Position(issue.Pos)
+	return issue.fset.Position(issue.Pos)
+}
+
+// FormatIssuePosition returns a stable source position for an issue.
+func FormatIssuePosition(issue Issue) string {
+	position := issuePosition(issue)
 	if !position.IsValid() {
 		return unknownPos
 	}

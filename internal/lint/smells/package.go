@@ -51,9 +51,13 @@ func RunDefault(pkg *Package) []Finding {
 	r.checkRepeatedNormalizationCallsPackage()
 	r.checkRedundantJSONMarshalText()
 	r.checkRestatementComments()
+	r.checkStaleComplexitySuppressions()
 	r.checkPredicateReturnSignatures()
+	r.checkUnusedPrivateParams()
 	r.checkDeclarationGrouping()
+	r.checkOversizedOwnerFiles()
 	r.checkUnnamedLargeTableTests()
+	r.checkRepeatedTestFixtures()
 
 	return r.findings
 }
@@ -67,6 +71,7 @@ func RunPackage(pkg *Package) []Finding {
 	r.checkOptionsOverkill()
 	r.checkInternalResultWrappers()
 	r.checkTestGlobalFuncStubs()
+	r.checkTestFatalPanics()
 	r.checkBoolModeParams()
 	r.checkZeroValuePrivateArgs()
 	r.checkOptionalResultTriples()

@@ -311,19 +311,11 @@ func (l *Runner) addBoolCaseValue(expr ast.Expr, coverage *boolSwitchCoverage) b
 func (coverage boolSwitchCoverage) exhaustive() bool {
 	return coverage.defaultClause != nil && coverage.coveredTrue && coverage.coveredFalse
 }
-func (l *Runner) checkExhaustiveDefensiveDefault(stmt *ast.SwitchStmt) {
-	if stmt.Tag == nil {
-		return
-	}
-
-	if l.checkExhaustiveBoolDefault(stmt) {
-		return
-	}
-
-	l.checkExhaustiveConstSetDefault(stmt)
-}
-
 func (l *Runner) checkExhaustiveBoolDefault(stmt *ast.SwitchStmt) bool {
+	if stmt.Tag == nil {
+		return false
+	}
+
 	basic, ok := types.Unalias(l.pkg.TypesInfo.TypeOf(stmt.Tag)).Underlying().(*types.Basic)
 	if !ok || basic.Info()&types.IsBoolean == 0 {
 		return false

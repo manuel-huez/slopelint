@@ -35,6 +35,7 @@ linters:
     - nilnesserr
     - nilerr
     - nilnil
+    - nolintlint
     - perfsprint
     - rowserrcheck
     - sqlclosecheck

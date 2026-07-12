@@ -10,12 +10,13 @@ import (
 )
 
 type guardContractFact struct {
-	Param  int
-	Recv   bool
-	Path   []string
-	Kind   int
-	Text   string
-	WantEq bool
+	Param    int
+	Recv     bool
+	Variadic bool
+	Path     []string
+	Kind     int
+	Text     string
+	WantEq   bool
 }
 
 type resultSummaryFact struct {
@@ -52,7 +53,7 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 	if err == nil {
 		if entry, ok := cache.load(); ok {
 			if issues, ok := replayAnalysisCache(pass, pkg, entry, opts.CacheHitHook); ok {
-				sortIssues(pkg.FSet, issues)
+				sortIssues(issues)
 
 				return issues, nil
 			}
@@ -73,10 +74,11 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 
 	l.run()
 	l.exportAnalysisFacts(pass)
-	sortIssues(pkg.FSet, l.issues)
+	sortIssues(l.issues)
 
 	if cache != nil {
-		_ = cache.store(pass, pkg, l, l.issues)
+		// Cache persistence is best-effort; analysis results remain valid without it.
+		_ = cache.store(pass, l, l.issues)
 	}
 
 	return l.issues, nil
@@ -142,12 +144,13 @@ func contractsToFacts(contracts []guardContract) []guardContractFact {
 	out := make([]guardContractFact, 0, len(contracts))
 	for _, contract := range contracts {
 		out = append(out, guardContractFact{
-			Param:  contract.target.param,
-			Recv:   contract.target.recv,
-			Path:   append([]string(nil), contract.target.path...),
-			Kind:   int(contract.value.kind),
-			Text:   contract.value.text,
-			WantEq: contract.wantEq,
+			Param:    contract.target.param,
+			Recv:     contract.target.recv,
+			Variadic: contract.target.variadic,
+			Path:     append([]string(nil), contract.target.path...),
+			Kind:     int(contract.value.kind),
+			Text:     contract.value.text,
+			WantEq:   contract.wantEq,
 		})
 	}
 
@@ -163,9 +166,10 @@ func contractsFromFacts(contracts []guardContractFact) []guardContract {
 	for _, contract := range contracts {
 		out = append(out, guardContract{
 			target: contractTarget{
-				param: contract.Param,
-				recv:  contract.Recv,
-				path:  append([]string(nil), contract.Path...),
+				param:    contract.Param,
+				recv:     contract.Recv,
+				variadic: contract.Variadic,
+				path:     append([]string(nil), contract.Path...),
 			},
 			value: scalar{
 				kind: scalarKind(contract.Kind),

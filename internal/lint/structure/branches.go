@@ -35,7 +35,7 @@ func (l *Runner) checkIdenticalIfBranches(stmt *ast.IfStmt) {
 	l.report(
 		stmt.If,
 		"control_flow_merge",
-		"if and else branches are identical; drop condition or hoist shared body",
+		"if and else branches are identical; preserve condition evaluation and hoist shared body",
 	)
 }
 

@@ -124,7 +124,10 @@ func (l *linter) summaryBindingsForFunc(fn *ast.FuncDecl) []summaryBinding {
 
 		paramIndex := 0
 
-		for _, field := range fields.List {
+		for fieldIndex, field := range fields.List {
+			_, variadic := field.Type.(*ast.Ellipsis)
+			variadic = !recv && variadic && fieldIndex == len(fields.List)-1
+
 			for _, name := range field.Names {
 				obj, ok := l.pkg.TypesInfo.ObjectOf(name).(*types.Var)
 				if !ok || obj == nil {
@@ -136,8 +139,12 @@ func (l *linter) summaryBindingsForFunc(fn *ast.FuncDecl) []summaryBinding {
 				}
 
 				binding := summaryBinding{
-					target: contractTarget{param: paramIndex, recv: recv},
-					root:   symbolForObject(obj).root,
+					target: contractTarget{
+						param:    paramIndex,
+						recv:     recv,
+						variadic: variadic,
+					},
+					root: symbolForObject(obj).root,
 				}
 				out = append(out, binding)
 
@@ -154,7 +161,8 @@ func (l *linter) summaryBindingsForFunc(fn *ast.FuncDecl) []summaryBinding {
 	return out
 }
 func (l *linter) summarizeFunc(fn summarizableFunc) callSummary {
-	if l.hasUnsupportedJumps(fn.decl.Body) {
+	// Deferred writes run after return evaluation, so pre-defer facts are not call guarantees.
+	if l.hasUnsupportedJumps(fn.decl.Body) || functionHasDefer(fn.decl.Body) {
 		return callSummary{}
 	}
 
@@ -196,6 +204,28 @@ func (l *linter) summarizeFunc(fn summarizableFunc) callSummary {
 	}
 
 	return normalizeCallSummary(summary)
+}
+
+func functionHasDefer(body *ast.BlockStmt) bool {
+	found := false
+
+	ast.Inspect(body, func(node ast.Node) bool {
+		if found {
+			return false
+		}
+
+		switch node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.DeferStmt:
+			found = true
+			return false
+		default:
+			return true
+		}
+	})
+
+	return found
 }
 
 func (l *linter) summaryContractsForReturns(
@@ -544,7 +574,6 @@ func (l *linter) refineCallExpr(st state, call *ast.CallExpr, wantTrue bool) ([]
 	return l.applySummaryContracts(st, call, normalizeGuardContracts(contracts)), true
 }
 
-//nolint:cyclop // Scalar-based call refinement branches by supported result kind.
 func (l *linter) refineCallScalar(
 	st state,
 	left, right ast.Expr,
@@ -565,32 +594,48 @@ func (l *linter) refineCallScalar(
 		return nil, false
 	}
 
-	contracts := append([]guardContract{}, summary.always...)
-
-	switch {
-	case scalar.kind == scalarBool && scalar.text == boolTrueText:
-		if wantEq {
-			contracts = append(contracts, result.whenTrue...)
-		} else {
-			contracts = append(contracts, result.whenFalse...)
-		}
-	case scalar.kind == scalarBool && scalar.text == boolFalseText:
-		if wantEq {
-			contracts = append(contracts, result.whenFalse...)
-		} else {
-			contracts = append(contracts, result.whenTrue...)
-		}
-	case scalar.kind == scalarNil:
-		if wantEq {
-			contracts = append(contracts, result.whenNil...)
-		} else {
-			contracts = append(contracts, result.whenNonNil...)
-		}
-	default:
+	selected, ok := result.contractsForScalar(scalar, wantEq)
+	if !ok {
 		return nil, false
 	}
 
+	contracts := append([]guardContract{}, summary.always...)
+	contracts = append(contracts, selected...)
+
 	return l.applySummaryContracts(st, call, normalizeGuardContracts(contracts)), true
+}
+
+func (result resultSummary) contractsForScalar(
+	value scalar,
+	wantEqual bool,
+) ([]guardContract, bool) {
+	switch value.kind {
+	case scalarBool:
+		if value.text != boolTrueText && value.text != boolFalseText {
+			return nil, false
+		}
+
+		wantTrue := value.text == boolTrueText
+		if !wantEqual {
+			wantTrue = !wantTrue
+		}
+
+		if wantTrue {
+			return result.whenTrue, true
+		}
+
+		return result.whenFalse, true
+	case scalarNil:
+		if wantEqual {
+			return result.whenNil, true
+		}
+
+		return result.whenNonNil, true
+	case scalarInvalid, scalarString, scalarInt:
+		return nil, false
+	}
+
+	return nil, false
 }
 
 func callScalar(callExpr, scalarExpr ast.Expr, l *linter) (*ast.CallExpr, scalar, bool) {

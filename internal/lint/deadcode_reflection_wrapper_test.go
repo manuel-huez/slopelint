@@ -7,16 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsCyclicLocalWrapperFields(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
-
-import "example.com/sample/lib"
-
-func main() {
-	_, _ = lib.Save()
-}
-`)
+	tmp := newTestModule(t)
+	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
 
 import "encoding/json"

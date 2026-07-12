@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsSingleUseTempAlias(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -35,8 +34,7 @@ func f(req Req) {
 }
 
 func TestDetectsRedundantAppendLenGuard(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(dst []int, src []int) []int {
@@ -64,8 +62,7 @@ func f(dst []int, src []int) []int {
 }
 
 func TestSkipsAppendLenGuardWhenBodyDoesMore(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(dst []int, src []int) []int {
@@ -87,8 +84,7 @@ func f(dst []int, src []int) []int {
 }
 
 func TestDetectsRedundantRangeLenGuard(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items []string) {
@@ -116,8 +112,7 @@ func f(items []string) {
 }
 
 func TestDetectsRedundantRangeNilLenGuard(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items []string) {
@@ -141,8 +136,7 @@ func f(items []string) {
 }
 
 func TestDetectsRedundantRangeNilGuard(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items map[string]int) {
@@ -166,8 +160,7 @@ func f(items map[string]int) {
 }
 
 func TestSkipsRangeLenGuardForChannel(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items chan int) {
@@ -188,8 +181,7 @@ func f(items chan int) {
 }
 
 func TestDetectsEmptyReturnGuardBeforeFinalRange(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items []string) {
@@ -215,8 +207,7 @@ func f(items []string) {
 }
 
 func TestDetectsNilLenReturnGuardBeforeFinalRange(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items []string) {
@@ -242,8 +233,7 @@ func f(items []string) {
 }
 
 func TestSkipsEmptyReturnGuardBeforeRangeWhenFunctionReturnsValue(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items []string) int {
@@ -268,8 +258,7 @@ func f(items []string) int {
 }
 
 func TestDetectsRepeatedIsPredicateSubexpression(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type coverage struct {
@@ -303,8 +292,7 @@ func f(coverage coverage, requested coverage) {
 }
 
 func TestInvalidatesCopiedIsPredicateAfterFieldWrite(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type coverage struct {
@@ -337,23 +325,18 @@ func f(coverage coverage) {
 }
 
 func TestDetectsDuplicateAdjacentRangeLoops(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
-func use(value string) {}
+func use(value string) { println(value) }
 
-func f(first []string, second []string, third []string) {
-	for _, symbol := range first {
+func f(values []string) {
+	for _, symbol := range values {
 		use(symbol)
 	}
 
-	for _, name := range second {
+	for _, name := range values {
 		use(name)
-	}
-
-	for _, value := range third {
-		use(value)
 	}
 }
 `)
@@ -374,8 +357,7 @@ func f(first []string, second []string, third []string) {
 }
 
 func TestSkipsTempAliasWhenNameAddsMeaning(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -395,8 +377,7 @@ func f(req Req) {
 }
 
 func TestSkipsTempAliasWhenDeclarationHasComment(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -416,8 +397,7 @@ func f(req Req) {
 }
 
 func TestSkipsTempAliasWhenValueReadMultipleTimes(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct { Name string }
@@ -434,5 +414,46 @@ func f(req Req) {
 
 	if strings.Contains(joined, `only renames cheap expression "req.Name"`) {
 		t.Fatalf("unexpected temp alias finding with multiple reads, got:\n%s", joined)
+	}
+}
+
+func TestSkipsTempAliasAcrossSourceMutation(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type Req struct{ Name string }
+
+func f(req *Req) {
+	name := req.Name
+	{
+		req.Name = "changed"
+		println(name)
+	}
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `only renames cheap expression "req.Name"`) {
+		t.Fatalf("unexpected behavior-changing temp alias finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsAdjacentRangeLoopsOverDifferentSources(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func f(first, second []int) {
+	for _, value := range first {
+		println(value)
+	}
+	for _, value := range second {
+		println(value)
+	}
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `adjacent range loop repeats previous loop body`) {
+		t.Fatalf("unexpected duplicate-loop finding for different sources, got:\n%s", joined)
 	}
 }

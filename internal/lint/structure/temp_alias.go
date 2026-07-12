@@ -45,6 +45,10 @@ func (l *Runner) singleUseTempAlias(stmts []ast.Stmt, idx int) (tempAliasDecl, b
 	if nextUse.unsafe || nextUse.reads != 1 {
 		return tempAliasDecl{}, false
 	}
+	// Inlining must not replace the captured value with a later field or variable value.
+	if l.nodeMayMutateTempAliasSource(stmts[idx+1], decl.rhs) {
+		return tempAliasDecl{}, false
+	}
 
 	for _, later := range stmts[idx+2:] {
 		if nodeUsesObject(later, decl.obj, l.pkg.TypesInfo) {
@@ -53,6 +57,76 @@ func (l *Runner) singleUseTempAlias(stmts []ast.Stmt, idx int) (tempAliasDecl, b
 	}
 
 	return decl, true
+}
+
+func (l *Runner) nodeMayMutateTempAliasSource(node ast.Node, source ast.Expr) bool {
+	objects := make(map[types.Object]struct{})
+
+	ast.Inspect(source, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		obj, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Var)
+		if ok && obj != nil {
+			objects[obj] = struct{}{}
+		}
+
+		return true
+	})
+
+	if len(objects) == 0 {
+		return false
+	}
+
+	for candidate := range ast.Preorder(node) {
+		if l.mutationTargetsObject(candidate, objects) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (l *Runner) mutationTargetsObject(
+	node ast.Node,
+	objects map[types.Object]struct{},
+) bool {
+	switch node := node.(type) {
+	case *ast.AssignStmt:
+		return l.anyMutationRootMatches(node.Lhs, objects)
+	case *ast.IncDecStmt:
+		_, ok := objects[l.objectForMutationRoot(node.X)]
+
+		return ok
+	case *ast.CallExpr:
+		if l.anyMutationRootMatches(node.Args, objects) {
+			return true
+		}
+
+		selector, ok := l.unparen(node.Fun).(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+
+		_, ok = objects[l.objectForMutationRoot(selector.X)]
+
+		return ok
+	default:
+		return false
+	}
+}
+
+func (l *Runner) anyMutationRootMatches(
+	exprs []ast.Expr,
+	objects map[types.Object]struct{},
+) bool {
+	return slices.ContainsFunc(exprs, func(expr ast.Expr) bool {
+		_, ok := objects[l.objectForMutationRoot(expr)]
+
+		return ok
+	})
 }
 
 func (l *Runner) tempAliasDeclFromStmt(stmt ast.Stmt) (tempAliasDecl, bool) {

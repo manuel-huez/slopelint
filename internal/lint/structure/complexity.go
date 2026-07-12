@@ -285,7 +285,7 @@ func (l *Runner) scatteredInputGuardReturns(
 	var summary scatteredGuardSummary
 
 	for _, stmt := range body.List {
-		guard, ok := l.inputReturnGuard(stmt, body.Lbrace, validationTemps, ctx.functionResults)
+		guard, ok := l.inputReturnGuard(stmt, validationTemps, ctx.functionResults)
 		if ok {
 			summary.total++
 			if seenWork {
@@ -298,7 +298,7 @@ func (l *Runner) scatteredInputGuardReturns(
 			continue
 		}
 
-		if l.inputValidationPrepStmt(stmt, body.Lbrace, validationTemps) {
+		if l.inputValidationPrepStmt(stmt, validationTemps) {
 			l.addValidationPrepObjects(validationTemps, stmt)
 			continue
 		}
@@ -319,7 +319,6 @@ func (l *Runner) scatteredInputGuardReturns(
 
 func (l *Runner) inputReturnGuard(
 	stmt ast.Stmt,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 	resultTypes []types.Type,
 ) (*ast.IfStmt, bool) {
@@ -333,7 +332,7 @@ func (l *Runner) inputReturnGuard(
 		return nil, false
 	}
 
-	if !l.inputValidationExpr(ifStmt.Cond, bodyStart, validationTemps) {
+	if !l.inputValidationExpr(ifStmt.Cond, validationTemps) {
 		return nil, false
 	}
 
@@ -411,28 +410,26 @@ func typeImplementsError(typ types.Type) bool {
 
 func (l *Runner) inputValidationExpr(
 	expr ast.Expr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	expr = l.unparen(expr)
 
 	switch expr := expr.(type) {
 	case *ast.Ident:
-		return l.inputValidationIdent(expr, bodyStart, validationTemps)
+		return l.inputValidationIdent(expr, validationTemps)
 	case *ast.BasicLit:
 		return true
 	case *ast.SelectorExpr:
-		return l.inputValidationSelector(expr, bodyStart, validationTemps)
+		return l.inputValidationSelector(expr, validationTemps)
 	case *ast.CallExpr:
-		return l.inputValidationCall(expr, bodyStart, validationTemps)
+		return l.inputValidationCall(expr, validationTemps)
 	case *ast.UnaryExpr:
 		return expr.Op == token.NOT && l.inputValidationExpr(
 			expr.X,
-			bodyStart,
 			validationTemps,
 		)
 	case *ast.BinaryExpr:
-		return l.inputValidationBinary(expr, bodyStart, validationTemps)
+		return l.inputValidationBinary(expr, validationTemps)
 	default:
 		value, ok := l.scalarOf(expr)
 
@@ -470,23 +467,21 @@ func (l *Runner) inputValidationReferencesTrackedObject(
 
 func (l *Runner) inputValidationCall(
 	call *ast.CallExpr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	if call == nil {
 		return false
 	}
 
-	if l.inputValidationLenCall(call, bodyStart, validationTemps) {
+	if l.inputValidationLenCall(call, validationTemps) {
 		return true
 	}
 
-	return l.inputValidationMethodCall(call, bodyStart, validationTemps)
+	return l.inputValidationMethodCall(call, validationTemps)
 }
 
 func (l *Runner) inputValidationLenCall(
 	call *ast.CallExpr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	if len(call.Args) != 1 {
@@ -503,12 +498,11 @@ func (l *Runner) inputValidationLenCall(
 		return false
 	}
 
-	return l.inputValidationExpr(call.Args[0], bodyStart, validationTemps)
+	return l.inputValidationExpr(call.Args[0], validationTemps)
 }
 
 func (l *Runner) inputValidationMethodCall(
 	call *ast.CallExpr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	if len(call.Args) != 0 {
@@ -525,20 +519,19 @@ func (l *Runner) inputValidationMethodCall(
 		return false
 	}
 
-	return l.inputValidationExpr(selector.X, bodyStart, validationTemps)
+	return l.inputValidationExpr(selector.X, validationTemps)
 }
 
 func (l *Runner) inputValidationBinary(
 	expr *ast.BinaryExpr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	//exhaustive:ignore only boolean and comparison operators form validation guards.
 	switch expr.Op {
 	case token.LAND, token.LOR,
 		token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
-		return l.inputValidationExpr(expr.X, bodyStart, validationTemps) &&
-			l.inputValidationExpr(expr.Y, bodyStart, validationTemps)
+		return l.inputValidationExpr(expr.X, validationTemps) &&
+			l.inputValidationExpr(expr.Y, validationTemps)
 	default:
 		return false
 	}
@@ -546,7 +539,6 @@ func (l *Runner) inputValidationBinary(
 
 func (l *Runner) inputValidationIdent(
 	ident *ast.Ident,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	if ident == nil {
@@ -573,7 +565,6 @@ func (l *Runner) inputValidationIdent(
 
 func (l *Runner) inputValidationSelector(
 	expr *ast.SelectorExpr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	if expr == nil {
@@ -589,7 +580,7 @@ func (l *Runner) inputValidationSelector(
 		return false
 	}
 
-	return l.inputValidationExpr(expr.X, bodyStart, validationTemps)
+	return l.inputValidationExpr(expr.X, validationTemps)
 }
 
 func (l *Runner) validationPrepFailureGuard(
@@ -726,7 +717,6 @@ func (l *Runner) isBoolLiteral(expr ast.Expr, want bool) bool {
 
 func (l *Runner) inputValidationPrepStmt(
 	stmt ast.Stmt,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	assign, ok := stmt.(*ast.AssignStmt)
@@ -735,7 +725,7 @@ func (l *Runner) inputValidationPrepStmt(
 	}
 
 	for _, rhs := range assign.Rhs {
-		if !l.inputValidationPrepExpr(rhs, bodyStart, validationTemps) {
+		if !l.inputValidationPrepExpr(rhs, validationTemps) {
 			return false
 		}
 
@@ -749,22 +739,21 @@ func (l *Runner) inputValidationPrepStmt(
 
 func (l *Runner) inputValidationPrepExpr(
 	expr ast.Expr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	expr = l.unparen(expr)
 
-	if l.inputValidationExpr(expr, bodyStart, validationTemps) {
+	if l.inputValidationExpr(expr, validationTemps) {
 		return true
 	}
 
 	call, ok := expr.(*ast.CallExpr)
-	if !ok || !l.inputValidationPrepCall(call, bodyStart, validationTemps) {
+	if !ok || !l.inputValidationPrepCall(call, validationTemps) {
 		return false
 	}
 
 	for _, arg := range call.Args {
-		if !l.inputValidationPrepExpr(arg, bodyStart, validationTemps) {
+		if !l.inputValidationPrepExpr(arg, validationTemps) {
 			return false
 		}
 	}
@@ -774,7 +763,6 @@ func (l *Runner) inputValidationPrepExpr(
 
 func (l *Runner) inputValidationPrepCall(
 	call *ast.CallExpr,
-	bodyStart token.Pos,
 	validationTemps map[types.Object]struct{},
 ) bool {
 	if call == nil {
@@ -790,7 +778,7 @@ func (l *Runner) inputValidationPrepCall(
 		}
 
 		if selection := l.pkg.TypesInfo.Selections[fun]; selection != nil {
-			return l.inputValidationExpr(fun.X, bodyStart, validationTemps)
+			return l.inputValidationExpr(fun.X, validationTemps)
 		}
 
 		return true

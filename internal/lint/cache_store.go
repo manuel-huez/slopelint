@@ -42,7 +42,6 @@ func loadAnalysisCacheEntry(path string) (*analysisCacheEntry, bool) {
 
 func (cache *analysisCache) store(
 	pass *analysis.Pass,
-	pkg *LoadedPackage,
 	l *linter,
 	issues []Issue,
 ) error {
@@ -50,7 +49,7 @@ func (cache *analysisCache) store(
 		return nil
 	}
 
-	entry, err := buildAnalysisCacheEntry(pass, pkg, l, issues)
+	entry, err := buildAnalysisCacheEntry(pass, l, issues)
 	if err != nil {
 		return err
 	}
@@ -107,13 +106,12 @@ func writeAnalysisCacheEntry(path string, entry analysisCacheEntry) error {
 
 func buildAnalysisCacheEntry(
 	pass *analysis.Pass,
-	pkg *LoadedPackage,
 	l *linter,
 	issues []Issue,
 ) (analysisCacheEntry, error) {
 	entry := analysisCacheEntry{
 		Issues:  make([]analysisCacheIssue, 0, len(issues)),
-		Exports: cachedExportsForLinter(pkg, l),
+		Exports: cachedExportsForLinter(l),
 	}
 
 	cachedIssues, err := buildAnalysisCacheIssues(

@@ -3,6 +3,7 @@ package lint
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"strconv"
 	"strings"
@@ -18,14 +19,16 @@ type guardContract struct {
 }
 
 type contractTarget struct {
-	param int
-	recv  bool
-	path  []string
+	param    int
+	recv     bool
+	variadic bool
+	path     []string
 }
 
 type contractBinding struct {
-	param int
-	recv  bool
+	param    int
+	recv     bool
+	variadic bool
 }
 
 func (l *linter) collectContracts() {
@@ -33,6 +36,52 @@ func (l *linter) collectContracts() {
 		l.explicitFacts = make(map[string][]guardContract)
 	}
 
+	l.forEachDocumentedFunc(func(fn *ast.FuncDecl) {
+		obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
+		if !ok || obj == nil {
+			return
+		}
+
+		bindings := contractBindingsForFunc(fn)
+		if len(bindings) == 0 {
+			return
+		}
+
+		key := funcObjectKey(obj)
+
+		for _, comment := range fn.Doc.List {
+			contract, ok := parseGuardContract(comment.Text, bindings)
+			if !ok {
+				continue
+			}
+
+			l.explicitFacts[key] = append(l.explicitFacts[key], contract)
+		}
+	})
+}
+
+func (l *linter) checkContractComments() {
+	l.forEachDocumentedFunc(func(fn *ast.FuncDecl) {
+		bindings := contractBindingsForFunc(fn)
+		for _, comment := range fn.Doc.List {
+			if _, prefixed := trimContractPrefix(comment.Text); !prefixed {
+				continue
+			}
+
+			if _, ok := parseGuardContract(comment.Text, bindings); ok {
+				continue
+			}
+
+			l.report(
+				comment.Pos(),
+				"invalid_contract",
+				fmt.Sprintf("invalid %s contract %q", contractPrefix, comment.Text),
+			)
+		}
+	})
+}
+
+func (l *linter) forEachDocumentedFunc(visit func(*ast.FuncDecl)) {
 	for _, file := range l.pkg.Files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -40,26 +89,7 @@ func (l *linter) collectContracts() {
 				continue
 			}
 
-			obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-			if !ok || obj == nil {
-				continue
-			}
-
-			bindings := contractBindingsForFunc(fn)
-			if len(bindings) == 0 {
-				continue
-			}
-
-			key := funcObjectKey(obj)
-
-			for _, comment := range fn.Doc.List {
-				contract, ok := parseGuardContract(comment.Text, bindings)
-				if !ok {
-					continue
-				}
-
-				l.explicitFacts[key] = append(l.explicitFacts[key], contract)
-			}
+			visit(fn)
 		}
 	}
 }
@@ -78,9 +108,12 @@ func contractBindingsForFunc(fn *ast.FuncDecl) map[string]contractBinding {
 	paramIndex := 0
 
 	if fn.Type.Params != nil {
-		for _, field := range fn.Type.Params.List {
+		for fieldIndex, field := range fn.Type.Params.List {
+			_, variadic := field.Type.(*ast.Ellipsis)
+			variadic = variadic && fieldIndex == len(fn.Type.Params.List)-1
+
 			for _, name := range field.Names {
-				out[name.Name] = contractBinding{param: paramIndex}
+				out[name.Name] = contractBinding{param: paramIndex, variadic: variadic}
 				paramIndex++
 			}
 		}
@@ -117,9 +150,10 @@ func parseGuardContract(text string, bindings map[string]contractBinding) (guard
 
 	return guardContract{
 		target: contractTarget{
-			param: binding.param,
-			recv:  binding.recv,
-			path:  append([]string(nil), parts[1:]...),
+			param:    binding.param,
+			recv:     binding.recv,
+			variadic: binding.variadic,
+			path:     append([]string(nil), parts[1:]...),
 		},
 		value:  value,
 		wantEq: wantEq,
@@ -255,6 +289,10 @@ func (l *linter) symbolForContractTarget(call *ast.CallExpr, target contractTarg
 		baseExpr = sel.X
 	} else {
 		if target.param < 0 || target.param >= len(call.Args) {
+			return symbol{}, false
+		}
+
+		if target.variadic && call.Ellipsis == token.NoPos {
 			return symbol{}, false
 		}
 

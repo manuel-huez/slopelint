@@ -14,7 +14,7 @@ type repoTokenFile struct {
 	fset *token.FileSet
 }
 
-func cachedExportsForLinter(pkg *LoadedPackage, l *linter) []analysisCacheExport {
+func cachedExportsForLinter(l *linter) []analysisCacheExport {
 	funcs := l.collectSummarizableFuncs()
 	if len(funcs) == 0 {
 		return nil

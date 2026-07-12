@@ -116,20 +116,7 @@ func Live() {}
 }
 
 func TestRepoDeadCodeKeepsValueTextMarshalHookThroughJSONEncoders(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
-
-go 1.22
-
-require github.com/goccy/go-json v0.0.0
-
-replace github.com/goccy/go-json => ./gojson
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "gojson", "go.mod"),
-		"module github.com/goccy/go-json\n\ngo 1.22\n",
-	)
+	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
 func Marshal(any) ([]byte, error) { return nil, nil }

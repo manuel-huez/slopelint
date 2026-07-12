@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsTestGlobalFuncStub(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func run() {}
@@ -45,8 +44,7 @@ func testCall() {
 }
 
 func TestDetectsTestGlobalFuncStubWithTestingImport(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func run() {}
@@ -81,8 +79,7 @@ func TestCall(t *testing.T) {
 }
 
 func TestDetectsBoolModeParamCalledWithLiteral(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func emit(final bool) {
@@ -116,8 +113,7 @@ func run() {
 }
 
 func TestSkipsBoolModeParamWithoutLiteralCall(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func emit(final bool) {
@@ -143,8 +139,7 @@ func run(final bool) {
 }
 
 func TestDetectsZeroValuePrivateArg(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Coverage struct {
@@ -197,8 +192,7 @@ func coverageContainsDate(coverage Coverage, date string) bool {
 }
 
 func TestSkipsZeroValuePrivateArgWithRealCallerValue(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Coverage struct {
@@ -231,8 +225,7 @@ func encodeInCoverage(rows []string, coverage Coverage) []string {
 }
 
 func TestDetectsOptionalResultTriple(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func decode(value string) (string, bool, error) {
@@ -260,8 +253,7 @@ func decode(value string) (string, bool, error) {
 }
 
 func TestDetectsProductionErrorPanic(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "errors"
@@ -292,8 +284,7 @@ func mustValue() string {
 }
 
 func TestSkipsProductionErrorPanicInTests(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
 var testErr error
@@ -315,8 +306,7 @@ func testMustValue() {
 }
 
 func TestSkipsProductionErrorPanicWhenPanicIsShadowed(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "errors"
@@ -337,8 +327,7 @@ func run() {
 }
 
 func TestDetectsSentinelErrorBreak(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import (
@@ -382,8 +371,7 @@ func first() error {
 }
 
 func TestSkipsSentinelErrorCheckThatReturnsSentinel(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import (
@@ -423,8 +411,7 @@ func first() error {
 }
 
 func TestSkipsUnrelatedSentinelErrorSuppression(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import (
@@ -461,5 +448,86 @@ func first(err error) error {
 
 	if strings.Contains(joined, `callback returns sentinel error`) {
 		t.Fatalf("unexpected sentinel-error-break finding for unrelated err, got:\n%s", joined)
+	}
+}
+
+func TestSkipsSentinelErrorSuppressionAfterErrorReassignment(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "errors"
+
+var errStop = errors.New("stop")
+
+func walk(fn func() error) error { return fn() }
+func unrelated() error { return nil }
+
+func f() error {
+	err := walk(func() error { return errStop })
+	err = unrelated()
+	if errors.Is(err, errStop) {
+		return nil
+	}
+	return err
+}
+
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `callback returns sentinel error`) {
+		t.Fatalf("unexpected sentinel finding across reassignment, got:\n%s", joined)
+	}
+}
+
+func TestDetectsUnusedPrivateParameter(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func parse(value string, unused int) string {
+	return value
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(joined, `private function "parse" does not use parameter "unused"`) {
+		t.Fatalf("expected unused-private-param finding, got:\n%s", joined)
+	}
+}
+
+func TestDetectsStaleComplexitySuppression(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+//nolint:cyclop,gocognit // stale suppression
+func parse(value string) string {
+	return value
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(
+		joined,
+		`function "parse" suppresses complexity checks but has no decision points`,
+	) {
+		t.Fatalf("expected stale-complexity-suppression finding, got:\n%s", joined)
+	}
+}
+
+func TestSkipsComplexitySuppressionWithDecision(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+//nolint:cyclop // decision-heavy shape represented minimally for detector coverage
+func parse(value string) string {
+	if value == "" {
+		return "missing"
+	}
+	return value
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, "stale_complexity_suppression") {
+		t.Fatalf("unexpected stale-complexity-suppression finding, got:\n%s", joined)
 	}
 }

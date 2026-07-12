@@ -1,15 +1,11 @@
 package slopelint
 
 import (
-	"reflect"
-
 	"github.com/manuel-huez/slopelint/internal/lint"
 	"golang.org/x/tools/go/analysis"
 )
 
 const defaultMaxStates = 32
-
-type analysisResult struct{}
 
 var maxStates = defaultMaxStates
 var cacheEnabled = true
@@ -17,11 +13,10 @@ var cacheDir string
 
 // Analyzer reports path-proven redundancy and other low-signal code structure.
 var Analyzer = &analysis.Analyzer{
-	Name:       "slopelint",
-	Doc:        "report path-proven redundancy and other low-signal code structure",
-	FactTypes:  lint.AnalysisFactTypes(),
-	Run:        run,
-	ResultType: reflect.TypeFor[analysisResult](),
+	Name:      "slopelint",
+	Doc:       "report path-proven redundancy and other low-signal code structure",
+	FactTypes: lint.AnalysisFactTypes(),
+	Run:       run,
 }
 
 func init() {
@@ -63,5 +58,6 @@ func run(pass *analysis.Pass) (any, error) {
 		})
 	}
 
-	return analysisResult{}, nil
+	// analysis.Run uses a nil result when ResultType is unset.
+	return nil, nil //nolint:nilnil
 }

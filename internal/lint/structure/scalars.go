@@ -1,7 +1,6 @@
 package structure
 
 import (
-	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/token"
@@ -19,10 +18,6 @@ const scalarInt scalarKind = 4
 type scalar struct {
 	text string
 	kind scalarKind
-}
-
-func (s scalar) key() string {
-	return fmt.Sprintf("%d:%s", s.kind, s.text)
 }
 
 func (l *Runner) scalarOf(expr ast.Expr) (scalar, bool) {

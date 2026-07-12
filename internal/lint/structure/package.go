@@ -17,7 +17,6 @@ const (
 	nilText       = "nil"
 	panicText     = "panic"
 	unknownExpr   = "<expr>"
-	zeroIntText   = "0"
 )
 
 // Finding is one structural diagnostic emitted by this package.

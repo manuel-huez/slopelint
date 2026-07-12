@@ -30,7 +30,7 @@ Structural ceremony:
 - guard returns that duplicate the following fallback return
 - nested final `if` pyramids that can become guard clauses
 - adjacent `switch` cases with identical bodies
-- redundant `default` clauses in exhaustive `bool` and closed const-set switches
+- redundant `default` clauses in exhaustive `bool` switches
 - redundant `len(src) > 0` guards before `append(dst, src...)`
 - redundant `len(items) > 0`, `items != nil`, and combined guards before
   `range` loops
@@ -58,12 +58,17 @@ Package-level smells:
 - single-implementation private interfaces
 - functional options around tiny private APIs
 - private parameters always passed as zero value by production uses
+- unused parameters on private functions
 - private result wrappers that only carry value plus status
 - generic helper names when paired with another smell
 - unused private functions, methods, types, vars, consts, and struct fields in production code;
   references from internal or external tests do not keep production declarations live
 - exported functions, methods, types, vars, consts, and struct fields unreachable from repo entrypoints
 - one source diagnostic per unreachable declaration subgraph instead of cascading through every member
+- repeated test fixture contents that should live in one test builder
+- complexity suppressions on functions with no decision points
+- unreachable panic calls immediately after `testing.T.Fatal` or `Fatalf`
+- non-generated owner files over 1,000 lines
 
 ## How It Works
 
@@ -161,6 +166,7 @@ go build -o ./bin/slopelint ./cmd/slopelint
 ```bash
 go run ./cmd/slopelint ./...
 go run ./cmd/slopelint -max-states=64 ./...
+go run ./cmd/slopelint -closed-world ./...
 
 ./bin/slopelint ./...
 go vet -vettool=$(pwd)/bin/slopelint ./...
@@ -169,6 +175,8 @@ go vet -vettool=$(pwd)/bin/slopelint ./...
 Useful `slopelint` flags:
 
 - `-max-states`: maximum symbolic states before widening, default `32`
+- `-closed-world`: treat matched `main` packages as complete production entrypoints;
+  enables repo-wide exported dead-code findings
 
 Useful inherited `singlechecker` flags:
 
@@ -195,7 +203,9 @@ go test ./...
 ```
 
 `check-code-health.sh` runs `go vet`, `slopelint` on this repo, `go test`,
-`golangci-lint run`, and `jscpd` with production-code clone threshold `0`.
+`golangci-lint run`, and `jscpd` with production-code clone threshold `0` plus
+an `18%` ceiling for test harness code. Embedded Go fixtures remain intentionally
+similar; `repeated_test_fixture` catches exact copied fixture contents.
 
 ## Current Limits
 
@@ -204,8 +214,8 @@ go test ./...
 - conservative around writes, unknown calls, loops, closures, goroutines,
   `select`, type switches, and labeled control flow
 - strongest on small path facts and local/private API smells
-- repo-wide dead-code reachability runs in standalone `slopelint` mode when
-  loaded patterns include a `main` package; vettool mode stays package-scoped
+- repo-wide dead-code reachability runs only with standalone `-closed-world`
+  when loaded patterns include a `main` package; vettool mode stays package-scoped
 - dead-code results cover the active `GOOS`, `GOARCH`, and build-tag configuration;
   run once per relevant configuration, for example with `GOFLAGS='-tags=mytag'`
 - weak at type-level semantic meaning
@@ -233,11 +243,16 @@ Machine-readable diagnostic categories emitted today:
 - `nested_lookup_loop`
 - `pairwise_comparison_loop`
 - `predicate_signature`
+- `unused_private_param`
 - `const_grouping`
 - `var_grouping`
 - `type_grouping`
 - `mixed_const_prefixes`
 - `table_test_grouping`
+- `repeated_test_fixture`
+- `stale_complexity_suppression`
+- `test_fatal_panic`
+- `oversized_owner_file`
 - `trivial_wrapper`
 - `comment_noise`
 - `serialization_ceremony`
@@ -253,6 +268,7 @@ Machine-readable diagnostic categories emitted today:
 - `optional_result_triple`
 - `prod_must_panic`
 - `sentinel_error_break`
+- `invalid_contract`
 
 ## Contracts
 
@@ -275,3 +291,4 @@ Contract form:
 
 Supported scalars: `nil`, `true`, `false`, quoted strings, and base-10 ints.
 Receiver contracts work on named receivers.
+Malformed `slopelint:ensures` comments emit `invalid_contract` instead of being ignored.

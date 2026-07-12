@@ -7,14 +7,15 @@ import (
 )
 
 const (
-	marshalJSONMethodName = "MarshalJSON"
-	marshalTextMethodName = "MarshalText"
-	stringMethodName      = "String"
-	encodingJSONPkgPath   = "encoding/json"
+	marshalJSONMethodName  = "MarshalJSON"
+	marshalTextMethodName  = "MarshalText"
+	stringMethodName       = "String"
+	encodingJSONPkgPath    = "encoding/json"
+	marshalTextResultCount = 2
 )
 
 func (l *Runner) checkRedundantJSONMarshalText() {
-	textMarshalers := l.valueTextMarshalerTypes()
+	textMarshalers := l.equivalentTextMarshalerTypes()
 	if len(textMarshalers) == 0 {
 		return
 	}
@@ -44,7 +45,7 @@ func (l *Runner) checkRedundantJSONMarshalText() {
 	}
 }
 
-func (l *Runner) valueTextMarshalerTypes() map[string]struct{} {
+func (l *Runner) equivalentTextMarshalerTypes() map[string]struct{} {
 	out := make(map[string]struct{})
 
 	for _, file := range l.pkg.Files {
@@ -59,11 +60,54 @@ func (l *Runner) valueTextMarshalerTypes() map[string]struct{} {
 				continue
 			}
 
+			recvObj, ok := receiverVarObject(l.pkg.TypesInfo, fn)
+			if !ok || !l.marshalTextReturnsReceiverString(fn.Body, recvObj) {
+				continue
+			}
+
 			out[typeName] = struct{}{}
 		}
 	}
 
 	return out
+}
+
+func (l *Runner) marshalTextReturnsReceiverString(
+	body *ast.BlockStmt,
+	recvObj *types.Var,
+) bool {
+	results, ok := singleReturnResults(body, marshalTextResultCount)
+	if !ok {
+		return false
+	}
+
+	nilResult, ok := ast.Unparen(results[1]).(*ast.Ident)
+	if !ok || nilResult.Name != nilText {
+		return false
+	}
+
+	conversion, ok := l.unparen(results[0]).(*ast.CallExpr)
+	if !ok || len(conversion.Args) != 1 || conversion.Ellipsis.IsValid() {
+		return false
+	}
+
+	tv, ok := l.pkg.TypesInfo.Types[l.unparen(conversion.Fun)]
+	if !ok || !tv.IsType() || !isByteSlice(tv.Type) {
+		return false
+	}
+
+	return l.isReceiverStringCall(conversion.Args[0], recvObj)
+}
+
+func isByteSlice(typ types.Type) bool {
+	slice, ok := types.Unalias(typ).Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+
+	basic, ok := types.Unalias(slice.Elem()).Underlying().(*types.Basic)
+
+	return ok && basic.Kind() == types.Uint8
 }
 
 func (l *Runner) redundantJSONMarshalTextMethod(
@@ -126,16 +170,12 @@ func (l *Runner) marshalJSONOnlyMarshalsString(
 	body *ast.BlockStmt,
 	recvObj *types.Var,
 ) bool {
-	if body == nil || len(body.List) != 1 {
+	results, ok := singleReturnResults(body, 1)
+	if !ok {
 		return false
 	}
 
-	ret, ok := body.List[0].(*ast.ReturnStmt)
-	if !ok || len(ret.Results) != 1 {
-		return false
-	}
-
-	call, ok := l.unparen(ret.Results[0]).(*ast.CallExpr)
+	call, ok := l.unparen(results[0]).(*ast.CallExpr)
 	if !ok || len(call.Args) != 1 {
 		return false
 	}
@@ -145,6 +185,19 @@ func (l *Runner) marshalJSONOnlyMarshalsString(
 	}
 
 	return l.isReceiverStringCall(call.Args[0], recvObj)
+}
+
+func singleReturnResults(body *ast.BlockStmt, count int) ([]ast.Expr, bool) {
+	if body == nil || len(body.List) != 1 {
+		return nil, false
+	}
+
+	ret, ok := body.List[0].(*ast.ReturnStmt)
+	if !ok {
+		return nil, false
+	}
+
+	return ret.Results, len(ret.Results) == count
 }
 
 func (l *Runner) isReceiverStringCall(expr ast.Expr, recvObj *types.Var) bool {

@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsMembershipScanInsideLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "slices"
@@ -38,8 +37,7 @@ func f(items []string, allowed []string) {
 }
 
 func TestDetectsExplicitGenericMembershipScanInsideLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "slices"
@@ -65,8 +63,7 @@ func f(items []string, allowed []string) {
 }
 
 func TestSkipsLoopSpecificMembershipScan(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "slices"
@@ -93,8 +90,7 @@ func f(groups []group) {
 }
 
 func TestSkipsMembershipScanAfterCollectionReassignedInsideLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "slices"
@@ -122,8 +118,7 @@ func f(items []string, allowed []string) {
 }
 
 func TestSkipsMembershipScanAfterCollectionIndexMutationInsideLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "slices"
@@ -147,8 +142,7 @@ func f(items []string, allowed []string) {
 }
 
 func TestSkipsMembershipScanAfterHelperMayMutateCollectionInsideLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "slices"
@@ -174,8 +168,7 @@ func f(items []string, allowed []string) {
 }
 
 func TestDetectsSortInsideLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "slices"
@@ -204,8 +197,7 @@ func f(items []string, keys []int) {
 }
 
 func TestSkipsSortInsideLoopWhenComparatorVarUsesLoopValue(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "sort"
@@ -238,8 +230,7 @@ func f(groups []group, users []user) {
 }
 
 func TestDetectsLoopInvariantRegexp(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "regexp"
@@ -270,8 +261,7 @@ func f(items []string) {
 }
 
 func TestDetectsNestedLookupLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type order struct {
@@ -311,8 +301,7 @@ func f(orders []order, customers []customer) {
 }
 
 func TestSkipsNestedLookupLoopWithSideEffectStmt(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type order struct {
@@ -348,8 +337,7 @@ func f(orders []order, customers []customer) {
 }
 
 func TestDetectsPairwiseComparisonLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type span struct {
@@ -384,8 +372,7 @@ func f(spans []span) {
 }
 
 func TestSkipsPairwiseComparisonLoopForShadowedRangeSource(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type span struct {
@@ -414,8 +401,7 @@ func f(spans []span) {
 }
 
 func TestDetectsNetworkCallInsideLoop(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "net/http"
@@ -443,8 +429,7 @@ func f(urls []string) {
 }
 
 func TestDetectsNetworkCallWithLoopDerivedTemp(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "net/http"

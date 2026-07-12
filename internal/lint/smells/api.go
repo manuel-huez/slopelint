@@ -276,3 +276,54 @@ func (l *Runner) isPackageFuncCall(call *ast.CallExpr, pkgPath, name string) boo
 
 	return fn.Pkg().Path() == pkgPath && fn.Name() == name
 }
+
+func (l *Runner) checkUnusedPrivateParams() {
+	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
+		if fn == nil || fn.Name == nil || fn.Body == nil || ast.IsExported(fn.Name.Name) {
+			return
+		}
+
+		for _, field := range fn.Type.Params.List {
+			for _, name := range field.Names {
+				if name == nil || name.Name == "_" {
+					continue
+				}
+
+				obj := l.pkg.TypesInfo.ObjectOf(name)
+				if obj == nil || nodeUsesObject(fn.Body, obj, l.pkg.TypesInfo) {
+					continue
+				}
+
+				l.report(
+					name.Pos(),
+					"unused_private_param",
+					fmt.Sprintf(
+						`private function %q does not use parameter %q; remove it and update callers or name it _ when signature shape is required`,
+						fn.Name.Name,
+						name.Name,
+					),
+				)
+			}
+		}
+	})
+}
+
+func nodeUsesObject(node ast.Node, target types.Object, info *types.Info) bool {
+	used := false
+
+	ast.Inspect(node, func(node ast.Node) bool {
+		if used {
+			return false
+		}
+
+		ident, ok := node.(*ast.Ident)
+		if ok && info.ObjectOf(ident) == target {
+			used = true
+			return false
+		}
+
+		return true
+	})
+
+	return used
+}

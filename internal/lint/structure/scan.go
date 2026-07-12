@@ -52,8 +52,9 @@ type tempAliasDecl struct {
 }
 
 type rangeLoopShape struct {
-	key string
-	pos token.Pos
+	key    string
+	source string
+	pos    token.Pos
 }
 
 type appendLenGuardMatch struct {
@@ -132,7 +133,7 @@ func (l *Runner) scanStructuralIfStmt(stmt *ast.IfStmt) {
 
 func (l *Runner) scanStructuralSwitchStmt(stmt *ast.SwitchStmt) {
 	l.checkIdenticalSwitchBranches(stmt)
-	l.checkExhaustiveDefensiveDefault(stmt)
+	l.checkExhaustiveBoolDefault(stmt)
 	l.scanCaseClauseBodies(stmt.Body.List)
 }
 

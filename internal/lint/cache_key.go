@@ -62,18 +62,20 @@ func repoAnalysisCacheKey(pkgs []*LoadedPackage, opts Options) (string, error) {
 	}
 
 	fingerprint := struct {
-		Schema     int                        `json:"schema"`
-		MaxStates  int                        `json:"max_states"`
-		Executable analysisCacheExecutable    `json:"executable"`
-		Packages   []repoAnalysisCachePackage `json:"packages"`
-		Imports    []repoAnalysisCacheImport  `json:"imports"`
-		Files      []analysisCacheFile        `json:"files"`
+		Schema      int                        `json:"schema"`
+		MaxStates   int                        `json:"max_states"`
+		ClosedWorld bool                       `json:"closed_world"`
+		Executable  analysisCacheExecutable    `json:"executable"`
+		Packages    []repoAnalysisCachePackage `json:"packages"`
+		Imports     []repoAnalysisCacheImport  `json:"imports"`
+		Files       []analysisCacheFile        `json:"files"`
 	}{
-		Schema:     analysisCacheSchema,
-		MaxStates:  maxStates,
-		Executable: analysisCacheExecutableStamp(),
-		Packages:   repoAnalysisCachePackages(pkgs),
-		Imports:    repoAnalysisCacheImports(pkgs),
+		Schema:      analysisCacheSchema,
+		MaxStates:   maxStates,
+		ClosedWorld: opts.ClosedWorld,
+		Executable:  analysisCacheExecutableStamp(),
+		Packages:    repoAnalysisCachePackages(pkgs),
+		Imports:     repoAnalysisCacheImports(pkgs),
 	}
 
 	files, err := repoAnalysisCacheFiles(pkgs)

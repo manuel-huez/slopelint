@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsRedundantBoolReturn(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool) bool {
@@ -32,8 +31,7 @@ func f(ok bool) bool {
 }
 
 func TestDetectsRedundantBoolAssignment(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool) bool {
@@ -56,8 +54,7 @@ func f(ok bool) bool {
 }
 
 func TestDetectsIdenticalIfElseBodies(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool) error {
@@ -74,7 +71,7 @@ func f(ok bool) error {
 
 	if !strings.Contains(
 		joined,
-		`if and else branches are identical; drop condition or hoist shared body`,
+		`if and else branches are identical; preserve condition evaluation and hoist shared body`,
 	) {
 		t.Fatalf("expected identical-branch finding, got:\n%s", joined)
 	}
@@ -85,8 +82,7 @@ func f(ok bool) error {
 }
 
 func TestSkipsIdenticalIfElseBodiesWhenScopeWouldChange(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool) int {
@@ -105,7 +101,7 @@ func f(ok bool) int {
 
 	if strings.Contains(
 		joined,
-		`if and else branches are identical; drop condition or hoist shared body`,
+		`if and else branches are identical; preserve condition evaluation and hoist shared body`,
 	) {
 		t.Fatalf(
 			"unexpected identical-branch finding when branch-local defs exist, got:\n%s",
@@ -115,8 +111,7 @@ func f(ok bool) int {
 }
 
 func TestDetectsRedundantReturnGuardBeforeFallback(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(err error) error {
@@ -140,8 +135,7 @@ func f(err error) error {
 }
 
 func TestDetectsRedundantReturnGuardSetBeforeFallback(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(first bool, second bool) int {
@@ -168,8 +162,7 @@ func f(first bool, second bool) int {
 }
 
 func TestSkipsRedundantReturnGuardWhenConditionMayPanic(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type req struct { name string }
@@ -195,8 +188,7 @@ func f(req *req) string {
 }
 
 func TestSkipsRedundantReturnGuardWhenEqualityMayPanic(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type box struct { value any }
@@ -230,8 +222,7 @@ func G(left box, right box) int {
 }
 
 func TestDetectsNestedFinalIfPyramid(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool, ready bool) {
@@ -255,8 +246,7 @@ func f(ok bool, ready bool) {
 }
 
 func TestSkipsNestedIfPyramidWhenWorkFollows(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool, ready bool) {
@@ -279,8 +269,7 @@ func f(ok bool, ready bool) {
 }
 
 func TestDetectsIdenticalSwitchCaseBodies(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool) int {
@@ -306,8 +295,7 @@ func f(ok bool) int {
 }
 
 func TestSkipsNonAdjacentPredicateSwitchBodies(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(x int) int {
@@ -335,8 +323,7 @@ func f(x int) int {
 }
 
 func TestDetectsExhaustiveBoolDefault(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool) {
@@ -367,8 +354,7 @@ func f(ok bool) {
 }
 
 func TestSkipsExhaustiveBoolDefaultWithPanic(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(ok bool) {
@@ -394,9 +380,8 @@ func f(ok bool) {
 	}
 }
 
-func TestDetectsExhaustiveConstSetDefault(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+func TestSkipsExhaustiveConstSetDefault(t *testing.T) {
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type mode int
@@ -421,44 +406,7 @@ func f(value mode) int {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if !strings.Contains(
-		joined,
-		`default case is redundant; mode switch covers all in-package constants`,
-	) {
-		t.Fatalf("expected redundant const-set default finding, got:\n%s", joined)
-	}
-}
-
-func TestSkipsExhaustiveConstSetDefaultWhenZeroValueInvalid(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-import "fmt"
-
-type mode int
-
-const (
-	modeRead mode = iota + 1
-	modeWrite
-)
-
-func f(value mode) (int, error) {
-	switch value {
-	case modeRead:
-		return 1, nil
-	case modeWrite:
-		return 2, nil
-	default:
-		return 0, fmt.Errorf("invalid mode %d", value)
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `switch covers all in-package constants`) {
+	if strings.Contains(joined, `default case is redundant`) {
 		t.Fatalf("unexpected redundant const-set default finding, got:\n%s", joined)
 	}
 }

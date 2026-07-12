@@ -3,6 +3,7 @@ package smells
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"strings"
 	"unicode"
 )
@@ -242,4 +243,75 @@ func restatementWordsMatch(commentWord, identWord string) bool {
 	}
 
 	return false
+}
+
+func (l *Runner) checkStaleComplexitySuppressions() {
+	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
+		if fn == nil || fn.Body == nil || !hasComplexitySuppression(fn.Doc) {
+			return
+		}
+
+		if funcBodyHasDecision(fn.Body) {
+			return
+		}
+
+		l.report(
+			fn.Pos(),
+			"stale_complexity_suppression",
+			fmt.Sprintf(
+				`function %q suppresses complexity checks but has no decision points; remove stale nolint directive`,
+				fn.Name.Name,
+			),
+		)
+	})
+}
+
+func hasComplexitySuppression(doc *ast.CommentGroup) bool {
+	if doc == nil {
+		return false
+	}
+
+	for _, comment := range doc.List {
+		text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+		if !strings.HasPrefix(text, "nolint:") {
+			continue
+		}
+
+		linters := strings.TrimPrefix(strings.Fields(text)[0], "nolint:")
+		for linter := range strings.SplitSeq(linters, ",") {
+			if linter == "cyclop" || linter == "gocognit" || linter == "nestif" {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func funcBodyHasDecision(body *ast.BlockStmt) bool {
+	hasDecision := false
+
+	ast.Inspect(body, func(node ast.Node) bool {
+		if hasDecision {
+			return false
+		}
+
+		switch node := node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt,
+			*ast.TypeSwitchStmt, *ast.SelectStmt:
+			hasDecision = true
+
+			return false
+		case *ast.BinaryExpr:
+			hasDecision = node.Op == token.LAND || node.Op == token.LOR
+
+			return !hasDecision
+		default:
+			return true
+		}
+	})
+
+	return hasDecision
 }

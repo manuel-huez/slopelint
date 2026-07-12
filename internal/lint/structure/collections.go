@@ -447,7 +447,7 @@ func (l *Runner) duplicateAdjacentRangeLoop(stmts []ast.Stmt, idx int) (rangeLoo
 	}
 
 	prior, ok := l.rangeLoopShape(stmts[idx-1])
-	if !ok || current.key != prior.key {
+	if !ok || current.key != prior.key || current.source != prior.source {
 		return rangeLoopShape{}, false
 	}
 
@@ -482,7 +482,11 @@ func (l *Runner) rangeLoopShape(stmt ast.Stmt) (rangeLoopShape, bool) {
 		rendered = normalizeRenderedIdentifier(rendered, keyName, "$key")
 	}
 
-	return rangeLoopShape{key: rendered, pos: loop.For}, true
+	return rangeLoopShape{
+		key:    rendered,
+		source: l.render(l.unparen(loop.X)),
+		pos:    loop.For,
+	}, true
 }
 
 func (l *Runner) rangeLoopIdent(expr ast.Expr) (string, types.Object) {

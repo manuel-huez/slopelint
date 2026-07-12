@@ -45,13 +45,7 @@ func (l *Runner) isPanicWithError(call *ast.CallExpr) bool {
 		return false
 	}
 
-	ident, ok := l.unparen(call.Fun).(*ast.Ident)
-	if !ok || ident == nil || ident.Name != panicText {
-		return false
-	}
-
-	obj, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Builtin)
-	if !ok || obj == nil || obj.Name() != panicText {
+	if !l.isBuiltinCall(call, panicText) {
 		return false
 	}
 
@@ -64,9 +58,10 @@ const (
 )
 
 type sentinelReturn struct {
-	text   string
-	pos    token.Pos
-	errObj types.Object
+	text        string
+	pos         token.Pos
+	assignedEnd token.Pos
+	errObj      types.Object
 }
 
 type errorSentinelPolarity uint8
@@ -98,7 +93,13 @@ func (l *Runner) checkSentinelErrorBreaks() {
 				continue
 			}
 
-			if _, ok := suppressed[returned.errObj][returned.text]; !ok {
+			suppressionPos, ok := suppressed[returned.errObj][returned.text]
+			if !ok || suppressionPos <= returned.assignedEnd || l.objectAssignedBetween(
+				fn.Body,
+				returned.errObj,
+				returned.assignedEnd,
+				suppressionPos,
+			) {
 				continue
 			}
 
@@ -116,8 +117,8 @@ func (l *Runner) checkSentinelErrorBreaks() {
 
 func (l *Runner) suppressedErrorSentinels(
 	body *ast.BlockStmt,
-) map[types.Object]map[string]struct{} {
-	out := make(map[types.Object]map[string]struct{})
+) map[types.Object]map[string]token.Pos {
+	out := make(map[types.Object]map[string]token.Pos)
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch node := n.(type) {
@@ -133,10 +134,14 @@ func (l *Runner) suppressedErrorSentinels(
 				}
 
 				if out[condition.errObj] == nil {
-					out[condition.errObj] = make(map[string]struct{})
+					out[condition.errObj] = make(map[string]token.Pos)
 				}
 
-				out[condition.errObj][condition.text] = struct{}{}
+				prior := out[condition.errObj][condition.text]
+
+				if prior == token.NoPos || node.Pos() < prior {
+					out[condition.errObj][condition.text] = node.Pos()
+				}
 			}
 
 			return true
@@ -320,11 +325,39 @@ func (l *Runner) callbackSentinelReturnsFromAssign(
 
 		for _, returned := range l.callbackSentinelReturnsInExpr(rhs) {
 			returned.errObj = errObj
+			returned.assignedEnd = assign.End()
 			out = append(out, returned)
 		}
 	}
 
 	return out
+}
+
+func (l *Runner) objectAssignedBetween(
+	body *ast.BlockStmt,
+	obj types.Object,
+	after token.Pos,
+	before token.Pos,
+) bool {
+	found := false
+
+	inspectNodesBetween(body, after, before, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range node.Lhs {
+				if l.identObject(lhs) == obj {
+					found = true
+					return false
+				}
+			}
+		case *ast.IncDecStmt:
+			found = l.identObject(node.X) == obj
+		}
+
+		return !found
+	})
+
+	return found
 }
 
 func (l *Runner) assignedErrorObject(assign *ast.AssignStmt, rhsIndex int) types.Object {

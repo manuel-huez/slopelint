@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsUnreachableSwitchCases(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Status string
@@ -39,8 +38,7 @@ func f(s Status) {
 }
 
 func TestSelectDoesNotBlindWholeFunction(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(s string, ch chan int) {
@@ -62,8 +60,7 @@ func f(s string, ch chan int) {
 }
 
 func TestTypeSwitchDoesNotBlindWholeFunction(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(s string, v any) {
@@ -87,8 +84,7 @@ func f(s string, v any) {
 }
 
 func TestLabeledBreakDoesNotBlindWholeFunction(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(n int, s string) {
@@ -112,8 +108,7 @@ Loop:
 }
 
 func TestLabeledContinueDoesNotBlindWholeFunction(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(items []int, s string) {
@@ -137,8 +132,7 @@ Outer:
 }
 
 func TestFallthroughMergesReachableStates(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(s string) {
@@ -165,8 +159,7 @@ func f(s string) {
 }
 
 func TestInfersPredicateFactsThroughFallthroughSwitch(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Req struct{}

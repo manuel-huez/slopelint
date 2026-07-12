@@ -14,11 +14,22 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-func TestRunAnalysisCachesUnchangedPackage(t *testing.T) {
-	tmp := t.TempDir()
-	cacheDir := t.TempDir()
+func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
+	t.Parallel()
 
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	root, err := analysisCacheRoot(t.TempDir())
+	if err != nil {
+		t.Fatalf("analysisCacheRoot: %v", err)
+	}
+
+	if !strings.HasSuffix(root, "analysis-v3") {
+		t.Fatalf("analysis cache root = %q, want schema 3 suffix", root)
+	}
+}
+
+func TestRunAnalysisCachesUnchangedPackage(t *testing.T) {
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(s string) {
@@ -27,7 +38,7 @@ func f(s string) {
 }
 `)
 
-	pkgs := loadPackagesInDir(t, tmp)
+	pkgs := loadPackagesForTest(t, tmp)
 	pkg := mustPackage(t, pkgs, "example.com/sample")
 
 	pass1, state1 := newAnalysisTestPass(pkg, nil)
@@ -75,10 +86,8 @@ func f(s string) {
 }
 
 func TestLintPackagesCachesStandaloneRepoResult(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
-
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func f(s string) {
@@ -87,7 +96,7 @@ func f(s string) {
 }
 `)
 
-	pkgs := loadPackagesInDir(t, tmp)
+	pkgs := loadPackagesForTest(t, tmp)
 	pkg := mustPackage(t, pkgs, "example.com/sample")
 	issues1 := LintPackages(pkgs, Options{
 		MaxStates:    32,
@@ -102,7 +111,7 @@ func f(s string) {
 
 	var hits []string
 
-	pkgs = loadPackagesInDir(t, tmp)
+	pkgs = loadPackagesForTest(t, tmp)
 	pkg = mustPackage(t, pkgs, "example.com/sample")
 	issues2 := LintPackages(pkgs, Options{
 		MaxStates:    32,
@@ -123,10 +132,8 @@ func f(s string) {
 }
 
 func TestRunAnalysisInvalidatesCacheWhenImportedFactsChange(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
-
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(tmp, "guard", "guard.go"), `package guard
 
 import "errors"
@@ -157,7 +164,7 @@ func f(req *guard.Req) {
 }
 `)
 
-	pkgs := loadPackagesInDir(t, tmp)
+	pkgs := loadPackagesForTest(t, tmp)
 	guardPkg := mustPackage(t, pkgs, "example.com/sample/guard")
 	usePkg := mustPackage(t, pkgs, "example.com/sample/use")
 
@@ -203,7 +210,7 @@ func Check(req *Req) error {
 }
 `)
 
-	pkgs = loadPackagesInDir(t, tmp)
+	pkgs = loadPackagesForTest(t, tmp)
 	guardPkg = mustPackage(t, pkgs, "example.com/sample/guard")
 	usePkg = mustPackage(t, pkgs, "example.com/sample/use")
 
@@ -379,32 +386,6 @@ func funcObject(obj types.Object) *types.Func {
 	return fn
 }
 
-func loadPackagesInDir(t *testing.T, dir string) []*LoadedPackage {
-	t.Helper()
-
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("chdir %s: %v", dir, err)
-	}
-
-	defer func() {
-		if err := os.Chdir(wd); err != nil {
-			t.Fatalf("restore cwd %s: %v", wd, err)
-		}
-	}()
-
-	pkgs, err := LoadPackages([]string{allPackagesPattern})
-	if err != nil {
-		t.Fatalf("load packages in %s: %v", dir, err)
-	}
-
-	return pkgs
-}
-
 func mustPackage(t *testing.T, pkgs []*LoadedPackage, importPath string) *LoadedPackage {
 	t.Helper()
 
@@ -415,11 +396,12 @@ func mustPackage(t *testing.T, pkgs []*LoadedPackage, importPath string) *Loaded
 	}
 
 	t.Fatalf("missing package %s", importPath)
-	panic("unreachable")
+
+	return nil
 }
 
 func issuesDigest(fset *token.FileSet, issues []Issue) string {
-	sortIssues(fset, issues)
+	sortIssues(issues)
 
 	lines := make([]string, 0, len(issues))
 	for _, issue := range issues {

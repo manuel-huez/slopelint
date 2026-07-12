@@ -25,6 +25,7 @@ type Options struct {
 	CacheEnabled bool
 	CacheDir     string
 	CacheHitHook func(string)
+	ClosedWorld  bool
 	skipDeadCode bool
 }
 
@@ -113,6 +114,7 @@ func cloneReturnKinds(in map[int]returnKind) map[int]returnKind {
 
 func (l *linter) run() {
 	l.collectContracts()
+	l.checkContractComments()
 	l.collectLocalFuncLits()
 	l.inferCallSummaries()
 	l.analyzeFiles()

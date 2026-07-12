@@ -7,8 +7,7 @@ import (
 )
 
 func TestDetectsIsPredicateWithNonBoolSignature(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func IsReady() int {
@@ -32,8 +31,7 @@ func IsReady() int {
 }
 
 func TestDetectsTrivialForwarder(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(name string) bool { return name != "" }
@@ -64,8 +62,7 @@ func use(name string) bool {
 }
 
 func TestDetectsTrivialForwarderAssignReturn(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(name string) bool { return name != "" }
@@ -92,8 +89,7 @@ func use(name string) bool {
 }
 
 func TestDetectsTrivialForwarderVarReturn(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(name string) (string, bool) { return name, name != "" }
@@ -121,8 +117,7 @@ func use(name string) bool {
 }
 
 func TestDetectsTrivialForwarderToImportedFunction(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "strconv"
@@ -149,8 +144,7 @@ func use(value string) error {
 }
 
 func TestDetectsTrivialForwarderDespiteTestCallsite(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(name string) bool { return name != "" }
@@ -186,8 +180,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestDetectsTrivialForwarderWithParamMethodAdapter(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type CacheScope map[string]string
@@ -220,8 +213,7 @@ func use(scope CacheScope) error {
 }
 
 func TestDetectsTrivialForwarderWithParamFieldAndConversionAdapters(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type CurrencyCode string
@@ -256,8 +248,7 @@ func use(req request, code CurrencyCode) error {
 }
 
 func TestSkipsTrivialForwarderWithReorderedAdapterArgs(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type CurrencyCode string
@@ -292,8 +283,7 @@ func use(req request, code CurrencyCode) error {
 }
 
 func TestSkipsTrivialForwarderWhenReturnOrderChanges(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(name string) (string, bool) { return name, name != "" }
@@ -318,8 +308,7 @@ func use(name string) bool {
 }
 
 func TestSkipsTrivialForwarderWhenVarAddsExplicitType(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type runner interface { Run() bool }
@@ -352,8 +341,7 @@ func use(name string) bool {
 }
 
 func TestDetectsShortTrivialForwarderWithMultipleCallsites(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(name string) bool { return name != "" }
@@ -381,8 +369,7 @@ func b(name string) bool { return run(name) }
 }
 
 func TestSkipsUnusedPrivateTrivialForwarder(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(name string) bool { return name != "" }
@@ -401,8 +388,7 @@ func run(name string) bool {
 }
 
 func TestSkipsLongTrivialForwarderWithMultipleCallsites(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 func execute(first string, second string, third string) bool {
@@ -433,8 +419,7 @@ func b(name string) bool { return run("", name, "") }
 }
 
 func TestDetectsPrivateTrivialForwarderMethod(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type runner struct {
@@ -462,8 +447,7 @@ func use(r runner) bool { return r.run() }
 }
 
 func TestDetectsExportedTrivialForwarderMethodWithoutPrivateReceiverUse(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Runner struct{}
@@ -490,8 +474,7 @@ func b(r Runner) bool { return r.Run("b") }
 }
 
 func TestDetectsDocumentedExportedTrivialForwarderMethod(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Runner struct{}
@@ -519,8 +502,7 @@ func b(r Runner) bool { return r.Run("b") }
 }
 
 func TestSkipsExportedTrivialForwarderMethodWithPrivateReceiverField(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Runner struct {
@@ -546,8 +528,7 @@ func b(r Runner) bool { return r.Run() }
 }
 
 func TestSkipsExportedTrivialForwarderMethodWithPrivateReceiverMethod(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 type Runner struct {
@@ -580,8 +561,7 @@ func b(r Runner) bool { return r.Run() }
 }
 
 func TestSkipsExportedCodecHookForwarderMethod(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import "encoding/json"
@@ -606,8 +586,7 @@ func encode(p Payload) ([]byte, error) {
 }
 
 func TestDetectsRestatementComment(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 // Validate user
@@ -632,8 +611,7 @@ func validateUser(name string) bool {
 }
 
 func TestSkipsRestatementCommentWhenIntentAdded(t *testing.T) {
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 // Validate user before cache warmup.

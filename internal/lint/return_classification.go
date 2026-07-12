@@ -65,13 +65,18 @@ func dedupeReturnStates(states []returnState) []returnState {
 		return nil
 	}
 
-	seen := make(map[string]returnState, len(states))
-	for _, st := range states {
-		seen[st.state.hash()+"|"+returnKindsHash(st.kinds)] = st
-	}
+	// Keep return evidence stable across runs by preserving first-seen order.
+	seen := make(map[string]struct{}, len(states))
+	out := make([]returnState, 0, len(states))
 
-	out := make([]returnState, 0, len(seen))
-	for _, st := range seen {
+	for _, st := range states {
+		key := st.state.hash() + "|" + returnKindsHash(st.kinds)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
 		out = append(out, st)
 	}
 

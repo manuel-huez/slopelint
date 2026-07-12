@@ -2756,19 +2756,24 @@ func parseOptionalFloat() error {
 	return fmt.Errorf("invalid")
 }
 
-func Live() {}
+func Live() {
+	_ = OptionalFloat{}
+}
 `)
 
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	for _, want := range []string{
-		wantMethodUnmarshalJSON,
-		`function "parseOptionalFloat"`,
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected unused marshal hook finding %q, got:\n%s", want, joined)
-		}
+	if !strings.Contains(joined, wantMethodUnmarshalJSON) {
+		t.Fatalf(
+			"expected unused marshal hook finding %q, got:\n%s",
+			wantMethodUnmarshalJSON,
+			joined,
+		)
+	}
+
+	if strings.Contains(joined, `function "parseOptionalFloat"`) {
+		t.Fatalf("unexpected unused marshal hook cascade, got:\n%s", joined)
 	}
 }
 

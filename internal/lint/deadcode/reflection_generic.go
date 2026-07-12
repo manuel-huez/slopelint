@@ -312,12 +312,7 @@ func sourceFuncDeclCandidate(
 }
 
 func sourceFuncReceiverName(fn *types.Func) string {
-	sig, _ := fn.Type().(*types.Signature)
-	if sig == nil || sig.Recv() == nil {
-		return ""
-	}
-
-	named := namedDeadCodeType(sig.Recv().Type())
+	named := deadCodeFuncReceiver(fn)
 	if named == nil || named.Obj() == nil {
 		return ""
 	}

@@ -644,8 +644,6 @@ func parseCustom(context.Context, []byte) error {
 	for _, expected := range []string{
 		wantRemoveMethodMarshalJSON,
 		`method "UnmarshalJSON" is unreachable from repo entrypoints; remove it`,
-		`function "customText" is never used by production code; remove it`,
-		`function "parseCustom" is never used by production code; remove it`,
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf(
@@ -715,8 +713,6 @@ func parseCustom([]byte) error {
 	for _, expected := range []string{
 		wantRemoveMethodMarshalJSON,
 		`method "UnmarshalJSON" is unreachable from repo entrypoints; remove it`,
-		`function "customText" is never used by production code; remove it`,
-		`function "parseCustom" is never used by production code; remove it`,
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected stdlib JSON context hook finding %q, got:\n%s", expected, joined)

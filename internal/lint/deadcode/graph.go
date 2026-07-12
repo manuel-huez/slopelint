@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"sort"
 )
 
 type deadCodeMode uint8
@@ -17,6 +16,7 @@ const (
 type deadCodeDecl struct {
 	obj      types.Object
 	node     ast.Node
+	owner    string
 	name     string
 	kind     string
 	pos      token.Pos
@@ -83,30 +83,6 @@ func Repo(pkgs []*Package) []Finding {
 	graph.indexEdges()
 
 	return graph.findings()
-}
-
-func (graph deadCodeGraph) findings() []Finding {
-	live := graph.liveObjects()
-	dead := make([]deadCodeDecl, 0)
-
-	for obj, decl := range graph.candidates {
-		if _, ok := live[obj]; ok {
-			continue
-		}
-
-		dead = append(dead, decl)
-	}
-
-	sort.Slice(dead, func(i, j int) bool {
-		return compareDeadCodeDecl(dead[i], dead[j])
-	})
-
-	findings := make([]Finding, 0, len(dead))
-	for _, decl := range dead {
-		findings = append(findings, decl.issue())
-	}
-
-	return findings
 }
 
 func (l *packageLinter) deadPrivateDeclGraph() deadCodeGraph {

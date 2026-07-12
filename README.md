@@ -60,8 +60,10 @@ Package-level smells:
 - private parameters always passed as zero value by production uses
 - private result wrappers that only carry value plus status
 - generic helper names when paired with another smell
-- unused private functions, methods, types, vars, consts, and struct fields in production code
+- unused private functions, methods, types, vars, consts, and struct fields in production code;
+  references from internal or external tests do not keep production declarations live
 - exported functions, methods, types, vars, consts, and struct fields unreachable from repo entrypoints
+- one source diagnostic per unreachable declaration subgraph instead of cascading through every member
 
 ## How It Works
 
@@ -204,6 +206,8 @@ go test ./...
 - strongest on small path facts and local/private API smells
 - repo-wide dead-code reachability runs in standalone `slopelint` mode when
   loaded patterns include a `main` package; vettool mode stays package-scoped
+- dead-code results cover the active `GOOS`, `GOARCH`, and build-tag configuration;
+  run once per relevant configuration, for example with `GOFLAGS='-tags=mytag'`
 - weak at type-level semantic meaning
 - reports only; no custom autofix implementation yet
 

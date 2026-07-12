@@ -196,9 +196,16 @@ func (graph *deadCodeGraph) addFuncCandidate(
 	kind string,
 ) {
 	origin := obj.Origin()
+
+	owner := ""
+	if receiver := deadCodeFuncReceiver(origin); receiver != nil {
+		owner = deadCodeObjectKey(receiver.Obj())
+	}
+
 	graph.candidates[deadCodeObjectKey(origin)] = deadCodeDecl{
 		obj:      origin,
 		node:     fn,
+		owner:    owner,
 		name:     fn.Name.Name,
 		kind:     kind,
 		pos:      fn.Name.Pos(),
@@ -282,6 +289,7 @@ func (graph *deadCodeGraph) addStructFieldCandidates(
 			graph.candidates[deadCodeStructFieldKey(l.pkg.ImportPath, spec.Name.Name, name.Name)] = deadCodeDecl{
 				obj:      obj,
 				node:     field,
+				owner:    deadCodeObjectKey(l.pkg.TypesInfo.Defs[spec.Name]),
 				name:     spec.Name.Name + "." + name.Name,
 				kind:     "field",
 				pos:      name.Pos(),

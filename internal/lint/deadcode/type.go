@@ -15,6 +15,19 @@ func namedDeadCodeType(typ types.Type) *types.Named {
 	return named
 }
 
+func deadCodeFuncReceiver(fn *types.Func) *types.Named {
+	if fn == nil {
+		return nil
+	}
+
+	sig, _ := fn.Type().(*types.Signature)
+	if sig == nil || sig.Recv() == nil {
+		return nil
+	}
+
+	return namedDeadCodeType(sig.Recv().Type())
+}
+
 func deadCodeStructType(typ types.Type) *types.Struct {
 	typ = dereferenceDeadCodeType(typ)
 	if typ == nil {

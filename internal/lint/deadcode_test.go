@@ -30,14 +30,14 @@ func Live() {}
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	for _, want := range []string{
-		`private const "unusedLimit" is never used by production code; remove it`,
-		`private type "unusedState" is never used by production code; remove it`,
-		`private var "unusedName" is never used by production code; remove it`,
-		`private function "unusedHelper" is never used by production code; remove it`,
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected dead-code finding %q, got:\n%s", want, joined)
+	want := `private function "unusedHelper" is never used by production code; remove it`
+	if !strings.Contains(joined, want) {
+		t.Fatalf("expected dead-code subgraph root finding %q, got:\n%s", want, joined)
+	}
+
+	for _, cascade := range []string{"unusedLimit", "unusedState", "unusedName"} {
+		if strings.Contains(joined, cascade) {
+			t.Fatalf("unexpected dead-code subgraph cascade %q, got:\n%s", cascade, joined)
 		}
 	}
 
@@ -101,6 +101,169 @@ func TestHelper(t *testing.T) {
 		`private function "helperOnlyUsedByTest" is never used by production code; remove it`,
 	) {
 		t.Fatalf("expected test-only use to remain dead production code, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeReportsInternalTestOnlySubgraphRoot(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+type testOnlyState struct {
+	value int
+}
+
+func testOnlyEntry() int {
+	return testOnlyLeaf(testOnlyState{value: 1})
+}
+
+func testOnlyLeaf(state testOnlyState) int {
+	return state.value
+}
+
+func Live() {}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib_test.go"), `package lib
+
+import "testing"
+
+func TestTestOnlyEntry(t *testing.T) {
+	if got := testOnlyEntry(); got != 1 {
+		t.Fatalf("testOnlyEntry() = %d, want 1", got)
+	}
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(
+		joined,
+		`private function "testOnlyEntry" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected internal-test-only subgraph root finding, got:\n%s", joined)
+	}
+
+	for _, cascade := range []string{
+		`private type "testOnlyState"`,
+		`private field "testOnlyState.value"`,
+		`private function "testOnlyLeaf"`,
+	} {
+		if strings.Contains(joined, cascade) {
+			t.Fatalf("unexpected internal-test-only subgraph cascade %q, got:\n%s", cascade, joined)
+		}
+	}
+}
+
+func TestRepoDeadCodeReportsExternalTestOnlySubgraphRoot(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+func TestOnlyEntry() int {
+	return testOnlyLeaf()
+}
+
+func testOnlyLeaf() int {
+	return 1
+}
+
+func Live() {}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib_test.go"), `package lib_test
+
+import (
+	"testing"
+
+	"example.com/sample/lib"
+)
+
+func TestTestOnlyEntry(t *testing.T) {
+	if got := lib.TestOnlyEntry(); got != 1 {
+		t.Fatalf("TestOnlyEntry() = %d, want 1", got)
+	}
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(
+		joined,
+		`exported function "TestOnlyEntry" is unreachable from repo entrypoints; remove it`,
+	) {
+		t.Fatalf("expected external-test-only subgraph root finding, got:\n%s", joined)
+	}
+
+	if strings.Contains(joined, `private function "testOnlyLeaf"`) {
+		t.Fatalf("unexpected external-test-only subgraph cascade, got:\n%s", joined)
+	}
+}
+
+func TestRepoDeadCodeReportsActiveBuildTaggedTestOnlySubgraphRoot(t *testing.T) {
+	t.Setenv("GOFLAGS", "-tags=deadcode_fixture")
+
+	tmp := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
+
+import "example.com/sample/lib"
+
+func main() {
+	lib.Live()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+func Live() {}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "tagged.go"), `//go:build deadcode_fixture
+
+package lib
+
+func taggedTestOnlyEntry() int {
+	return taggedTestOnlyLeaf()
+}
+
+func taggedTestOnlyLeaf() int {
+	return 1
+}
+`)
+	writeFile(t, filepath.Join(tmp, "lib", "tagged_test.go"), `//go:build deadcode_fixture
+
+package lib
+
+import "testing"
+
+func TestTaggedTestOnlyEntry(t *testing.T) {
+	if got := taggedTestOnlyEntry(); got != 1 {
+		t.Fatalf("taggedTestOnlyEntry() = %d, want 1", got)
+	}
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(
+		joined,
+		`private function "taggedTestOnlyEntry" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected active tagged test-only subgraph root finding, got:\n%s", joined)
+	}
+
+	if strings.Contains(joined, `private function "taggedTestOnlyLeaf"`) {
+		t.Fatalf("unexpected active tagged test-only subgraph cascade, got:\n%s", joined)
 	}
 }
 
@@ -183,13 +346,13 @@ func deadPrivate() {}
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	for _, want := range []string{
-		`exported function "UnusedExported" is unreachable from repo entrypoints; remove it`,
-		`private function "deadPrivate" is never used by production code; remove it`,
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected repo dead-code finding %q, got:\n%s", want, joined)
-		}
+	want := `exported function "UnusedExported" is unreachable from repo entrypoints; remove it`
+	if !strings.Contains(joined, want) {
+		t.Fatalf("expected repo dead-code subgraph root finding %q, got:\n%s", want, joined)
+	}
+
+	if strings.Contains(joined, `private function "deadPrivate"`) {
+		t.Fatalf("unexpected repo dead-code subgraph cascade, got:\n%s", joined)
 	}
 
 	if strings.Contains(joined, `private function "usedPrivate" is never used`) {
@@ -580,7 +743,9 @@ func (matcher) Is(target error) bool {
 	return false
 }
 
-func Live() {}
+func Live() {
+	_ = matcher{}
+}
 `)
 
 	issues := lintInDir(t, tmp)
@@ -661,6 +826,7 @@ func (digest) String() string {
 }
 
 func Live(value any) string {
+	_ = digest("")
 	return fmt.Sprintf("%v", value)
 }
 `)
@@ -1548,6 +1714,7 @@ func deadSet() {
 }
 
 func Live() string {
+	_ = deadDigest("")
 	return fmt.Sprint(Value)
 }
 `)
@@ -1606,8 +1773,11 @@ func dead() string {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if count := strings.Count(joined, `method "String"`); count != 1 {
-		t.Fatalf("expected only dead caller String method finding, got %d:\n%s", count, joined)
+	if !strings.Contains(
+		joined,
+		`private function "dead" is never used by production code; remove it`,
+	) {
+		t.Fatalf("expected dead fmt caller subgraph root finding, got:\n%s", joined)
 	}
 }
 

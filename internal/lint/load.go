@@ -72,7 +72,10 @@ func loadPackages(patterns []string, dir string) ([]*LoadedPackage, error) {
 }
 
 func goList(patterns []string, dir string) ([]*packageMeta, error) {
-	args := append([]string{"list", "-deps", "-test", "-export", "-compiled", "-json"}, patterns...)
+	args := append(
+		[]string{"list", "-buildvcs=false", "-deps", "-test", "-export", "-compiled", "-json"},
+		patterns...,
+	)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 

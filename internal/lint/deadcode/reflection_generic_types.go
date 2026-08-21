@@ -266,11 +266,12 @@ func substituteReflectedStructTypeParams(
 	return types.NewStruct(fields, tags)
 }
 
-func collectReflectedDecodeTargetTypeParamDecodes(
+func collectReflectedTypeParamDecodes(
 	typ types.Type,
 	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
 	out *[]reflectedTypeParamUse,
+	context reflectedTypeParamUseContext,
 ) {
 	collectReflectedTypeParamUses(
 		typ,
@@ -278,39 +279,7 @@ func collectReflectedDecodeTargetTypeParamDecodes(
 		typeParamIndexes,
 		out,
 		make(map[string]struct{}),
-		reflectedDecodeTargetContext,
-	)
-}
-
-func collectReflectedMapKeyTypeParamDecodes(
-	typ types.Type,
-	codec reflectedCodecUse,
-	typeParamIndexes map[*types.TypeParam]int,
-	out *[]reflectedTypeParamUse,
-) {
-	collectReflectedTypeParamUses(
-		typ,
-		codec,
-		typeParamIndexes,
-		out,
-		make(map[string]struct{}),
-		reflectedTextDecodeContext,
-	)
-}
-
-func collectReflectedSettableTypeParamDecodes(
-	typ types.Type,
-	codec reflectedCodecUse,
-	typeParamIndexes map[*types.TypeParam]int,
-	out *[]reflectedTypeParamUse,
-) {
-	collectReflectedTypeParamUses(
-		typ,
-		codec,
-		typeParamIndexes,
-		out,
-		make(map[string]struct{}),
-		reflectedSettableDecodeContext,
+		context,
 	)
 }
 

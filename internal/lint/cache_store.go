@@ -76,6 +76,10 @@ func writeAnalysisCacheEntry(path string, entry analysisCacheEntry) error {
 		return err
 	}
 
+	return writeFileAtomically(path, data)
+}
+
+func writeFileAtomically(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, cacheDirPerm); err != nil {
 		return err

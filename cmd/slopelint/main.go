@@ -19,6 +19,14 @@ const (
 	exitIssues       = 3
 )
 
+type similarityMode uint8
+
+const (
+	similarityLocal similarityMode = iota
+	similarityCI
+	similarityOff
+)
+
 func main() {
 	if analysisDriverRequested(os.Args[1:]) {
 		singlechecker.Main(slopelint.Analyzer)
@@ -106,13 +114,14 @@ func runStandalone(args []string, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	mode, err := similarityModeFromEnv()
+	if err != nil {
+		return reportStandaloneError(stderr, err)
+	}
+
 	pkgs, err := lint.LoadPackages(patterns)
 	if err != nil {
-		if _, writeErr := fmt.Fprintf(stderr, "slopelint: %v\n", err); writeErr != nil {
-			return exitFailure
-		}
-
-		return exitFailure
+		return reportStandaloneError(stderr, err)
 	}
 
 	issues := lint.LintPackages(pkgs, lint.Options{
@@ -121,10 +130,38 @@ func runStandalone(args []string, stderr io.Writer) int {
 		CacheDir:     lint.ResolveCacheDir(*cacheDir),
 		ClosedWorld:  *closedWorld,
 	})
+
+	if mode != similarityOff {
+		similarityIssues, similarityErr := lint.CheckSimilarCode(pkgs, lint.SimilarityOptions{
+			CI:              mode == similarityCI,
+			CacheEnabled:    *cacheEnabled && lint.CacheEnabledFromEnv(),
+			CacheDir:        lint.ResolveCacheDir(*cacheDir),
+			AcceptedPairIDs: similarityAcceptedPairIDs(),
+		})
+		if similarityErr != nil {
+			return reportStandaloneError(stderr, similarityErr)
+		}
+
+		issues = append(issues, similarityIssues...)
+	}
+
 	if len(issues) == 0 {
 		return 0
 	}
 
+	if err := writeStandaloneIssues(stderr, issues); err != nil {
+		return exitFailure
+	}
+
+	return exitIssues
+}
+
+func reportStandaloneError(stderr io.Writer, err error) int {
+	_, _ = fmt.Fprintf(stderr, "slopelint: %v\n", err)
+	return exitFailure
+}
+
+func writeStandaloneIssues(stderr io.Writer, issues []lint.Issue) error {
 	for _, issue := range issues {
 		if _, err := fmt.Fprintf(
 			stderr,
@@ -132,9 +169,40 @@ func runStandalone(args []string, stderr io.Writer) int {
 			lint.FormatIssuePosition(issue),
 			issue.Message,
 		); err != nil {
-			return exitFailure
+			return err
 		}
 	}
 
-	return exitIssues
+	return nil
+}
+
+func similarityModeFromEnv() (similarityMode, error) {
+	// CI providers conventionally set CI. Explicit override keeps local reproductions possible.
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("SLOPELINT_SIMILARITY")))
+	switch value {
+	case "local":
+		return similarityLocal, nil
+	case "ci":
+		return similarityCI, nil
+	case "off":
+		return similarityOff, nil
+	case "":
+		ci := strings.ToLower(strings.TrimSpace(os.Getenv("CI")))
+		if ci != "" && ci != "0" && ci != "false" && ci != "off" && ci != "no" {
+			return similarityCI, nil
+		}
+
+		return similarityLocal, nil
+	default:
+		return similarityLocal, fmt.Errorf(
+			"SLOPELINT_SIMILARITY must be local, ci, or off; got %q",
+			value,
+		)
+	}
+}
+
+func similarityAcceptedPairIDs() []string {
+	return strings.FieldsFunc(os.Getenv("SLOPELINT_SIMILARITY_ACCEPT"), func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n'
+	})
 }

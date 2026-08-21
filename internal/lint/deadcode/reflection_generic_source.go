@@ -33,7 +33,13 @@ func sourceGenericDecodeTypeParamDecodes(
 		}
 
 		typ := sourceDecodeTargetType(scan.sig, scan.paramTypes, scan.decl.Body, arg)
-		collectReflectedDecodeTargetTypeParamDecodes(typ, codec, scan.indexes, &out)
+		collectReflectedTypeParamDecodes(
+			typ,
+			codec,
+			scan.indexes,
+			&out,
+			reflectedDecodeTargetContext,
+		)
 	})
 
 	return out, true

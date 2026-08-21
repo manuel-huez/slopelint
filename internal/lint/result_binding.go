@@ -147,17 +147,6 @@ func removeBindingsForPrefix(st *state, prefix string) {
 	}
 }
 
-func sortedBindingKeys(bindings map[string]resultBinding) []string {
-	keys := make([]string, 0, len(bindings))
-	for key := range bindings {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	return keys
-}
-
 func normalizeResultBinding(binding resultBinding) resultBinding {
 	slices.Sort(binding.roots)
 	binding.roots = slices.Compact(binding.roots)

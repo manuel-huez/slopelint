@@ -57,9 +57,39 @@ func TestRunStandaloneRequiresPackagePattern(t *testing.T) {
 }
 
 func TestRunStandaloneChecksCurrentPackage(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "off")
+
 	var stderr strings.Builder
 
 	if code := runStandalone([]string{"-cache=false", "."}, &stderr); code != 0 {
 		t.Fatalf("runStandalone exit = %d, want 0:\n%s", code, stderr.String())
+	}
+}
+
+func TestSimilarityModeDefaultsFromCI(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "")
+	t.Setenv("CI", "true")
+
+	mode, err := similarityModeFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if mode != similarityCI {
+		t.Fatalf("similarity mode = %d, want CI", mode)
+	}
+}
+
+func TestSimilarityModeExplicitLocalOverridesCI(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "local")
+	t.Setenv("CI", "true")
+
+	mode, err := similarityModeFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if mode != similarityLocal {
+		t.Fatalf("similarity mode = %d, want local", mode)
 	}
 }

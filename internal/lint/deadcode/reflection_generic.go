@@ -222,7 +222,13 @@ func collectFallbackGenericDecodeParamTypeDecodes(
 	typ = types.Unalias(typ)
 
 	if _, ok := typ.(*types.Pointer); ok {
-		collectReflectedSettableTypeParamDecodes(typ, codec, indexes, out)
+		collectReflectedTypeParamDecodes(
+			typ,
+			codec,
+			indexes,
+			out,
+			reflectedSettableDecodeContext,
+		)
 	}
 }
 
@@ -233,11 +239,12 @@ func collectFallbackGenericDecodeResultDecodes(
 	out *[]reflectedTypeParamUse,
 ) {
 	for index := range tupleLen(sig.Results()) {
-		collectReflectedSettableTypeParamDecodes(
+		collectReflectedTypeParamDecodes(
 			sig.Results().At(index).Type(),
 			codec,
 			indexes,
 			out,
+			reflectedSettableDecodeContext,
 		)
 	}
 }
@@ -482,11 +489,12 @@ func (graph deadCodeGraph) collectReflectedDecodeCallTypeParamDecodes(
 		}
 
 		target := call.Args[argIndex]
-		collectReflectedDecodeTargetTypeParamDecodes(
+		collectReflectedTypeParamDecodes(
 			reflectedValueType(pkg.TypesInfo, target),
 			codec,
 			typeParamIndexes,
 			out,
+			reflectedDecodeTargetContext,
 		)
 
 		return
@@ -535,32 +543,35 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 
 		typ := typeArgs.At(decode.index)
 		if decode.mapKey {
-			collectReflectedMapKeyTypeParamDecodes(
+			collectReflectedTypeParamDecodes(
 				typ,
 				decode.codec,
 				typeParamIndexes,
 				out,
+				reflectedTextDecodeContext,
 			)
 
 			continue
 		}
 
 		if decode.pointerOnly {
-			collectReflectedDecodeTargetTypeParamDecodes(
+			collectReflectedTypeParamDecodes(
 				typ,
 				decode.codec,
 				typeParamIndexes,
 				out,
+				reflectedDecodeTargetContext,
 			)
 
 			continue
 		}
 
-		collectReflectedSettableTypeParamDecodes(
+		collectReflectedTypeParamDecodes(
 			typ,
 			decode.codec,
 			typeParamIndexes,
 			out,
+			reflectedSettableDecodeContext,
 		)
 	}
 }

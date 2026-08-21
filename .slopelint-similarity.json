@@ -1,0 +1,51 @@
+{
+  "schema": 5,
+  "source_digest": "896a636b7cf2bc14fb30c3586dada1041b8b2c1ffbcae68598e9e4378e5d79c2",
+  "model": "unclemusclez/jina-embeddings-v2-base-code:latest",
+  "model_digest": "9fe680d4d58b475099d91e0d08a1eaea6cef087b0a0770f4165581a7e366afec",
+  "checked_blocks": 1419,
+  "accepted": [
+    {
+      "id": "sim-033a373bab1f0612",
+      "left": "internal/lint/smells/api.go::nodeUsesObject",
+      "left_hash": "f65871ef6b5f43c8845472dfa9c562e604fc513862708658c3a88cebb3ed68d7",
+      "right": "internal/lint/structure/temp_alias.go::nodeUsesObject",
+      "right_hash": "065c95b34816e8762541945f0c7323120b0ba93c818d28936240361a11fcea89"
+    },
+    {
+      "id": "sim-2b3914356db95894",
+      "left": "internal/lint/deadcode/package.go::exprHasCalls",
+      "left_hash": "1f542ea63bd7d7dbd4d5f27765bb93d3e8395d908e9a9e2e05b20f1a77dc1ebf",
+      "right": "internal/lint/structure/branches.go::exprHasCalls",
+      "right_hash": "f0027126eee9ab36f62b34cf876eeeb6dd0d6e417b265aef8a4c46f2b37972d8"
+    },
+    {
+      "id": "sim-52b0533816ede576",
+      "left": "internal/lint/smells/scalars.go::*Runner.predicateCallSymbolOf",
+      "left_hash": "ae3943fac5b13a2c9968c0fdceea14737241819d8489bfc608ae13a49c5b115d",
+      "right": "internal/lint/values.go::*linter.predicateCallSymbolOf",
+      "right_hash": "19cafb09d8473177c3eb3bc05841124e3be228c1c8ab08cadad487d8a83f15ff"
+    },
+    {
+      "id": "sim-ba8d8c11cd44a03d",
+      "left": "internal/lint/smells/runner.go::*Runner.isBuiltinCall",
+      "left_hash": "eb5c455f9f3dbea568a5dec851614de61bafef97552ae9e14478d2ab3b83cfd6",
+      "right": "internal/lint/structure/collections.go::*Runner.isBuiltinCall",
+      "right_hash": "df29d1ca7a8272d0f0d0366bcad3e999268380b730e9a641643215a4f89021b9"
+    },
+    {
+      "id": "sim-bdd2437aef77b411",
+      "left": "internal/lint/contracts.go::funcObjectKey",
+      "left_hash": "a4acea715f2bbd6ee1cc27548b370db976b513c6983457b343648673b87aec1c",
+      "right": "internal/lint/smells/runner.go::funcObjectKey",
+      "right_hash": "fa54866cdf40935cb5d3f2f1ddabd2431a8543132441a63e793c411964ecbae5"
+    },
+    {
+      "id": "sim-f7a499c48164d34e",
+      "left": "internal/lint/domain.go::isIsPredicateName",
+      "left_hash": "6373c2d55b02013d344a9edf692bf4af0a7f53293869881b79893580b315a46d",
+      "right": "internal/lint/smells/names.go::isIsPredicateName",
+      "right_hash": "6e9a888cc615912f9699fd450a6267b046d8628410b36c6a565c79f49c456644"
+    }
+  ]
+}

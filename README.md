@@ -153,7 +153,9 @@ func defaultName(name string) string {
 ## Requirements
 
 - Go 1.26+
-- For full repo health checks: `golangci-lint`, Node.js, and `npx`
+- Ollama with `unclemusclez/jina-embeddings-v2-base-code:latest` for local
+  semantic similarity checks
+- For full repo health checks: `golangci-lint`
 
 ## Build
 
@@ -172,11 +174,52 @@ go run ./cmd/slopelint -closed-world ./...
 go vet -vettool=$(pwd)/bin/slopelint ./...
 ```
 
+The normal standalone command also checks named functions with at least 50 Go
+tokens for semantic similarity. Local runs request only missing embeddings from
+Ollama, reuse the content-addressed vector cache, and write
+`.slopelint-similarity.json` after every finding is fixed or accepted:
+
+```bash
+ollama pull unclemusclez/jina-embeddings-v2-base-code:latest
+go run ./cmd/slopelint ./...
+```
+
+Every finding includes a stable `sim-...` pair ID. After review, accept specific
+intentional pairs and rerun the same lint command:
+
+```bash
+SLOPELINT_SIMILARITY_ACCEPT=sim-1234,sim-5678 slopelint ./...
+```
+
+`SLOPELINT_SIMILARITY_ACCEPT=all` records every current finding. Use it only for
+an explicitly reviewed baseline. Unchanged accepted pairs carry forward; changed
+code gets a new pair ID and needs review again.
+
+When `CI` is truthy, the same standalone command never contacts Ollama. It hashes
+the loaded source and fails if the committed stamp is missing, stale, or uses a
+different detector/model policy. The stamp uses a source digest instead of a Git
+commit hash because committing the stamp changes the commit hash.
+
+Model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
+similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`
+resident memory. MiniLM reached `0.977` AUC and `0.778` F1 at `102 MiB`;
+EmbeddingGemma reached `0.993` AUC and `0.778` F1 at `787 MiB`. Jina gave the
+best precision/recall balance without EmbeddingGemma's memory cost, so the stamp
+pins its exact Ollama model digest.
+
+Repo calibration uses a precision-first operating point instead of the
+benchmark's maximum-F1 threshold. Nearby production blocks require at least
+`0.970` cosine similarity, distant blocks start at `0.980`, and test blocks add
+`0.025`. Structural similarity remains diagnostic context; it cannot bypass the
+embedding threshold.
+
 Useful `slopelint` flags:
 
 - `-max-states`: maximum symbolic states before widening, default `32`
 - `-closed-world`: treat matched `main` packages as complete production entrypoints;
   enables repo-wide exported dead-code findings
+- `-cache`: reuse cached analysis for unchanged packages, default `true`
+- `-cache-dir=/path/to/cache`: override persistent cache location
 
 Useful inherited `singlechecker` flags:
 
@@ -184,15 +227,21 @@ Useful inherited `singlechecker` flags:
 - `-test=false`: skip test files
 - `-c=N`: show source context around diagnostics
 - `-flags`: print analyzer flags as JSON
-- `-cache`: reuse cached analysis for unchanged packages, default `true`
-- `-cache-dir=/path/to/cache`: override persistent cache location
 
 Useful env vars:
 
 - `SLOPELINT_CACHE=0`: disable cache
 - `SLOPELINT_CACHE_DIR=/path/to/cache`: override cache root
+- `SLOPELINT_SIMILARITY=local|ci|off`: override automatic local/CI mode;
+  default is `ci` when `CI` is truthy, otherwise `local`
+- `SLOPELINT_SIMILARITY_ACCEPT=id,id`: accept reviewed current pair IDs;
+  `all` accepts the reviewed current baseline
+- `OLLAMA_HOST`: Ollama API host; default `http://127.0.0.1:11434`
 
-Default cache location: `os.UserCacheDir()/slopelint/analysis-v2`
+Default cache locations:
+
+- `os.UserCacheDir()/slopelint/analysis-v3`
+- `os.UserCacheDir()/slopelint/similarity-v1`
 
 ## Development
 
@@ -202,10 +251,9 @@ go test ./...
 ./scripts/check-code-health.sh
 ```
 
-`check-code-health.sh` runs `go vet`, `slopelint` on this repo, `go test`,
-`golangci-lint run`, and `jscpd` with production-code clone threshold `0` plus
-an `18%` ceiling for test harness code. Embedded Go fixtures remain intentionally
-similar; `repeated_test_fixture` catches exact copied fixture contents.
+`check-code-health.sh` runs `go vet`, `slopelint` on this repo, `go test`, and
+`golangci-lint run`. Local slopelint runs perform cached semantic similarity
+analysis. CI runs validate the committed stamp without model inference.
 
 ## Current Limits
 
@@ -218,6 +266,13 @@ similar; `repeated_test_fixture` catches exact copied fixture contents.
   when loaded patterns include a `main` package; vettool mode stays package-scoped
 - dead-code results cover the active `GOOS`, `GOARCH`, and build-tag configuration;
   run once per relevant configuration, for example with `GOFLAGS='-tags=mytag'`
+- semantic similarity compares named functions with at least 50 tokens from the
+  loaded package/build configuration; generated files and function literals are
+  excluded; large functions use overlapping byte-bounded chunks, and every chunk
+  is embedded without Ollama truncation; connected similarity groups report one
+  finding with every member instead of every possible pair
+- one semantic similarity run covers one Go module because each module owns one
+  committed stamp
 - weak at type-level semantic meaning
 - reports only; no custom autofix implementation yet
 
@@ -258,6 +313,7 @@ Machine-readable diagnostic categories emitted today:
 - `serialization_ceremony`
 - `normalization_ceremony`
 - `duplicate_validation`
+- `semantic_duplicate`
 - `abstraction_overkill`
 - `api_overkill`
 - `result_wrapper`

@@ -177,7 +177,7 @@ func writeStandaloneIssues(stderr io.Writer, issues []lint.Issue) error {
 }
 
 func similarityModeFromEnv() (similarityMode, error) {
-	// CI providers conventionally set CI. Explicit override keeps local reproductions possible.
+	// Explicit override keeps local reproductions possible inside CI environments.
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("SLOPELINT_SIMILARITY")))
 	switch value {
 	case "local":
@@ -187,9 +187,14 @@ func similarityModeFromEnv() (similarityMode, error) {
 	case "off":
 		return similarityOff, nil
 	case "":
-		ci := strings.ToLower(strings.TrimSpace(os.Getenv("CI")))
-		if ci != "" && ci != "0" && ci != "false" && ci != "off" && ci != "no" {
-			return similarityCI, nil
+		// Cloudflare Workers Builds and Pages expose provider-specific markers in
+		// addition to CI. Check all markers because build variables can be overridden.
+		for _, name := range []string{"CI", "WORKERS_CI", "CF_PAGES"} {
+			signal := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+			if signal != "" && signal != "0" && signal != "false" &&
+				signal != "off" && signal != "no" {
+				return similarityCI, nil
+			}
 		}
 
 		return similarityLocal, nil

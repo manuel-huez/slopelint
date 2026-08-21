@@ -195,10 +195,11 @@ SLOPELINT_SIMILARITY_ACCEPT=sim-1234,sim-5678 slopelint ./...
 an explicitly reviewed baseline. Unchanged accepted pairs carry forward; changed
 code gets a new pair ID and needs review again.
 
-When `CI` is truthy, the same standalone command never contacts Ollama. It hashes
-the loaded source and fails if the committed stamp is missing, stale, or uses a
-different detector/model policy. The stamp uses a source digest instead of a Git
-commit hash because committing the stamp changes the commit hash.
+When `CI`, Cloudflare Workers Builds' `WORKERS_CI`, or Cloudflare Pages'
+`CF_PAGES` is truthy, the same standalone command never contacts Ollama. It
+hashes the loaded source and fails if the committed stamp is missing, stale, or
+uses a different detector/model policy. The stamp uses a source digest instead
+of a Git commit hash because committing the stamp changes the commit hash.
 
 Model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
 similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`
@@ -233,7 +234,8 @@ Useful env vars:
 - `SLOPELINT_CACHE=0`: disable cache
 - `SLOPELINT_CACHE_DIR=/path/to/cache`: override cache root
 - `SLOPELINT_SIMILARITY=local|ci|off`: override automatic local/CI mode;
-  default is `ci` when `CI` is truthy, otherwise `local`
+  default is `ci` when `CI`, `WORKERS_CI`, or `CF_PAGES` is truthy, otherwise
+  `local`
 - `SLOPELINT_SIMILARITY_ACCEPT=id,id`: accept reviewed current pair IDs;
   `all` accepts the reviewed current baseline
 - `OLLAMA_HOST`: Ollama API host; default `http://127.0.0.1:11434`

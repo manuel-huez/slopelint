@@ -152,9 +152,8 @@ func defaultName(name string) string {
 
 ## Requirements
 
-- Go 1.26+
-- Ollama with `unclemusclez/jina-embeddings-v2-base-code:latest` for local
-  semantic similarity checks
+- Go 1.26.5+
+- Linux amd64 with AVX2 and CGO for local semantic similarity checks
 - For full repo health checks: `golangci-lint`
 
 ## Build
@@ -162,6 +161,11 @@ func defaultName(name string) string {
 ```bash
 go build -o ./bin/slopelint ./cmd/slopelint
 ```
+
+Local semantic inference currently needs Linux amd64 and CGO. Static llama.cpp
+libraries ship with the Go module, so normal `go build` and `go install` need no
+C++ build step and produce one self-contained executable. CI stamp validation
+works on every platform supported by the rest of slopelint.
 
 ## Run
 
@@ -176,13 +180,16 @@ go vet -vettool=$(pwd)/bin/slopelint ./...
 
 The normal standalone command also checks named functions with at least 50 Go
 tokens for semantic similarity. Local runs request only missing embeddings from
-Ollama, reuse the content-addressed vector cache, and write
+the in-process llama.cpp engine, reuse the content-addressed vector cache, and write
 `.slopelint-similarity.json` after every finding is fixed or accepted:
 
 ```bash
-ollama pull unclemusclez/jina-embeddings-v2-base-code:latest
 go run ./cmd/slopelint ./...
 ```
+
+First inference downloads the digest-pinned 308 MiB Jina GGUF file into the
+slopelint cache. Later runs memory-map that file and compute only missing vectors.
+No Ollama service or model install is required.
 
 Every finding includes a stable `sim-...` pair ID. After review, accept specific
 intentional pairs and rerun the same lint command:
@@ -196,17 +203,20 @@ an explicitly reviewed baseline. Unchanged accepted pairs carry forward; changed
 code gets a new pair ID and needs review again.
 
 When `CI`, Cloudflare Workers Builds' `WORKERS_CI`, or Cloudflare Pages'
-`CF_PAGES` is truthy, the same standalone command never contacts Ollama. It
-hashes the loaded source and fails if the committed stamp is missing, stale, or
-uses a different detector/model policy. The stamp uses a source digest instead
-of a Git commit hash because committing the stamp changes the commit hash.
+`CF_PAGES` is truthy, the same standalone command never downloads or loads the
+model. It hashes the loaded source and fails if the committed stamp is missing,
+stale, or uses a different detector/model policy. The stamp uses a source digest
+instead of a Git commit hash because committing the stamp changes the commit hash.
 
 Model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
 similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`
 resident memory. MiniLM reached `0.977` AUC and `0.778` F1 at `102 MiB`;
 EmbeddingGemma reached `0.993` AUC and `0.778` F1 at `787 MiB`. Jina gave the
 best precision/recall balance without EmbeddingGemma's memory cost, so the stamp
-pins its exact Ollama model digest.
+pins the exact GGUF file digest. Tuned in-process llama-go inference processed
+the 25-vector benchmark at `9.09 vectors/s` and the 125-vector run at
+`8.48 vectors/s`; Ollama reached `8.15` and `7.55 vectors/s`. Native peak RSS was
+about `479 MiB`.
 
 Repo calibration uses a precision-first operating point instead of the
 benchmark's maximum-F1 threshold. Nearby production blocks require at least
@@ -238,12 +248,12 @@ Useful env vars:
   `local`
 - `SLOPELINT_SIMILARITY_ACCEPT=id,id`: accept reviewed current pair IDs;
   `all` accepts the reviewed current baseline
-- `OLLAMA_HOST`: Ollama API host; default `http://127.0.0.1:11434`
 
 Default cache locations:
 
 - `os.UserCacheDir()/slopelint/analysis-v4`
 - `os.UserCacheDir()/slopelint/similarity-v1`
+- `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`
 
 ## Development
 
@@ -271,7 +281,7 @@ analysis. CI runs validate the committed stamp without model inference.
 - semantic similarity compares named functions with at least 50 tokens from the
   loaded package/build configuration; generated files and function literals are
   excluded; large functions use overlapping byte-bounded chunks, and every chunk
-  is embedded without Ollama truncation; connected similarity groups report one
+  is embedded without truncation; connected similarity groups report one
   finding with every member instead of every possible pair
 - one semantic similarity run covers one Go module because each module owns one
   committed stamp

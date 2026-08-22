@@ -19,11 +19,11 @@ const (
 	similarityCacheSchema       = 1
 	similarityVectorMagic       = "SLOPEV01"
 	similarityVectorValueBytes  = 4
-	similarityVectorInputSchema = 1
+	similarityVectorInputSchema = 2
 
-	// Benchmark-selected digest pins model weights so a mutable Ollama tag cannot alter policy.
-	similarityModelName   = "unclemusclez/jina-embeddings-v2-base-code:latest"
-	similarityModelDigest = "9fe680d4d58b475099d91e0d08a1eaea6cef087b0a0770f4165581a7e366afec"
+	// Benchmark-selected digest pins the exact GGUF weights used by native inference.
+	similarityModelName   = "jina-embeddings-v2-base-code"
+	similarityModelDigest = "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986"
 )
 
 type similarityStamp struct {
@@ -127,7 +127,7 @@ func similaritySourceDigest(pkgs []*LoadedPackage, root string) (string, error) 
 			continue
 		}
 
-		for _, filename := range pkg.sourceFiles {
+		for _, filename := range pkg.repoFiles {
 			key, sourceFile, err := similaritySourceFileForPath(pkg.ImportPath, filename, root)
 			if err != nil {
 				return "", err

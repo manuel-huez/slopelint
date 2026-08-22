@@ -1,9 +1,9 @@
 {
-  "schema": 5,
-  "source_digest": "e79974862acfa7cbb5d6d254226a3368f768fcb5e4e06b78db72a69aa2640aac",
-  "model": "unclemusclez/jina-embeddings-v2-base-code:latest",
-  "model_digest": "9fe680d4d58b475099d91e0d08a1eaea6cef087b0a0770f4165581a7e366afec",
-  "checked_blocks": 1430,
+  "schema": 6,
+  "source_digest": "5d540ee48fb3beb7061722cf827873aa41cfc90556e97c915c18c738e64f5075",
+  "model": "jina-embeddings-v2-base-code",
+  "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
+  "checked_blocks": 1438,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",

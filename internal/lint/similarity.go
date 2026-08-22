@@ -13,7 +13,7 @@ import (
 	"hash/fnv"
 	"math"
 	"path/filepath"
-	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	similaritySchema           = 5
+	similaritySchema           = 6
 	similarityMinimumBlocks    = 2
 	similarityFirstDistantTier = 2
 	similarityIssueKind        = "semantic_duplicate"
@@ -30,14 +30,15 @@ const (
 	// Small functions produce common boilerplate matches already covered by structural rules.
 	similarityMinimumTokens = 50
 
-	// Byte-bounded overlapping chunks keep every part of large functions below Ollama's
-	// default context without depending on its model-specific tokenizer.
-	similarityEmbeddingChunkBytes   = 3072
-	similarityEmbeddingChunkOverlap = 384
+	// Byte-bounded overlapping chunks keep every part of large functions inside the
+	// native model context. The cap also fits byte-fallback tokens plus model markers
+	// inside the 2048-token micro-batch, without truncation or tokenizer assumptions.
+	similarityEmbeddingChunkBytes   = 2000
+	similarityEmbeddingChunkOverlap = 256
 	similarityEmbeddingLineSearch   = 512
 	similarityChunkCachePrefix      = "chunk-v1\x00"
-	// CPU benchmark: one 128-input request processed 1.40 vectors/s versus 1.31
-	// vectors/s for 32 inputs, without increasing the Ollama runner's memory high-water mark.
+	// Large outer batches amortize Go/C++ calls. llama.cpp splits these into four
+	// parallel sequences while keeping one bounded output allocation.
 	similarityEmbeddingBatchSize = 128
 
 	// Related analyzer functions score highly even when behavior differs. Precision-first
@@ -57,6 +58,7 @@ type SimilarityOptions struct {
 	CacheEnabled    bool
 	CacheDir        string
 	AcceptedPairIDs []string
+	embedder        similarityEmbedder
 }
 
 type similarityBlock struct {
@@ -100,7 +102,7 @@ type similarityVectorMatrix struct {
 }
 
 // CheckSimilarCode checks or attests semantic duplicate analysis for loaded packages.
-// Local runs use Ollama and update the stamp; CI runs only validate the stamp.
+// Local runs use the native embedding engine and update the stamp; CI runs only validate it.
 func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, error) {
 	if len(pkgs) == 0 {
 		return nil, nil
@@ -142,6 +144,19 @@ func analyzeChangedSimilarCode(
 	if err != nil {
 		return nil, err
 	}
+
+	// Blocks retain token files and formatted content, not AST nodes. Drop syntax
+	// before model allocation so repo analysis and inference memory do not overlap.
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+
+		pkg.FSet = nil
+		pkg.Files = nil
+	}
+
+	debug.FreeOSMemory()
 
 	matches, cacheRoot, err := similarityMatchesForBlocks(
 		blocks,
@@ -186,22 +201,25 @@ func analyzeChangedSimilarCode(
 }
 
 func releaseSimilarityTypes(pkgs []*LoadedPackage) {
-	// Similarity needs syntax only. Release type graphs before allocating vectors and
-	// pair-scan state so the two largest phases do not overlap in memory.
-	releasedTypes := false
+	// Reparse stable repo files after releasing type graphs and compiler-generated
+	// CGo syntax, so those large phases do not overlap with vectors and pair state.
+	releasedAnalysis := false
 
 	for _, pkg := range pkgs {
 		if pkg == nil {
 			continue
 		}
 
-		releasedTypes = releasedTypes || pkg.TypesPkg != nil || pkg.TypesInfo != nil
+		releasedAnalysis = releasedAnalysis ||
+			pkg.TypesPkg != nil || pkg.TypesInfo != nil || len(pkg.Files) > 0
 		pkg.TypesPkg = nil
 		pkg.TypesInfo = nil
+		pkg.FSet = nil
+		pkg.Files = nil
 	}
 
-	if releasedTypes {
-		runtime.GC()
+	if releasedAnalysis {
+		debug.FreeOSMemory()
 	}
 }
 
@@ -242,9 +260,12 @@ func similarityMatchesForBlocks(
 		return nil, cacheRoot, nil
 	}
 
-	client := newOllamaEmbeddingClient()
-
-	vectors, err := populateSimilarityVectors(blocks, client, cacheRoot, opts.CacheEnabled)
+	vectors, err := populateSimilarityVectors(
+		blocks,
+		opts.embedder,
+		cacheRoot,
+		opts.CacheEnabled,
+	)
 	if err != nil {
 		return nil, "", err
 	}
@@ -546,28 +567,41 @@ func similarityEmbeddingInputs(content string) []string {
 
 func populateSimilarityVectors(
 	blocks []*similarityBlock,
-	client *ollamaEmbeddingClient,
+	embedder similarityEmbedder,
 	cacheRoot string,
 	cacheEnabled bool,
-) (similarityVectorMatrix, error) {
+) (matrix similarityVectorMatrix, err error) {
 	blockInputs, inputs := similarityVectorInputs(blocks)
 
 	missing := loadCachedSimilarityVectors(inputs, cacheRoot, cacheEnabled)
-	if len(missing) > 0 {
-		if err := client.verifyModel(); err != nil {
+	if len(missing) == 0 {
+		return packSimilarityVectors(blocks, blockInputs)
+	}
+
+	if embedder == nil {
+		embedder, err = newNativeSimilarityEmbedder(cacheRoot)
+		if err != nil {
 			return similarityVectorMatrix{}, err
 		}
 
-		for start := 0; start < len(missing); start += similarityEmbeddingBatchSize {
-			end := min(start+similarityEmbeddingBatchSize, len(missing))
-			if err := populateSimilarityVectorBatch(
-				missing[start:end],
-				client,
-				cacheRoot,
-				cacheEnabled,
-			); err != nil {
-				return similarityVectorMatrix{}, err
-			}
+		defer func() {
+			err = errors.Join(err, embedder.close())
+		}()
+	}
+
+	if embedder == nil {
+		return similarityVectorMatrix{}, errors.New("embedding engine is unavailable")
+	}
+
+	for start := 0; start < len(missing); start += similarityEmbeddingBatchSize {
+		end := min(start+similarityEmbeddingBatchSize, len(missing))
+		if err := populateSimilarityVectorBatch(
+			missing[start:end],
+			embedder,
+			cacheRoot,
+			cacheEnabled,
+		); err != nil {
+			return similarityVectorMatrix{}, err
 		}
 	}
 
@@ -649,7 +683,7 @@ func loadCachedSimilarityVectors(
 
 func populateSimilarityVectorBatch(
 	batch []*similarityVectorInput,
-	client *ollamaEmbeddingClient,
+	embedder similarityEmbedder,
 	cacheRoot string,
 	cacheEnabled bool,
 ) error {
@@ -658,14 +692,14 @@ func populateSimilarityVectorBatch(
 		inputs[i] = input.Content
 	}
 
-	vectors, err := client.embed(inputs)
+	vectors, err := embedder.embed(inputs)
 	if err != nil {
 		return err
 	}
 
 	if len(vectors) != len(inputs) {
 		return fmt.Errorf(
-			"ollama returned %d embeddings for %d code blocks",
+			"embedding engine returned %d embeddings for %d code blocks",
 			len(vectors),
 			len(inputs),
 		)
@@ -756,8 +790,8 @@ func normalizeSimilarityVector(vector []float32) error {
 		return errors.New("zero vector")
 	}
 
-	// Ollama returns unit vectors. Normalize once anyway so old cache entries and
-	// small transport roundoff cannot change threshold comparisons.
+	// Normalize once at the engine boundary so cache format and threshold behavior
+	// do not depend on model-runner output conventions.
 	inverseNorm := 1 / math.Sqrt(norm)
 	for index, value := range vector {
 		vector[index] = float32(float64(value) * inverseNorm)

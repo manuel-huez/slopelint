@@ -189,7 +189,7 @@ func repoAnalysisCacheFiles(pkgs []*LoadedPackage) ([]analysisCacheFile, error) 
 			continue
 		}
 
-		for _, name := range pkg.sourceFiles {
+		for _, name := range pkg.repoFiles {
 			if _, ok := seen[name]; ok {
 				continue
 			}

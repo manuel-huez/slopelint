@@ -1,36 +1,32 @@
 package lint
 
 import (
-	"encoding/json"
 	"math"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 )
 
-func TestSimilarityLocalWritesStampAndCIUsesItWithoutOllama(t *testing.T) {
+func TestSimilarityLocalWritesStampAndCIUsesItWithoutNativeEngine(t *testing.T) {
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
 
-	server, requests := newSimilarityTestServer(t, func(input string) []float32 {
+	embedder := &similarityTestEmbedder{vector: func(input string) []float32 {
 		if strings.Contains(input, "func first") {
 			return []float32{1, 0}
 		}
 
 		return []float32{0, 1}
-	})
-	t.Setenv("OLLAMA_HOST", server.URL)
+	}}
 
 	pkgs := loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
 		CacheEnabled: true,
 		CacheDir:     cacheDir,
+		embedder:     embedder,
 	})
 	if err != nil {
 		t.Fatalf("local check: %v", err)
@@ -40,16 +36,14 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutOllama(t *testing.T) {
 		t.Fatalf("local issues: %v", issues)
 	}
 
-	if requests.Load() != 2 {
-		t.Fatalf("Ollama requests = %d, want tags plus embed", requests.Load())
+	if embedder.calls != 1 {
+		t.Fatalf("embedding batches = %d, want 1", embedder.calls)
 	}
 
 	stampPath := filepath.Join(tmp, similarityStampName)
 	if _, err := os.Stat(stampPath); err != nil {
 		t.Fatalf("stamp: %v", err)
 	}
-
-	server.Close()
 
 	pkgs = loadPackagesForTest(t, tmp)
 
@@ -71,7 +65,11 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutOllama(t *testing.T) {
 		t.Fatalf("CI issues: %v", issues)
 	}
 
-	writeFile(t, filepath.Join(tmp, "sample.go"), similarityTestSource+"\n// source changed\n")
+	writeFile(
+		t,
+		filepath.Join(tmp, similarityTestFilename),
+		similarityTestSource+"\n// source changed\n",
+	)
 	pkgs = loadPackagesForTest(t, tmp)
 
 	_, err = CheckSimilarCode(pkgs, SimilarityOptions{CI: true})
@@ -85,18 +83,16 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
 
-	server, _ := newSimilarityTestServer(t, func(string) []float32 {
+	embedder := &similarityTestEmbedder{vector: func(string) []float32 {
 		return []float32{1, 0}
-	})
-	defer server.Close()
-
-	t.Setenv("OLLAMA_HOST", server.URL)
+	}}
 
 	pkgs := loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
 		CacheEnabled: true,
 		CacheDir:     cacheDir,
+		embedder:     embedder,
 	})
 	if err != nil {
 		t.Fatalf("first check: %v", err)
@@ -140,12 +136,9 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
 
-	server, _ := newSimilarityTestServer(t, func(string) []float32 {
+	embedder := &similarityTestEmbedder{vector: func(string) []float32 {
 		return []float32{1, 0}
-	})
-	defer server.Close()
-
-	t.Setenv("OLLAMA_HOST", server.URL)
+	}}
 
 	pkgs := loadPackagesForTest(t, tmp)
 
@@ -153,6 +146,7 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 		CacheEnabled:    true,
 		CacheDir:        cacheDir,
 		AcceptedPairIDs: []string{similarityAcceptAllID},
+		embedder:        embedder,
 	})
 	if err != nil {
 		t.Fatalf("initial acceptance: %v", err)
@@ -163,7 +157,11 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 		t.Fatalf("load accepted stamp: accepted=%d err=%v", len(stamp.Accepted), err)
 	}
 
-	writeFile(t, filepath.Join(tmp, "sample.go"), similarityTestSource+"\n// unrelated change\n")
+	writeFile(
+		t,
+		filepath.Join(tmp, similarityTestFilename),
+		similarityTestSource+"\n// unrelated change\n",
+	)
 	pkgs = loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
@@ -185,18 +183,16 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
 
-	server, _ := newSimilarityTestServer(t, func(string) []float32 {
+	embedder := &similarityTestEmbedder{vector: func(string) []float32 {
 		return []float32{1, 0}
-	})
-	defer server.Close()
-
-	t.Setenv("OLLAMA_HOST", server.URL)
+	}}
 
 	pkgs := loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
 		CacheDir:        cacheDir,
 		AcceptedPairIDs: []string{similarityAcceptAllID},
+		embedder:        embedder,
 	})
 	if err != nil {
 		t.Fatalf("accept all: %v", err)
@@ -227,7 +223,7 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 
 func TestSimilarityRejectsUnknownAcceptance(t *testing.T) {
 	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
+	writeFile(t, filepath.Join(tmp, similarityTestFilename), "package sample\n")
 
 	pkgs := loadPackagesForTest(t, tmp)
 
@@ -479,18 +475,16 @@ func TestSimilarityThresholdRisesWithDistanceAndTestCode(t *testing.T) {
 func TestSimilarityStructureCannotBypassEmbeddingThreshold(t *testing.T) {
 	t.Parallel()
 
-	const testRelativePath = "sample.go"
-
 	structural := map[uint64]struct{}{1: {}}
 	blocks := []*similarityBlock{
 		{
-			Identity:     testRelativePath + "::first",
-			RelativePath: testRelativePath,
+			Identity:     similarityTestFilename + "::first",
+			RelativePath: similarityTestFilename,
 			Structural:   structural,
 		},
 		{
-			Identity:     testRelativePath + "::second",
-			RelativePath: testRelativePath,
+			Identity:     similarityTestFilename + "::second",
+			RelativePath: similarityTestFilename,
 			Structural:   structural,
 		},
 	}
@@ -517,7 +511,7 @@ func TestSimilarityCompactsExactCopyGroups(t *testing.T) {
 		blocks[index] = &similarityBlock{
 			Identity:     string(rune('a' + index)),
 			ContentHash:  "same-content",
-			RelativePath: "sample.go",
+			RelativePath: similarityTestFilename,
 		}
 	}
 
@@ -603,67 +597,6 @@ func TestSimilarityPolicyChangeDropsAcceptances(t *testing.T) {
 	}
 }
 
-func newSimilarityTestServer(
-	t *testing.T,
-	vector func(string) []float32,
-) (*httptest.Server, *atomic.Int64) {
-	t.Helper()
-
-	requests := &atomic.Int64{}
-	handler := http.NewServeMux()
-	handler.HandleFunc("/api/tags", func(writer http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-
-		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"models": []map[string]string{{
-				"name":   similarityModelName,
-				"model":  similarityModelName,
-				"digest": similarityModelDigest,
-			}},
-		})
-	})
-	handler.HandleFunc("/api/embed", func(writer http.ResponseWriter, request *http.Request) {
-		requests.Add(1)
-
-		var input struct {
-			Values   []string `json:"input"`
-			Truncate bool     `json:"truncate"`
-			Options  struct {
-				NumThread int `json:"num_thread"`
-			} `json:"options"`
-		}
-		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-
-			return
-		}
-
-		if input.Truncate {
-			http.Error(
-				writer,
-				"embedding request must preserve complete chunks",
-				http.StatusBadRequest,
-			)
-
-			return
-		}
-
-		if input.Options.NumThread <= 0 {
-			http.Error(writer, "embedding request must allocate CPU threads", http.StatusBadRequest)
-			return
-		}
-
-		vectors := make([][]float32, len(input.Values))
-		for i, value := range input.Values {
-			vectors[i] = vector(value)
-		}
-
-		_ = json.NewEncoder(writer).Encode(map[string]any{"embeddings": vectors})
-	})
-
-	return httptest.NewServer(handler), requests
-}
-
 func similarityIssuePairID(t *testing.T, message string) string {
 	t.Helper()
 
@@ -678,8 +611,10 @@ func similarityIssuePairID(t *testing.T, message string) string {
 func writeSimilarityTestSource(t *testing.T, dir string) {
 	t.Helper()
 
-	writeFile(t, filepath.Join(dir, "sample.go"), similarityTestSource)
+	writeFile(t, filepath.Join(dir, similarityTestFilename), similarityTestSource)
 }
+
+const similarityTestFilename = "sample.go"
 
 const similarityTestSource = `package sample
 

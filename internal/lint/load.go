@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -27,6 +28,7 @@ type packageMeta struct {
 	BuildID         string   `json:"BuildID"`
 	Export          string   `json:"Export"`
 	GoFiles         []string `json:"GoFiles"`
+	CgoFiles        []string `json:"CgoFiles"`
 	CompiledGoFiles []string `json:"CompiledGoFiles"`
 	Match           []string `json:"Match"`
 	Error           *struct {
@@ -182,17 +184,17 @@ func loadPackageTargets(
 func packageMetadata(targets []*packageMeta) ([]*LoadedPackage, error) {
 	pkgs := make([]*LoadedPackage, len(targets))
 	for index, target := range targets {
-		sourceFiles, err := packageSourceFiles(target)
+		repoFiles, err := packageRepoFiles(target)
 		if err != nil {
 			return nil, err
 		}
 
 		pkgs[index] = &LoadedPackage{
-			ImportPath:  target.targetImportPath(),
-			Name:        target.Name,
-			Dir:         target.Dir,
-			sourceFiles: sourceFiles,
-			buildID:     target.BuildID,
+			ImportPath: target.targetImportPath(),
+			Name:       target.Name,
+			Dir:        target.Dir,
+			repoFiles:  repoFiles,
+			buildID:    target.BuildID,
 		}
 	}
 
@@ -208,8 +210,8 @@ func loadPackageSyntax(pkgs []*LoadedPackage) error {
 
 		fset := token.NewFileSet()
 
-		files := make([]*ast.File, 0, len(pkg.sourceFiles))
-		for _, filename := range pkg.sourceFiles {
+		files := make([]*ast.File, 0, len(pkg.repoFiles))
+		for _, filename := range pkg.repoFiles {
 			file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 			if err != nil {
 				return fmt.Errorf("parse %s: %w", filename, err)
@@ -276,15 +278,20 @@ func loadWorkerCount(targetCount int) int {
 }
 
 func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPackage, error) {
-	filesOnDisk, err := packageSourceFiles(meta)
+	compiledFiles, err := packageCompiledFiles(meta)
+	if err != nil {
+		return nil, err
+	}
+
+	repoFiles, err := packageRepoFiles(meta)
 	if err != nil {
 		return nil, err
 	}
 
 	fset := token.NewFileSet()
 
-	files := make([]*ast.File, 0, len(filesOnDisk))
-	for _, filename := range filesOnDisk {
+	files := make([]*ast.File, 0, len(compiledFiles))
+	for _, filename := range compiledFiles {
 		file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", filename, err)
@@ -329,25 +336,71 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 		return nil, fmt.Errorf("type-check %s: %w", importPath, err)
 	}
 
+	files = packageAnalysisFiles(files, fset, meta.Dir)
+
 	return &LoadedPackage{
-		ImportPath:  importPath,
-		Name:        meta.Name,
-		Dir:         meta.Dir,
-		sourceFiles: filesOnDisk,
-		FSet:        fset,
-		Files:       files,
-		TypesPkg:    typesPkg,
-		TypesInfo:   info,
-		buildID:     meta.BuildID,
+		ImportPath: importPath,
+		Name:       meta.Name,
+		Dir:        meta.Dir,
+		repoFiles:  repoFiles,
+		FSet:       fset,
+		Files:      files,
+		TypesPkg:   typesPkg,
+		TypesInfo:  info,
+		buildID:    meta.BuildID,
 	}, nil
 }
 
-func packageSourceFiles(meta *packageMeta) ([]string, error) {
+func packageAnalysisFiles(
+	files []*ast.File,
+	fset *token.FileSet,
+	packageDir string,
+) []*ast.File {
+	kept := files[:0]
+
+	for _, file := range files {
+		if file == nil {
+			continue
+		}
+
+		if !ast.IsGenerated(file) {
+			kept = append(kept, file)
+			continue
+		}
+
+		filename := fset.PositionFor(file.Package, true).Filename
+
+		relative, err := filepath.Rel(packageDir, filename)
+		if err == nil && relative != ".." &&
+			!strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			kept = append(kept, file)
+		}
+	}
+
+	return kept
+}
+
+func packageCompiledFiles(meta *packageMeta) ([]string, error) {
 	filesOnDisk := meta.CompiledGoFiles
 	if len(filesOnDisk) == 0 {
 		filesOnDisk = meta.GoFiles
 	}
 
+	return resolvePackageFiles(meta, filesOnDisk)
+}
+
+func packageRepoFiles(meta *packageMeta) ([]string, error) {
+	// CGo compiler files live in the build cache. Original GoFiles plus CgoFiles
+	// are the stable source set for cache keys and semantic similarity stamps.
+	filesOnDisk := append(append([]string(nil), meta.GoFiles...), meta.CgoFiles...)
+	if len(filesOnDisk) == 0 {
+		filesOnDisk = meta.CompiledGoFiles
+	}
+
+	return resolvePackageFiles(meta, filesOnDisk)
+}
+
+func resolvePackageFiles(meta *packageMeta, filesOnDisk []string) ([]string, error) {
 	if len(filesOnDisk) == 0 {
 		return nil, fmt.Errorf("package %s has no Go files to analyze", meta.ImportPath)
 	}

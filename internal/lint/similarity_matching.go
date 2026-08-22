@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -12,91 +11,155 @@ import (
 	"sync"
 )
 
+type similarityScanJob struct {
+	leftStart    int
+	leftEnd      int
+	changedIndex int
+	otherStart   int
+	otherEnd     int
+}
+
 func scanSimilarityPairs(
 	blocks []*similarityBlock,
+	vectors similarityVectorMatrix,
 	changed map[string]struct{},
 ) []similarityMatch {
 	if len(blocks) < similarityMinimumBlocks {
 		return nil
 	}
 
-	// Each worker owns one left-index result slice. This saturates local CPUs without
-	// locks and preserves deterministic flattening after the pair scan.
-	byLeft := make([][]similarityMatch, len(blocks))
-	jobs := make(chan int)
-	workerCount := min(runtime.GOMAXPROCS(0), len(blocks))
+	changedFlags := make([]bool, len(blocks))
+	jobs := make([]similarityScanJob, 0)
+
+	if changed == nil {
+		const fullScanRows = 16
+		for start := 0; start < len(blocks)-1; start += fullScanRows {
+			jobs = append(jobs, similarityScanJob{
+				leftStart:    start,
+				leftEnd:      min(start+fullScanRows, len(blocks)-1),
+				changedIndex: -1,
+			})
+		}
+	} else {
+		changedIndexes := make([]int, 0, len(changed))
+		for index, block := range blocks {
+			if _, ok := changed[block.Identity]; ok {
+				changedIndexes = append(changedIndexes, index)
+				changedFlags[index] = true
+			}
+		}
+
+		// Split each changed row across CPUs. One edited block must still use the
+		// full machine instead of becoming one long single-worker scan.
+		const incrementalScanColumns = 256
+		for _, changedIndex := range changedIndexes {
+			for start := 0; start < len(blocks); start += incrementalScanColumns {
+				jobs = append(jobs, similarityScanJob{
+					changedIndex: changedIndex,
+					otherStart:   start,
+					otherEnd:     min(start+incrementalScanColumns, len(blocks)),
+				})
+			}
+		}
+	}
+
+	results := make([][]similarityMatch, len(jobs))
+	jobIndexes := make(chan int)
+	workerCount := min(runtime.GOMAXPROCS(0), len(jobs))
 
 	var workers sync.WaitGroup
-
-	workers.Add(workerCount)
-
 	for range workerCount {
-		go func() {
-			defer workers.Done()
-
-			for leftIndex := range jobs {
-				byLeft[leftIndex] = similarityMatchesForLeft(blocks, leftIndex, changed)
+		workers.Go(func() {
+			for index := range jobIndexes {
+				results[index] = similarityMatchesForJob(
+					blocks,
+					vectors,
+					jobs[index],
+					changedFlags,
+				)
 			}
-		}()
+		})
 	}
 
-	for leftIndex := range len(blocks) - 1 {
-		jobs <- leftIndex
+	for index := range jobs {
+		jobIndexes <- index
 	}
 
-	close(jobs)
+	close(jobIndexes)
 	workers.Wait()
 
 	matches := make([]similarityMatch, 0)
-	for _, leftMatches := range byLeft {
-		matches = append(matches, leftMatches...)
+	for _, result := range results {
+		matches = append(matches, result...)
+	}
+
+	sortSimilarityMatches(matches)
+
+	return matches
+}
+
+func similarityMatchesForJob(
+	blocks []*similarityBlock,
+	vectors similarityVectorMatrix,
+	job similarityScanJob,
+	changed []bool,
+) []similarityMatch {
+	matches := make([]similarityMatch, 0)
+
+	if job.changedIndex < 0 {
+		for left := job.leftStart; left < job.leftEnd; left++ {
+			for right := left + 1; right < len(blocks); right++ {
+				if match, ok := similarityMatchForPair(blocks, vectors, left, right); ok {
+					matches = append(matches, match)
+				}
+			}
+		}
+
+		return matches
+	}
+
+	for other := job.otherStart; other < job.otherEnd; other++ {
+		// Two changed endpoints are owned by the lower index. Every other pair is
+		// owned by its sole changed endpoint, so no all-pairs walk or duplicate work.
+		if other == job.changedIndex || changed[other] && other < job.changedIndex {
+			continue
+		}
+
+		left, right := min(job.changedIndex, other), max(job.changedIndex, other)
+		if match, ok := similarityMatchForPair(blocks, vectors, left, right); ok {
+			matches = append(matches, match)
+		}
 	}
 
 	return matches
 }
 
-func similarityMatchesForLeft(
+func similarityMatchForPair(
 	blocks []*similarityBlock,
+	vectors similarityVectorMatrix,
 	leftIndex int,
-	changed map[string]struct{},
-) []similarityMatch {
+	rightIndex int,
+) (similarityMatch, bool) {
 	left := blocks[leftIndex]
-	matches := make([]similarityMatch, 0)
+	right := blocks[rightIndex]
+	embedding, leftChunk, rightChunk := maximumDotSimilarity(vectors, left, right)
+	tier := similarityLocalityTier(left, right)
+	threshold := similarityEmbeddingThreshold(tier, left.IsTest || right.IsTest)
 
-	for _, right := range blocks[leftIndex+1:] {
-		if changed != nil {
-			_, leftChanged := changed[left.Identity]
-			_, rightChanged := changed[right.Identity]
-
-			if !leftChanged && !rightChanged {
-				continue
-			}
-		}
-
-		embedding, leftChunk, rightChunk := maximumCosineSimilarity(
-			left.Vectors,
-			right.Vectors,
-		)
-		tier := similarityLocalityTier(left, right)
-		threshold := similarityEmbeddingThreshold(tier, left.IsTest || right.IsTest)
-
-		if embedding < threshold {
-			continue
-		}
-
-		matches = append(matches, similarityMatch{
-			ID:              similarityPairID(left, right),
-			Left:            left,
-			Right:           right,
-			EmbeddingScore:  embedding,
-			StructuralScore: structuralSimilarity(left.Structural, right.Structural),
-			LocalityTier:    tier,
-			LeftChunk:       leftChunk,
-			RightChunk:      rightChunk,
-		})
+	if embedding < threshold {
+		return similarityMatch{}, false
 	}
 
-	return matches
+	return similarityMatch{
+		ID:              similarityPairID(left, right),
+		Left:            left,
+		Right:           right,
+		EmbeddingScore:  embedding,
+		StructuralScore: structuralSimilarity(left.Structural, right.Structural),
+		LocalityTier:    tier,
+		LeftChunk:       leftChunk,
+		RightChunk:      rightChunk,
+	}, true
 }
 
 func groupSimilarityMatches(
@@ -177,14 +240,21 @@ func sortSimilarityMatches(matches []similarityMatch) {
 	})
 }
 
-func maximumCosineSimilarity(left, right [][]float32) (float64, int, int) {
+func maximumDotSimilarity(
+	matrix similarityVectorMatrix,
+	left *similarityBlock,
+	right *similarityBlock,
+) (float64, int, int) {
 	var maximum float64
 
 	var leftChunk, rightChunk int
 
-	for leftIndex, leftVector := range left {
-		for rightIndex, rightVector := range right {
-			score := cosineSimilarity(leftVector, rightVector)
+	for leftIndex := range left.VectorCount {
+		leftVector := matrix.vector(left.VectorStart + leftIndex)
+		for rightIndex := range right.VectorCount {
+			rightVector := matrix.vector(right.VectorStart + rightIndex)
+
+			score := normalizedDotProduct(leftVector, rightVector)
 			if score > maximum {
 				maximum = score
 				leftChunk = leftIndex
@@ -196,26 +266,39 @@ func maximumCosineSimilarity(left, right [][]float32) (float64, int, int) {
 	return maximum, leftChunk, rightChunk
 }
 
-func cosineSimilarity(left, right []float32) float64 {
+func (matrix similarityVectorMatrix) vector(index int) []float32 {
+	start := index * matrix.Dimensions
+	return matrix.Values[start : start+matrix.Dimensions]
+}
+
+func normalizedDotProduct(left, right []float32) float64 {
 	if len(left) == 0 || len(left) != len(right) {
 		return 0
 	}
 
-	var dot, leftNorm, rightNorm float64
+	// Multiple accumulators expose independent work to the CPU and retain float32
+	// throughput. Inputs were normalized once before matrix packing.
+	var sums [8]float32
 
-	for i, value := range left {
-		leftValue := float64(value)
-		rightValue := float64(right[i])
-		dot += leftValue * rightValue
-		leftNorm += leftValue * leftValue
-		rightNorm += rightValue * rightValue
+	index := 0
+	for ; index+8 <= len(left); index += 8 {
+		sums[0] += left[index] * right[index]
+		sums[1] += left[index+1] * right[index+1]
+		sums[2] += left[index+2] * right[index+2]
+		sums[3] += left[index+3] * right[index+3]
+		sums[4] += left[index+4] * right[index+4]
+		sums[5] += left[index+5] * right[index+5]
+		sums[6] += left[index+6] * right[index+6]
+		sums[7] += left[index+7] * right[index+7]
 	}
 
-	if leftNorm == 0 || rightNorm == 0 {
-		return 0
+	dot := sums[0] + sums[1] + sums[2] + sums[3] +
+		sums[4] + sums[5] + sums[6] + sums[7]
+	for ; index < len(left); index++ {
+		dot += left[index] * right[index]
 	}
 
-	return dot / math.Sqrt(leftNorm*rightNorm)
+	return float64(min(dot, 1))
 }
 
 func structuralSimilarity(left, right map[uint64]struct{}) float64 {
@@ -307,7 +390,7 @@ func similarityPairID(left, right *similarityBlock) string {
 
 func (match similarityMatch) issue() Issue {
 	chunkDetail := ""
-	if len(match.Left.Vectors) > 1 || len(match.Right.Vectors) > 1 {
+	if match.Left.VectorCount > 1 || match.Right.VectorCount > 1 {
 		chunkDetail = fmt.Sprintf(
 			" via chunks %d/%d",
 			match.LeftChunk+1,

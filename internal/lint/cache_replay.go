@@ -9,11 +9,6 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-type repoTokenFile struct {
-	file *token.File
-	fset *token.FileSet
-}
-
 func cachedExportsForLinter(l *linter) []analysisCacheExport {
 	funcs := l.collectSummarizableFuncs()
 	if len(funcs) == 0 {
@@ -83,7 +78,6 @@ func replayAnalysisCache(
 }
 
 func replayRepoAnalysisCache(
-	pkgs []*LoadedPackage,
 	entry *analysisCacheEntry,
 	cacheHitHook func(string),
 ) ([]Issue, bool) {
@@ -91,20 +85,22 @@ func replayRepoAnalysisCache(
 		return nil, false
 	}
 
-	files := repoTokenFiles(pkgs)
 	issues := make([]Issue, 0, len(entry.Issues))
 
 	for _, cached := range entry.Issues {
-		file := files[cached.Filename]
-		if file.file == nil || cached.Offset < 0 || cached.Offset > file.file.Size() {
+		if cached.Filename == "" || cached.Offset < 0 || cached.Line <= 0 || cached.Column <= 0 {
 			return nil, false
 		}
 
 		issues = append(issues, Issue{
-			Pos:     file.file.Pos(cached.Offset),
 			Kind:    cached.Kind,
 			Message: cached.Message,
-			fset:    file.fset,
+			position: token.Position{
+				Filename: cached.Filename,
+				Offset:   cached.Offset,
+				Line:     cached.Line,
+				Column:   cached.Column,
+			},
 		})
 	}
 
@@ -142,30 +138,6 @@ func packageTokenFiles(files []*ast.File, fset *token.FileSet) map[string]*token
 		}
 
 		out[tokenFile.Name()] = tokenFile
-	}
-
-	return out
-}
-
-func repoTokenFiles(pkgs []*LoadedPackage) map[string]repoTokenFile {
-	out := make(map[string]repoTokenFile)
-
-	for _, pkg := range pkgs {
-		if pkg == nil {
-			continue
-		}
-
-		for _, file := range pkg.Files {
-			tokenFile := pkg.FSet.File(file.Package)
-			if tokenFile == nil {
-				continue
-			}
-
-			out[tokenFile.Name()] = repoTokenFile{
-				file: tokenFile,
-				fset: pkg.FSet,
-			}
-		}
 	}
 
 	return out

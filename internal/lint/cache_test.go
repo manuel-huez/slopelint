@@ -22,8 +22,8 @@ func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v3") {
-		t.Fatalf("analysis cache root = %q, want schema 3 suffix", root)
+	if !strings.HasSuffix(root, "analysis-v4") {
+		t.Fatalf("analysis cache root = %q, want schema 4 suffix", root)
 	}
 }
 
@@ -85,7 +85,7 @@ func f(s string) {
 	}
 }
 
-func TestLintPackagesCachesStandaloneRepoResult(t *testing.T) {
+func TestLintRepositoryCachesStandaloneResult(t *testing.T) {
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
@@ -96,38 +96,95 @@ func f(s string) {
 }
 `)
 
-	pkgs := loadPackagesForTest(t, tmp)
-	pkg := mustPackage(t, pkgs, "example.com/sample")
-	issues1 := LintPackages(pkgs, Options{
+	issues1, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
 		CacheDir:     cacheDir,
-	})
+	}, nil)
+	if err != nil {
+		t.Fatalf("first repo lint: %v", err)
+	}
 
-	digest1 := issuesDigest(pkg.FSet, issues1)
+	digest1 := joinMessages(issues1)
 	if !strings.Contains(digest1, `condition "s == \"\"" is always false here`) {
 		t.Fatalf("expected first run diagnostic, got:\n%s", digest1)
 	}
 
 	var hits []string
 
-	pkgs = loadPackagesForTest(t, tmp)
-	pkg = mustPackage(t, pkgs, "example.com/sample")
-	issues2 := LintPackages(pkgs, Options{
+	issues2, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
 		CacheDir:     cacheDir,
 		CacheHitHook: func(importPath string) {
 			hits = append(hits, importPath)
 		},
-	})
+	}, nil)
+	if err != nil {
+		t.Fatalf("cached repo lint: %v", err)
+	}
 
 	if len(hits) != 1 || hits[0] != "repo" {
 		t.Fatalf("expected standalone repo cache hit, got %v", hits)
 	}
 
-	if got := issuesDigest(pkg.FSet, issues2); got != digest1 {
+	if got := joinMessages(issues2); got != digest1 {
 		t.Fatalf("cached issues changed:\nwant:\n%s\n\ngot:\n%s", digest1, got)
+	}
+
+	if len(issues2) == 0 || !strings.Contains(FormatIssuePosition(issues2[0]), "sample.go:") {
+		t.Fatalf("cached issue lost source position: %#v", issues2)
+	}
+}
+
+func TestLintRepositoryCacheBuildIDTracksDependencies(t *testing.T) {
+	const usePackagePattern = "./use"
+
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
+	writeFile(t, filepath.Join(tmp, "dep", "dep.go"), `package dep
+
+type Item struct { Name string }
+`)
+	writeFile(t, filepath.Join(tmp, "use", "use.go"), `package use
+
+import "example.com/sample/dep"
+
+func Name(item dep.Item) string { return item.Name }
+`)
+
+	opts := Options{MaxStates: 32, CacheEnabled: true, CacheDir: cacheDir}
+	if _, err := LintRepository([]string{usePackagePattern}, tmp, opts, nil); err != nil {
+		t.Fatalf("first repo lint: %v", err)
+	}
+
+	var hits []string
+
+	opts.CacheHitHook = func(name string) { hits = append(hits, name) }
+	if _, err := LintRepository([]string{usePackagePattern}, tmp, opts, nil); err != nil {
+		t.Fatalf("cached repo lint: %v", err)
+	}
+
+	if len(hits) != 1 || hits[0] != "repo" {
+		t.Fatalf("unchanged dependency cache hits = %v, want repo", hits)
+	}
+
+	writeFile(t, filepath.Join(tmp, "dep", "dep.go"), `package dep
+
+type Item struct {
+	Name string
+	Age int
+}
+`)
+
+	hits = nil
+
+	if _, err := LintRepository([]string{usePackagePattern}, tmp, opts, nil); err != nil {
+		t.Fatalf("dependency-changed repo lint: %v", err)
+	}
+
+	if len(hits) != 0 {
+		t.Fatalf("dependency export change cache hits = %v, want none", hits)
 	}
 }
 

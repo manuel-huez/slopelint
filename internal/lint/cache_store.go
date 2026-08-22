@@ -180,6 +180,8 @@ func buildAnalysisCacheIssues(
 		out = append(out, analysisCacheIssue{
 			Filename: pos.Filename,
 			Offset:   pos.Offset,
+			Line:     pos.Line,
+			Column:   pos.Column,
 			Kind:     issue.Kind,
 			Message:  issue.Message,
 		})

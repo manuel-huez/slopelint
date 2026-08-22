@@ -33,12 +33,7 @@ func lintInDirWithOptions(t *testing.T, dir string, opts Options) []Issue {
 
 	opts.ClosedWorld = true
 
-	pkgs, err := loadPackages([]string{allPackagesPattern}, dir)
-	if err != nil {
-		t.Fatalf("load packages: %v", err)
-	}
-
-	return LintPackages(pkgs, opts)
+	return lintLoadedPackages(loadPackagesForTest(t, dir), opts)
 }
 
 func newTestModule(t *testing.T) string {
@@ -192,7 +187,12 @@ func loadOnePackageForTest(t *testing.T, dir string) *LoadedPackage {
 func loadPackagesForTest(t *testing.T, dir string) []*LoadedPackage {
 	t.Helper()
 
-	pkgs, err := loadPackages([]string{allPackagesPattern}, dir)
+	targets, byImportPath, err := resolvePackageMetadata([]string{allPackagesPattern}, dir)
+	if err != nil {
+		t.Fatalf("resolve packages: %v", err)
+	}
+
+	pkgs, err := loadPackageTargets(targets, byImportPath)
 	if err != nil {
 		t.Fatalf("load packages: %v", err)
 	}

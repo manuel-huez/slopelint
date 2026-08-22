@@ -119,30 +119,28 @@ func runStandalone(args []string, stderr io.Writer) int {
 		return reportStandaloneError(stderr, err)
 	}
 
-	pkgs, err := lint.LoadPackages(patterns)
-	if err != nil {
-		return reportStandaloneError(stderr, err)
+	cacheActive := *cacheEnabled && lint.CacheEnabledFromEnv()
+	cacheRoot := lint.ResolveCacheDir(*cacheDir)
+	options := lint.Options{
+		MaxStates:    *maxStates,
+		CacheEnabled: cacheActive,
+		CacheDir:     cacheRoot,
+		ClosedWorld:  *closedWorld,
 	}
 
-	issues := lint.LintPackages(pkgs, lint.Options{
-		MaxStates:    *maxStates,
-		CacheEnabled: *cacheEnabled && lint.CacheEnabledFromEnv(),
-		CacheDir:     lint.ResolveCacheDir(*cacheDir),
-		ClosedWorld:  *closedWorld,
-	})
-
+	var similarityOptions *lint.SimilarityOptions
 	if mode != similarityOff {
-		similarityIssues, similarityErr := lint.CheckSimilarCode(pkgs, lint.SimilarityOptions{
+		similarityOptions = &lint.SimilarityOptions{
 			CI:              mode == similarityCI,
-			CacheEnabled:    *cacheEnabled && lint.CacheEnabledFromEnv(),
-			CacheDir:        lint.ResolveCacheDir(*cacheDir),
+			CacheEnabled:    cacheActive,
+			CacheDir:        cacheRoot,
 			AcceptedPairIDs: similarityAcceptedPairIDs(),
-		})
-		if similarityErr != nil {
-			return reportStandaloneError(stderr, similarityErr)
 		}
+	}
 
-		issues = append(issues, similarityIssues...)
+	issues, err := lint.LintRepository(patterns, ".", options, similarityOptions)
+	if err != nil {
+		return reportStandaloneError(stderr, err)
 	}
 
 	if len(issues) == 0 {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/types"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,21 +60,26 @@ func repoAnalysisCacheKey(pkgs []*LoadedPackage, opts Options) (string, error) {
 		maxStates = 32
 	}
 
+	packages := repoAnalysisCachePackages(pkgs)
+	for _, pkg := range packages {
+		// Go build IDs cover compiler settings plus transitive dependency inputs.
+		// Without one, lightweight replay cannot prove imported type data unchanged.
+		if pkg.BuildID == "" {
+			return "", fmt.Errorf("package %s has no Go build ID", pkg.ImportPath)
+		}
+	}
+
 	fingerprint := struct {
 		Schema      int                        `json:"schema"`
 		MaxStates   int                        `json:"max_states"`
 		ClosedWorld bool                       `json:"closed_world"`
-		Executable  analysisCacheExecutable    `json:"executable"`
 		Packages    []repoAnalysisCachePackage `json:"packages"`
-		Imports     []repoAnalysisCacheImport  `json:"imports"`
 		Files       []analysisCacheFile        `json:"files"`
 	}{
 		Schema:      analysisCacheSchema,
 		MaxStates:   maxStates,
 		ClosedWorld: opts.ClosedWorld,
-		Executable:  analysisCacheExecutableStamp(),
-		Packages:    repoAnalysisCachePackages(pkgs),
-		Imports:     repoAnalysisCacheImports(pkgs),
+		Packages:    packages,
 	}
 
 	files, err := repoAnalysisCacheFiles(pkgs)
@@ -109,6 +113,7 @@ func repoAnalysisCachePackages(pkgs []*LoadedPackage) []repoAnalysisCachePackage
 		out = append(out, repoAnalysisCachePackage{
 			ImportPath: pkg.ImportPath,
 			Name:       pkg.Name,
+			BuildID:    pkg.buildID,
 		})
 	}
 
@@ -117,80 +122,14 @@ func repoAnalysisCachePackages(pkgs []*LoadedPackage) []repoAnalysisCachePackage
 			return out[i].ImportPath < out[j].ImportPath
 		}
 
-		return out[i].Name < out[j].Name
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+
+		return out[i].BuildID < out[j].BuildID
 	})
 
 	return out
-}
-
-func repoAnalysisCacheImports(pkgs []*LoadedPackage) []repoAnalysisCacheImport {
-	importsByPath := make(map[string]*types.Package)
-
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.TypesPkg == nil {
-			continue
-		}
-
-		for _, imported := range pkg.TypesPkg.Imports() {
-			if imported == nil {
-				continue
-			}
-
-			importsByPath[imported.Path()] = imported
-		}
-	}
-
-	paths := make([]string, 0, len(importsByPath))
-	for path := range importsByPath {
-		paths = append(paths, path)
-	}
-
-	sort.Strings(paths)
-
-	out := make([]repoAnalysisCacheImport, 0, len(paths))
-	for _, path := range paths {
-		out = append(out, repoAnalysisCacheImportFor(importsByPath[path]))
-	}
-
-	return out
-}
-
-func repoAnalysisCacheImportFor(pkg *types.Package) repoAnalysisCacheImport {
-	if pkg == nil {
-		return repoAnalysisCacheImport{}
-	}
-
-	out := repoAnalysisCacheImport{
-		Path: pkg.Path(),
-		Name: pkg.Name(),
-	}
-
-	scope := pkg.Scope()
-	if scope == nil {
-		return out
-	}
-
-	names := scope.Names()
-
-	out.Objects = make([]string, 0, len(names))
-	for _, name := range names {
-		obj := scope.Lookup(name)
-		if obj == nil {
-			continue
-		}
-
-		out.Objects = append(out.Objects, types.ObjectString(obj, cacheImportQualifier))
-	}
-
-	return out
-}
-
-func cacheImportQualifier(pkg *types.Package) string {
-	if pkg == nil {
-		return ""
-	}
-
-	return pkg.Path()
 }
 
 func analysisCacheExecutableStamp() analysisCacheExecutable {
@@ -250,13 +189,7 @@ func repoAnalysisCacheFiles(pkgs []*LoadedPackage) ([]analysisCacheFile, error) 
 			continue
 		}
 
-		for _, file := range pkg.Files {
-			tokenFile := pkg.FSet.File(file.Package)
-			if tokenFile == nil {
-				return nil, errors.New("missing token file for package file")
-			}
-
-			name := tokenFile.Name()
+		for _, name := range pkg.sourceFiles {
 			if _, ok := seen[name]; ok {
 				continue
 			}

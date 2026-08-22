@@ -310,6 +310,10 @@ func TestSimilarityVectorCacheRoundTrip(t *testing.T) {
 		t.Fatalf("store vector: %v", err)
 	}
 
+	if err := normalizeSimilarityVector(want); err != nil {
+		t.Fatalf("normalize expected vector: %v", err)
+	}
+
 	got, ok := loadSimilarityVector(root, key)
 	if !ok {
 		t.Fatal("cached vector missing")
@@ -326,16 +330,16 @@ func TestSimilarityVectorCacheRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSimilarityCosineHandlesLargeFiniteValues(t *testing.T) {
+func TestSimilarityDotProductHandlesLargeFiniteValues(t *testing.T) {
 	t.Parallel()
 
 	vector := []float32{math.MaxFloat32, math.MaxFloat32}
-	if err := validateSimilarityVector(vector); err != nil {
-		t.Fatalf("validate large vector: %v", err)
+	if err := normalizeSimilarityVector(vector); err != nil {
+		t.Fatalf("normalize large vector: %v", err)
 	}
 
-	if got := cosineSimilarity(vector, vector); math.Abs(got-1) > 1e-12 {
-		t.Fatalf("self cosine = %f, want 1", got)
+	if got := normalizedDotProduct(vector, vector); math.Abs(got-1) > 1e-6 {
+		t.Fatalf("self dot product = %f, want 1", got)
 	}
 }
 
@@ -403,16 +407,19 @@ func TestSimilarityEmbeddingInputsChunkWithoutLosingContent(t *testing.T) {
 	}
 }
 
-func TestMaximumCosineSimilarityKeepsBestChunk(t *testing.T) {
+func TestMaximumDotSimilarityKeepsBestChunk(t *testing.T) {
 	t.Parallel()
 
-	score, leftChunk, rightChunk := maximumCosineSimilarity(
-		[][]float32{{1, 0}, {0, 1}},
-		[][]float32{{-1, 0}, {0, 1}},
-	)
+	blocks := []*similarityBlock{{}, {}}
+	matrix := similarityVectorMatrixForTest(t, blocks, [][][]float32{
+		{{1, 0}, {0, 1}},
+		{{-1, 0}, {0, 1}},
+	})
+
+	score, leftChunk, rightChunk := maximumDotSimilarity(matrix, blocks[0], blocks[1])
 	if math.Abs(score-1) > 1e-12 || leftChunk != 1 || rightChunk != 1 {
 		t.Fatalf(
-			"maximum cosine = (%f, %d, %d), want (1, 1, 1)",
+			"maximum dot similarity = (%f, %d, %d), want (1, 1, 1)",
 			score,
 			leftChunk,
 			rightChunk,
@@ -480,19 +487,21 @@ func TestSimilarityStructureCannotBypassEmbeddingThreshold(t *testing.T) {
 			Identity:     testRelativePath + "::first",
 			RelativePath: testRelativePath,
 			Structural:   structural,
-			Vectors:      [][]float32{{1, 0}},
 		},
 		{
 			Identity:     testRelativePath + "::second",
 			RelativePath: testRelativePath,
 			Structural:   structural,
-			Vectors:      [][]float32{{0.8, 0.6}},
 		},
 	}
+	matrix := similarityVectorMatrixForTest(t, blocks, [][][]float32{
+		{{1, 0}},
+		{{0.8, 0.6}},
+	})
 
 	if matches := groupSimilarityMatches(
 		blocks,
-		scanSimilarityPairs(blocks, nil),
+		scanSimilarityPairs(blocks, matrix, nil),
 	); len(
 		matches,
 	) != 0 {
@@ -509,11 +518,17 @@ func TestSimilarityCompactsExactCopyGroups(t *testing.T) {
 			Identity:     string(rune('a' + index)),
 			ContentHash:  "same-content",
 			RelativePath: "sample.go",
-			Vectors:      [][]float32{{1, 0}},
 		}
 	}
 
-	matches := groupSimilarityMatches(blocks, scanSimilarityPairs(blocks, nil))
+	matrix := similarityVectorMatrixForTest(t, blocks, [][][]float32{
+		{{1, 0}},
+		{{1, 0}},
+		{{1, 0}},
+		{{1, 0}},
+	})
+
+	matches := groupSimilarityMatches(blocks, scanSimilarityPairs(blocks, matrix, nil))
 	if len(matches) != 1 {
 		t.Fatalf("exact-copy groups = %d, want 1", len(matches))
 	}
@@ -523,9 +538,51 @@ func TestSimilarityCompactsExactCopyGroups(t *testing.T) {
 	}
 
 	changed := map[string]struct{}{blocks[3].Identity: {}}
-	if got := len(groupSimilarityMatches(blocks, scanSimilarityPairs(blocks, changed))); got != 1 {
+	if got := len(scanSimilarityPairs(blocks, matrix, changed)); got != len(blocks)-1 {
+		t.Fatalf("incremental pairs = %d, want %d", got, len(blocks)-1)
+	}
+
+	if got := len(groupSimilarityMatches(
+		blocks,
+		scanSimilarityPairs(blocks, matrix, changed),
+	)); got != 1 {
 		t.Fatalf("incremental exact-copy matches = %d, want 1", got)
 	}
+}
+
+func similarityVectorMatrixForTest(
+	t *testing.T,
+	blocks []*similarityBlock,
+	vectors [][][]float32,
+) similarityVectorMatrix {
+	t.Helper()
+
+	if len(blocks) != len(vectors) {
+		t.Fatalf("blocks = %d, vectors = %d", len(blocks), len(vectors))
+	}
+
+	inputs := make([][]*similarityVectorInput, len(vectors))
+	for blockIndex, blockVectors := range vectors {
+		inputs[blockIndex] = make([]*similarityVectorInput, len(blockVectors))
+		for vectorIndex, vector := range blockVectors {
+			vector = append([]float32(nil), vector...)
+			if err := normalizeSimilarityVector(vector); err != nil {
+				t.Fatalf("normalize block %d vector %d: %v", blockIndex, vectorIndex, err)
+			}
+
+			inputs[blockIndex][vectorIndex] = &similarityVectorInput{
+				Location: "test",
+				Vector:   vector,
+			}
+		}
+	}
+
+	matrix, err := packSimilarityVectors(blocks, inputs)
+	if err != nil {
+		t.Fatalf("pack vectors: %v", err)
+	}
+
+	return matrix
 }
 
 func TestSimilarityPolicyChangeDropsAcceptances(t *testing.T) {

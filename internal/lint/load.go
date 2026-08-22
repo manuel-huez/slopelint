@@ -24,6 +24,7 @@ type packageMeta struct {
 	ImportPath      string   `json:"ImportPath"`
 	Name            string   `json:"Name"`
 	ForTest         string   `json:"ForTest"`
+	BuildID         string   `json:"BuildID"`
 	Export          string   `json:"Export"`
 	GoFiles         []string `json:"GoFiles"`
 	CompiledGoFiles []string `json:"CompiledGoFiles"`
@@ -33,24 +34,21 @@ type packageMeta struct {
 	} `json:"Error"`
 }
 
-// LoadPackages resolves Go package patterns using `go list`, parses the matched packages,
-// and type-checks them using export data for imports.
-func LoadPackages(patterns []string) ([]*LoadedPackage, error) {
-	return loadPackages(patterns, ".")
-}
-
-func loadPackages(patterns []string, dir string) ([]*LoadedPackage, error) {
+func resolvePackageMetadata(
+	patterns []string,
+	dir string,
+) ([]*packageMeta, map[string]*packageMeta, error) {
 	if len(patterns) == 0 {
 		patterns = []string{allPackagesPattern}
 	}
 
 	metas, err := goList(patterns, dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if len(metas) == 0 {
-		return nil, errors.New("no packages matched")
+		return nil, nil, errors.New("no packages matched")
 	}
 
 	byImportPath := make(map[string]*packageMeta, len(metas))
@@ -61,14 +59,14 @@ func loadPackages(patterns []string, dir string) ([]*LoadedPackage, error) {
 
 	targets := matchedPackageTargets(metas, byImportPath)
 	if len(targets) == 0 {
-		return nil, errors.New("no matched packages were returned by go list")
+		return nil, nil, errors.New("no matched packages were returned by go list")
 	}
 
 	sort.Slice(targets, func(i, j int) bool {
 		return targets[i].targetImportPath() < targets[j].targetImportPath()
 	})
 
-	return loadPackageTargets(targets, byImportPath)
+	return targets, byImportPath, nil
 }
 
 func goList(patterns []string, dir string) ([]*packageMeta, error) {
@@ -165,26 +163,87 @@ func loadPackageTargets(
 	byImportPath map[string]*packageMeta,
 ) ([]*LoadedPackage, error) {
 	loaded := make([]*LoadedPackage, len(targets))
-	errs := make([]error, len(targets))
+
+	err := runPackageJobs(len(targets), func(index int) error {
+		pkg, err := loadOne(targets[index], byImportPath)
+		if err == nil {
+			loaded[index] = pkg
+		}
+
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return loaded, nil
+}
+
+func packageMetadata(targets []*packageMeta) ([]*LoadedPackage, error) {
+	pkgs := make([]*LoadedPackage, len(targets))
+	for index, target := range targets {
+		sourceFiles, err := packageSourceFiles(target)
+		if err != nil {
+			return nil, err
+		}
+
+		pkgs[index] = &LoadedPackage{
+			ImportPath:  target.targetImportPath(),
+			Name:        target.Name,
+			Dir:         target.Dir,
+			sourceFiles: sourceFiles,
+			buildID:     target.BuildID,
+		}
+	}
+
+	return pkgs, nil
+}
+
+func loadPackageSyntax(pkgs []*LoadedPackage) error {
+	return runPackageJobs(len(pkgs), func(index int) error {
+		pkg := pkgs[index]
+		if pkg == nil || len(pkg.Files) > 0 {
+			return nil
+		}
+
+		fset := token.NewFileSet()
+
+		files := make([]*ast.File, 0, len(pkg.sourceFiles))
+		for _, filename := range pkg.sourceFiles {
+			file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+			if err != nil {
+				return fmt.Errorf("parse %s: %w", filename, err)
+			}
+
+			files = append(files, file)
+		}
+
+		pkg.FSet = fset
+		pkg.Files = files
+
+		return nil
+	})
+}
+
+func runPackageJobs(count int, work func(int) error) error {
+	if count == 0 {
+		return nil
+	}
+
+	errs := make([]error, count)
 	jobs := make(chan int)
 
 	var wg sync.WaitGroup
-	for range loadWorkerCount(len(targets)) {
+	for range loadWorkerCount(count) {
 		wg.Go(func() {
-			for idx := range jobs {
-				pkg, err := loadOne(targets[idx], byImportPath)
-				if err != nil {
-					errs[idx] = err
-					continue
-				}
-
-				loaded[idx] = pkg
+			for index := range jobs {
+				errs[index] = work(index)
 			}
 		})
 	}
 
-	for idx := range targets {
-		jobs <- idx
+	for index := range count {
+		jobs <- index
 	}
 
 	close(jobs)
@@ -192,11 +251,11 @@ func loadPackageTargets(
 
 	for _, err := range errs {
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	return loaded, nil
+	return nil
 }
 
 func loadWorkerCount(targetCount int) int {
@@ -217,24 +276,15 @@ func loadWorkerCount(targetCount int) int {
 }
 
 func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPackage, error) {
-	filesOnDisk := meta.CompiledGoFiles
-	if len(filesOnDisk) == 0 {
-		filesOnDisk = meta.GoFiles
-	}
-
-	if len(filesOnDisk) == 0 {
-		return nil, fmt.Errorf("package %s has no Go files to analyze", meta.ImportPath)
+	filesOnDisk, err := packageSourceFiles(meta)
+	if err != nil {
+		return nil, err
 	}
 
 	fset := token.NewFileSet()
 
 	files := make([]*ast.File, 0, len(filesOnDisk))
-	for _, name := range filesOnDisk {
-		filename := name
-		if !filepath.IsAbs(filename) {
-			filename = filepath.Join(meta.Dir, filename)
-		}
-
+	for _, filename := range filesOnDisk {
 		file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", filename, err)
@@ -280,14 +330,39 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 	}
 
 	return &LoadedPackage{
-		ImportPath: importPath,
-		Name:       meta.Name,
-		Dir:        meta.Dir,
-		FSet:       fset,
-		Files:      files,
-		TypesPkg:   typesPkg,
-		TypesInfo:  info,
+		ImportPath:  importPath,
+		Name:        meta.Name,
+		Dir:         meta.Dir,
+		sourceFiles: filesOnDisk,
+		FSet:        fset,
+		Files:       files,
+		TypesPkg:    typesPkg,
+		TypesInfo:   info,
+		buildID:     meta.BuildID,
 	}, nil
+}
+
+func packageSourceFiles(meta *packageMeta) ([]string, error) {
+	filesOnDisk := meta.CompiledGoFiles
+	if len(filesOnDisk) == 0 {
+		filesOnDisk = meta.GoFiles
+	}
+
+	if len(filesOnDisk) == 0 {
+		return nil, fmt.Errorf("package %s has no Go files to analyze", meta.ImportPath)
+	}
+
+	files := make([]string, len(filesOnDisk))
+	for index, name := range filesOnDisk {
+		if filepath.IsAbs(name) {
+			files[index] = name
+			continue
+		}
+
+		files[index] = filepath.Join(meta.Dir, name)
+	}
+
+	return files, nil
 }
 
 func (meta *packageMeta) targetImportPath() string {

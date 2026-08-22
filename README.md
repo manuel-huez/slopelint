@@ -242,7 +242,7 @@ Useful env vars:
 
 Default cache locations:
 
-- `os.UserCacheDir()/slopelint/analysis-v3`
+- `os.UserCacheDir()/slopelint/analysis-v4`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 
 ## Development

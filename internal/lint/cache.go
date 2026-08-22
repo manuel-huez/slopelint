@@ -9,7 +9,9 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-const analysisCacheSchema = 3
+// Bump whenever analyzer semantics or persisted cache/replay invariants change.
+// Standalone cache keys intentionally do not follow unrelated binary releases.
+const analysisCacheSchema = 4
 
 const cacheDirPerm = 0o755
 
@@ -31,6 +33,8 @@ type analysisCacheEntry struct {
 type analysisCacheIssue struct {
 	Filename string `json:"filename"`
 	Offset   int    `json:"offset"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
 	Kind     string `json:"kind"`
 	Message  string `json:"message"`
 }
@@ -52,12 +56,7 @@ type analysisCacheFingerprint struct {
 type repoAnalysisCachePackage struct {
 	ImportPath string `json:"import_path"`
 	Name       string `json:"name"`
-}
-
-type repoAnalysisCacheImport struct {
-	Path    string   `json:"path"`
-	Name    string   `json:"name"`
-	Objects []string `json:"objects"`
+	BuildID    string `json:"build_id"`
 }
 
 type analysisCacheExecutable struct {

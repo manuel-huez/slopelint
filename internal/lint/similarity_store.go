@@ -123,17 +123,11 @@ func similaritySourceDigest(pkgs []*LoadedPackage, root string) (string, error) 
 	filesByPath := make(map[string]similaritySourceFile)
 
 	for _, pkg := range pkgs {
-		if pkg == nil || pkg.FSet == nil {
+		if pkg == nil {
 			continue
 		}
 
-		for _, file := range pkg.Files {
-			if file == nil {
-				continue
-			}
-
-			filename := pkg.FSet.Position(file.Pos()).Filename
-
+		for _, filename := range pkg.sourceFiles {
 			key, sourceFile, err := similaritySourceFileForPath(pkg.ImportPath, filename, root)
 			if err != nil {
 				return "", err
@@ -347,7 +341,7 @@ func loadSimilarityVector(root, key string) ([]float32, bool) {
 		))
 	}
 
-	if validateSimilarityVector(vector) != nil {
+	if normalizeSimilarityVector(vector) != nil {
 		return nil, false
 	}
 
@@ -355,16 +349,21 @@ func loadSimilarityVector(root, key string) ([]float32, bool) {
 }
 
 func storeSimilarityVector(root, key string, vector []float32) error {
+	normalized := append([]float32(nil), vector...)
+	if err := normalizeSimilarityVector(normalized); err != nil {
+		return err
+	}
+
 	data := make(
 		[]byte,
 		len(similarityVectorMagic)+similarityVectorValueBytes+
-			len(vector)*similarityVectorValueBytes,
+			len(normalized)*similarityVectorValueBytes,
 	)
 	copy(data, similarityVectorMagic)
-	binary.LittleEndian.PutUint32(data[len(similarityVectorMagic):], uint32(len(vector)))
+	binary.LittleEndian.PutUint32(data[len(similarityVectorMagic):], uint32(len(normalized)))
 
 	offset := len(similarityVectorMagic) + similarityVectorValueBytes
-	for i, value := range vector {
+	for i, value := range normalized {
 		binary.LittleEndian.PutUint32(
 			data[offset+i*similarityVectorValueBytes:],
 			math.Float32bits(value),

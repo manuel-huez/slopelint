@@ -7,24 +7,75 @@ import (
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
 )
 
-// LintPackages runs repo-aware analysis across loaded packages.
-func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
-	if len(pkgs) == 0 {
-		return nil
+// LintRepository resolves patterns, replays valid cached analysis before type-checking,
+// and runs semantic similarity when requested.
+func LintRepository(
+	patterns []string,
+	dir string,
+	opts Options,
+	similarity *SimilarityOptions,
+) ([]Issue, error) {
+	targets, byImportPath, err := resolvePackageMetadata(patterns, dir)
+	if err != nil {
+		return nil, err
 	}
 
-	pkgs = append([]*LoadedPackage(nil), pkgs...)
+	metadata, err := packageMetadata(targets)
+	if err != nil {
+		return nil, err
+	}
 
-	cache, err := newRepoAnalysisCache(pkgs, opts)
+	cache, err := newRepoAnalysisCache(metadata, opts)
 	if err == nil {
 		if entry, ok := cache.load(); ok {
-			if issues, ok := replayRepoAnalysisCache(pkgs, entry, opts.CacheHitHook); ok {
-				return issues
+			if issues, ok := replayRepoAnalysisCache(entry, opts.CacheHitHook); ok {
+				return appendSimilarityIssues(issues, metadata, similarity)
 			}
 		}
 	} else if !errors.Is(err, errAnalysisCacheDisabled) {
 		cache = nil
 	}
+
+	pkgs, err := loadPackageTargets(targets, byImportPath)
+	if err != nil {
+		return nil, err
+	}
+
+	issues := lintLoadedPackages(pkgs, opts)
+	if cache != nil {
+		// Cache persistence is best-effort; analysis results remain valid without it.
+		_ = cache.store(issues)
+	}
+
+	return appendSimilarityIssues(issues, pkgs, similarity)
+}
+
+func appendSimilarityIssues(
+	issues []Issue,
+	pkgs []*LoadedPackage,
+	opts *SimilarityOptions,
+) ([]Issue, error) {
+	if opts == nil {
+		return issues, nil
+	}
+
+	similarityIssues, err := CheckSimilarCode(pkgs, *opts)
+	if err != nil {
+		return nil, err
+	}
+
+	issues = append(issues, similarityIssues...)
+	sortIssues(issues)
+
+	return issues, nil
+}
+
+func lintLoadedPackages(pkgs []*LoadedPackage, opts Options) []Issue {
+	if len(pkgs) == 0 {
+		return nil
+	}
+
+	pkgs = append([]*LoadedPackage(nil), pkgs...)
 
 	explicitFacts, inferredFacts := inferRepoSummaries(pkgs, opts)
 	repoDeadCode := opts.ClosedWorld && hasMainPackage(pkgs)
@@ -60,11 +111,6 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 	}
 
 	sortIssues(issues)
-
-	if cache != nil {
-		// Cache persistence is best-effort; analysis results remain valid without it.
-		_ = cache.store(issues)
-	}
 
 	return issues
 }

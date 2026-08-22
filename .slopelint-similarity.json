@@ -1,9 +1,9 @@
 {
   "schema": 6,
-  "source_digest": "5d540ee48fb3beb7061722cf827873aa41cfc90556e97c915c18c738e64f5075",
+  "source_digest": "1d58b754f043f641f3e106825a01751940cbb9ccc5fafe6cd9c416613a56a529",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
-  "checked_blocks": 1438,
+  "checked_blocks": 1439,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",

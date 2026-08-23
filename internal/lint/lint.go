@@ -14,6 +14,7 @@ const (
 	boolTrueText       = "true"
 	boolFalseText      = "false"
 	zeroIntText        = "0"
+	offText            = "off"
 	panicText          = "panic"
 	mainPkgName        = "main"
 	unknownPos         = "unknown position"

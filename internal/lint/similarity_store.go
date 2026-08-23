@@ -27,12 +27,16 @@ const (
 )
 
 type similarityStamp struct {
-	Schema        int                    `json:"schema"`
-	SourceDigest  string                 `json:"source_digest"`
-	Model         string                 `json:"model"`
-	ModelDigest   string                 `json:"model_digest"`
-	CheckedBlocks int                    `json:"checked_blocks"`
-	Accepted      []similarityAcceptance `json:"accepted,omitempty"`
+	Schema            int                    `json:"schema"`
+	SourceDigest      string                 `json:"source_digest"`
+	Model             string                 `json:"model"`
+	ModelDigest       string                 `json:"model_digest"`
+	DescriptionSchema int                    `json:"description_schema,omitempty"`
+	DescriptionModel  string                 `json:"description_model,omitempty"`
+	DescriptionEffort string                 `json:"description_effort,omitempty"`
+	DescriptionDigest string                 `json:"description_digest,omitempty"`
+	CheckedBlocks     int                    `json:"checked_blocks"`
+	Accepted          []similarityAcceptance `json:"accepted,omitempty"`
 }
 
 type similarityAcceptance struct {
@@ -233,8 +237,10 @@ func newSimilarityStamp(
 	sourceDigest string,
 	checkedBlocks int,
 	accepted []similarityAcceptance,
+	descriptionsEnabled bool,
+	descriptionDigest string,
 ) similarityStamp {
-	return similarityStamp{
+	stamp := similarityStamp{
 		Schema:        similaritySchema,
 		SourceDigest:  sourceDigest,
 		Model:         similarityModelName,
@@ -242,17 +248,40 @@ func newSimilarityStamp(
 		CheckedBlocks: checkedBlocks,
 		Accepted:      accepted,
 	}
+
+	if descriptionsEnabled {
+		stamp.DescriptionSchema = similarityDescriptionPromptSchema
+		stamp.DescriptionModel = similarityDescriptionModel
+		stamp.DescriptionEffort = similarityDescriptionEffort
+		stamp.DescriptionDigest = descriptionDigest
+	}
+
+	return stamp
 }
 
 func (stamp similarityStamp) policyMatches() bool {
-	return stamp.Schema == similaritySchema &&
-		stamp.Model == similarityModelName &&
-		stamp.ModelDigest == similarityModelDigest
+	if stamp.Schema != similaritySchema ||
+		stamp.Model != similarityModelName ||
+		stamp.ModelDigest != similarityModelDigest {
+		return false
+	}
+
+	if stamp.DescriptionModel == "" {
+		return stamp.DescriptionSchema == 0 &&
+			stamp.DescriptionEffort == "" &&
+			stamp.DescriptionDigest == ""
+	}
+
+	return stamp.DescriptionSchema == similarityDescriptionPromptSchema &&
+		stamp.DescriptionModel == similarityDescriptionModel &&
+		stamp.DescriptionEffort == similarityDescriptionEffort &&
+		len(stamp.DescriptionDigest) == sha256.Size*2
 }
 
-func (stamp similarityStamp) covers(sourceDigest string) bool {
+func (stamp similarityStamp) covers(sourceDigest string, descriptionsEnabled bool) bool {
 	return stamp.policyMatches() &&
-		stamp.SourceDigest == sourceDigest
+		stamp.SourceDigest == sourceDigest &&
+		(!descriptionsEnabled || stamp.DescriptionModel != "")
 }
 
 func verifySimilarityStamp(
@@ -381,12 +410,14 @@ func changedSimilarityBlocks(
 	blocks []*similarityBlock,
 	stamp similarityStamp,
 	stampExists bool,
+	descriptionsEnabled bool,
 	cacheRoot string,
 	moduleRoot string,
 ) map[string]struct{} {
 	// A clean prior manifest proves unchanged pairs were already reviewed. Only a changed
 	// endpoint can create a new duplicate; deletion alone cannot create one.
-	if !stampExists || !stamp.policyMatches() {
+	if !stampExists || !stamp.policyMatches() ||
+		(stamp.DescriptionModel != "") != descriptionsEnabled {
 		return nil
 	}
 

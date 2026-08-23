@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	nativeEmbeddingParallel   = 4
-	nativeEmbeddingContext    = 4096
-	nativeEmbeddingBatch      = 4096
-	nativeEmbeddingMicroBatch = 2048
+	nativeEmbeddingParallel = 4
+	nativeEmbeddingContext  = 4096
+	// Jina is an encoder, so every llama_decode batch must fit the micro-batch.
+	// One shared limit makes llama-go flush before llama.cpp can abort.
+	nativeEmbeddingBatch      = 2048
 	linuxCPUAllowedListPrefix = "Cpus_allowed_list:"
 	linuxCPUTopologyRoot      = "/sys/devices/system/cpu"
 )
@@ -64,7 +65,7 @@ func newNativeSimilarityEmbedder(cacheRoot string) (similarityEmbedder, error) {
 	context, err := model.NewContext(
 		llama.WithContext(nativeEmbeddingContext),
 		llama.WithBatch(nativeEmbeddingBatch),
-		llama.WithUBatch(nativeEmbeddingMicroBatch),
+		llama.WithUBatch(nativeEmbeddingBatch),
 		llama.WithThreads(threads),
 		llama.WithThreadsBatch(threads),
 		llama.WithParallel(nativeEmbeddingParallel),

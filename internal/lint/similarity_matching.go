@@ -21,7 +21,7 @@ type similarityScanJob struct {
 
 func scanSimilarityPairs(
 	blocks []*similarityBlock,
-	vectors similarityVectorMatrix,
+	vectors similarityVectorMatrices,
 	changed map[string]struct{},
 ) []similarityMatch {
 	if len(blocks) < similarityMinimumBlocks {
@@ -100,7 +100,7 @@ func scanSimilarityPairs(
 
 func similarityMatchesForJob(
 	blocks []*similarityBlock,
-	vectors similarityVectorMatrix,
+	vectors similarityVectorMatrices,
 	job similarityScanJob,
 	changed []bool,
 ) []similarityMatch {
@@ -109,7 +109,12 @@ func similarityMatchesForJob(
 	if job.changedIndex < 0 {
 		for left := job.leftStart; left < job.leftEnd; left++ {
 			for right := left + 1; right < len(blocks); right++ {
-				if match, ok := similarityMatchForPair(blocks, vectors, left, right); ok {
+				if match, ok := similarityMatchForPair(
+					blocks,
+					vectors,
+					left,
+					right,
+				); ok {
 					matches = append(matches, match)
 				}
 			}
@@ -126,7 +131,12 @@ func similarityMatchesForJob(
 		}
 
 		left, right := min(job.changedIndex, other), max(job.changedIndex, other)
-		if match, ok := similarityMatchForPair(blocks, vectors, left, right); ok {
+		if match, ok := similarityMatchForPair(
+			blocks,
+			vectors,
+			left,
+			right,
+		); ok {
 			matches = append(matches, match)
 		}
 	}
@@ -136,29 +146,34 @@ func similarityMatchesForJob(
 
 func similarityMatchForPair(
 	blocks []*similarityBlock,
-	vectors similarityVectorMatrix,
+	vectors similarityVectorMatrices,
 	leftIndex int,
 	rightIndex int,
 ) (similarityMatch, bool) {
 	left := blocks[leftIndex]
 	right := blocks[rightIndex]
-	embedding, leftChunk, rightChunk := maximumDotSimilarity(vectors, left, right)
+	embedding, leftChunk, rightChunk := maximumDotSimilarity(vectors.Source, left, right)
+	description := maximumDescriptionDotSimilarity(vectors.Description, left, right)
 	tier := similarityLocalityTier(left, right)
-	threshold := similarityEmbeddingThreshold(tier, left.IsTest || right.IsTest)
+	sourceThreshold := similarityEmbeddingThreshold(tier, left.IsTest || right.IsTest)
+	descriptionThreshold := similarityDescriptionThreshold(tier, left.IsTest && right.IsTest)
 
-	if embedding < threshold {
+	// Code shape and described behavior are independent evidence. Either channel
+	// can report a pair; one never gates, promotes, or weakens the other.
+	if embedding < sourceThreshold && description < descriptionThreshold {
 		return similarityMatch{}, false
 	}
 
 	return similarityMatch{
-		ID:              similarityPairID(left, right),
-		Left:            left,
-		Right:           right,
-		EmbeddingScore:  embedding,
-		StructuralScore: structuralSimilarity(left.Structural, right.Structural),
-		LocalityTier:    tier,
-		LeftChunk:       leftChunk,
-		RightChunk:      rightChunk,
+		ID:               similarityPairID(left, right),
+		Left:             left,
+		Right:            right,
+		EmbeddingScore:   embedding,
+		DescriptionScore: description,
+		StructuralScore:  structuralSimilarity(left.Structural, right.Structural),
+		LocalityTier:     tier,
+		LeftChunk:        leftChunk,
+		RightChunk:       rightChunk,
 	}, true
 }
 
@@ -266,6 +281,32 @@ func maximumDotSimilarity(
 	return maximum, leftChunk, rightChunk
 }
 
+func maximumDescriptionDotSimilarity(
+	matrix similarityVectorMatrix,
+	left *similarityBlock,
+	right *similarityBlock,
+) float64 {
+	if left.IsTest != right.IsTest ||
+		left.DescriptionVectorCount == 0 || right.DescriptionVectorCount == 0 {
+		return 0
+	}
+
+	var maximum float64
+
+	for leftIndex := range left.DescriptionVectorCount {
+		leftVector := matrix.vector(left.DescriptionVectorStart + leftIndex)
+		for rightIndex := range right.DescriptionVectorCount {
+			rightVector := matrix.vector(right.DescriptionVectorStart + rightIndex)
+			maximum = max(
+				maximum,
+				normalizedDotProduct(leftVector, rightVector),
+			)
+		}
+	}
+
+	return maximum
+}
+
 func (matrix similarityVectorMatrix) vector(index int) []float32 {
 	start := index * matrix.Dimensions
 	return matrix.Values[start : start+matrix.Dimensions]
@@ -345,6 +386,32 @@ func similarityEmbeddingThreshold(tier int, testPair bool) float64 {
 	return threshold
 }
 
+func similarityDescriptionThreshold(tier int, testPair bool) float64 {
+	var threshold float64
+
+	switch tier {
+	case 0:
+		threshold = similarityDescriptionSameFileThreshold
+	case 1:
+		threshold = similarityDescriptionSamePackageThreshold
+	default:
+		threshold = min(
+			similarityDescriptionDistantThreshold+
+				similarityDescriptionTierStep*float64(tier-similarityFirstDistantTier),
+			similarityDescriptionMaximumThreshold,
+		)
+	}
+
+	if testPair {
+		threshold = min(
+			threshold+similarityDescriptionTestOffset,
+			similarityDescriptionMaximumThreshold,
+		)
+	}
+
+	return threshold
+}
+
 func similarityLocalityTier(left, right *similarityBlock) int {
 	if left.RelativePath == right.RelativePath {
 		return 0
@@ -418,17 +485,50 @@ func (match similarityMatch) issue() Issue {
 		)
 	}
 
+	scoreDetail := ""
+	behaviorDetail := ""
+
+	if match.DescriptionScore > 0 {
+		scoreDetail = fmt.Sprintf(
+			", description %.3f/%.3f",
+			match.DescriptionScore,
+			similarityDescriptionThreshold(
+				match.LocalityTier,
+				match.Left.IsTest && match.Right.IsTest,
+			),
+		)
+	}
+
+	if len(match.Members) > 0 && match.Members[0].DescriptionDetail != "" {
+		details := make([]string, 0, len(match.Members))
+		for _, member := range match.Members {
+			details = append(details, fmt.Sprintf(
+				"%s: %q",
+				member.Identity,
+				member.DescriptionDetail,
+			))
+		}
+
+		behaviorDetail = "; behavior [" + strings.Join(details, ", ") + "]"
+	}
+
 	message := fmt.Sprintf(
-		"%s appears similar to %s at %s:%d (embedding %.3f%s, structure %.3f, locality tier %d%s, id %s)",
+		"%s appears similar to %s at %s:%d (source %.3f/%.3f%s%s, structure %.3f, locality tier %d%s%s; id %s)",
 		match.Left.Symbol,
 		match.Right.Symbol,
 		match.Right.RelativePath,
 		match.Right.Position.Line,
 		match.EmbeddingScore,
+		similarityEmbeddingThreshold(
+			match.LocalityTier,
+			match.Left.IsTest || match.Right.IsTest,
+		),
 		chunkDetail,
+		scoreDetail,
 		match.StructuralScore,
 		match.LocalityTier,
 		groupDetail,
+		behaviorDetail,
 		match.ID,
 	)
 

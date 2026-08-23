@@ -154,6 +154,7 @@ func defaultName(name string) string {
 
 - Go 1.26.5+
 - Linux amd64 with AVX2 and CGO for local semantic similarity checks
+- Optional: authenticated Codex CLI for Luna behavior descriptions
 - For full repo health checks: `golangci-lint`
 
 ## Build
@@ -180,8 +181,8 @@ go vet -vettool=$(pwd)/bin/slopelint ./...
 
 The normal standalone command also checks named functions with at least 50 Go
 tokens for semantic similarity. Local runs request only missing embeddings from
-the in-process llama.cpp engine, reuse the content-addressed vector cache, and write
-`.slopelint-similarity.json` after every finding is fixed or accepted:
+the in-process llama.cpp engine, reuse the content-addressed vector cache, and
+write `.slopelint-similarity.json` after every finding is fixed or accepted:
 
 ```bash
 go run ./cmd/slopelint ./...
@@ -190,6 +191,29 @@ go run ./cmd/slopelint ./...
 First inference downloads the digest-pinned 308 MiB Jina GGUF file into the
 slopelint cache. Later runs memory-map that file and compute only missing vectors.
 No Ollama service or model install is required.
+
+When an authenticated `codex` executable is available, the same lint command
+runs source inference while `gpt-5.6-luna` creates three signatures for every
+missing block with medium reasoning. Production functions get intent, flow, and
+boundary signatures. Tests get contract, scenario, and oracle signatures.
+Slopelint embeds one compact labeled bundle containing all three; one embedding
+avoids tripling local inference work. After either channel finds a pair, Luna
+creates full purpose/input/output/processing/effect/error details, or the
+test-specific subject/scenario/setup/action/assertion/fixture/contract shape,
+only for reported blocks. Those details appear in the diagnostic for agent review
+and never filter a match.
+
+Source-code and behavior-description similarity are independent channels over
+the same block set. Either can report a pair at its own locality-weighted
+threshold. Neither channel filters, promotes, fuses with, or weakens the other.
+
+Code in missing blocks is sent through the configured Codex service. Set
+`SLOPELINT_CODEX_DESCRIPTIONS=off` when source must stay local. Description requests
+use two concurrent Codex processes per available Go CPU. A request holds at most
+32 blocks and targets 200 KB; one larger function stays intact instead of being
+truncated. Each valid batch is cached immediately and reports progress, so
+retries request only missing IDs. Cached descriptions and vectors make later
+runs local.
 
 Every finding includes a stable `sim-...` pair ID. After review, accept specific
 intentional pairs and rerun the same lint command:
@@ -203,10 +227,11 @@ an explicitly reviewed baseline. Unchanged accepted pairs carry forward; changed
 code gets a new pair ID and needs review again.
 
 When `CI`, Cloudflare Workers Builds' `WORKERS_CI`, or Cloudflare Pages'
-`CF_PAGES` is truthy, the same standalone command never downloads or loads the
-model. It hashes the loaded source and fails if the committed stamp is missing,
-stale, or uses a different detector/model policy. The stamp uses a source digest
-instead of a Git commit hash because committing the stamp changes the commit hash.
+`CF_PAGES` is truthy, the same standalone command never starts Codex, downloads a
+model, or loads inference weights. It hashes loaded source and fails if the
+committed stamp is missing, stale, or uses a different detector/model/description
+policy. The stamp uses a source digest instead of a Git commit hash because
+committing the stamp changes the commit hash.
 
 Model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
 similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`
@@ -221,8 +246,16 @@ about `479 MiB`.
 Repo calibration uses a precision-first operating point instead of the
 benchmark's maximum-F1 threshold. Nearby production blocks require at least
 `0.970` cosine similarity, distant blocks start at `0.980`, and test blocks add
-`0.025`. Structural similarity remains diagnostic context; it cannot bypass the
-embedding threshold.
+`0.025`. Luna prompt calibration covered renamed equivalent functions,
+earliest/latest opposites, equivalent tests with different structure, opposite
+blank-value contracts, unknown private helpers, pointer-mutation ambiguity, and
+prompt injection inside code. Low, medium, and high reasoning were compared on
+normal and adversarial sets. Medium retained every critical factual and
+separation check from high, while low made two unsupported claims and high took
+longer, especially for tests. Behavior signatures require `0.950` similarity in
+one file and `0.960` in one package or at the first distant tier; tests add
+`0.015`. Structural similarity remains diagnostic context and gates neither
+semantic channel.
 
 Useful `slopelint` flags:
 
@@ -248,11 +281,14 @@ Useful env vars:
   `local`
 - `SLOPELINT_SIMILARITY_ACCEPT=id,id`: accept reviewed current pair IDs;
   `all` accepts the reviewed current baseline
+- `SLOPELINT_CODEX_DESCRIPTIONS=auto|off`: use authenticated Codex descriptions
+  when available, or keep semantic analysis fully local; default `auto`
 
 Default cache locations:
 
 - `os.UserCacheDir()/slopelint/analysis-v4`
 - `os.UserCacheDir()/slopelint/similarity-v1`
+- `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`
 
 ## Development
@@ -283,9 +319,10 @@ analysis. CI runs validate the committed stamp without model inference.
   excluded; large functions use overlapping byte-bounded chunks, and every chunk
   is embedded without truncation; connected similarity groups report one
   finding with every member instead of every possible pair
+- Luna describes each eligible function in isolation; behavior that
+  exists only in caller context or an unknown private helper can still be missed
 - one semantic similarity run covers one Go module because each module owns one
   committed stamp
-- weak at type-level semantic meaning
 - reports only; no custom autofix implementation yet
 
 ## Rule IDs

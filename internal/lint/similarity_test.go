@@ -8,6 +8,11 @@ import (
 	"testing"
 )
 
+const (
+	similaritySameFileCase    = "same file"
+	similaritySamePackageCase = "same package"
+)
+
 func TestSimilarityLocalWritesStampAndCIUsesItWithoutNativeEngine(t *testing.T) {
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
@@ -24,9 +29,10 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutNativeEngine(t *testing.T) 
 	pkgs := loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
-		CacheEnabled: true,
-		CacheDir:     cacheDir,
-		embedder:     embedder,
+		CacheEnabled:        true,
+		CacheDir:            cacheDir,
+		embedder:            embedder,
+		descriptionDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("local check: %v", err)
@@ -47,7 +53,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutNativeEngine(t *testing.T) 
 
 	pkgs = loadPackagesForTest(t, tmp)
 
-	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{})
+	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{descriptionDisabled: true})
 	if err != nil {
 		t.Fatalf("stamped local check: %v", err)
 	}
@@ -90,9 +96,10 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 	pkgs := loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
-		CacheEnabled: true,
-		CacheDir:     cacheDir,
-		embedder:     embedder,
+		CacheEnabled:        true,
+		CacheDir:            cacheDir,
+		embedder:            embedder,
+		descriptionDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("first check: %v", err)
@@ -109,9 +116,10 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 	pairID := similarityIssuePairID(t, issues[0].Message)
 
 	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{
-		CacheEnabled:    true,
-		CacheDir:        cacheDir,
-		AcceptedPairIDs: []string{pairID},
+		CacheEnabled:        true,
+		CacheDir:            cacheDir,
+		AcceptedPairIDs:     []string{pairID},
+		descriptionDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("accepted check: %v", err)
@@ -143,10 +151,11 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 	pkgs := loadPackagesForTest(t, tmp)
 
 	_, err := CheckSimilarCode(pkgs, SimilarityOptions{
-		CacheEnabled:    true,
-		CacheDir:        cacheDir,
-		AcceptedPairIDs: []string{similarityAcceptAllID},
-		embedder:        embedder,
+		CacheEnabled:        true,
+		CacheDir:            cacheDir,
+		AcceptedPairIDs:     []string{similarityAcceptAllID},
+		embedder:            embedder,
+		descriptionDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("initial acceptance: %v", err)
@@ -165,9 +174,10 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 	pkgs = loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
-		CacheEnabled:    true,
-		CacheDir:        cacheDir,
-		AcceptedPairIDs: []string{stamp.Accepted[0].ID},
+		CacheEnabled:        true,
+		CacheDir:            cacheDir,
+		AcceptedPairIDs:     []string{stamp.Accepted[0].ID},
+		descriptionDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("repeat accepted pair: %v", err)
@@ -190,9 +200,10 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 	pkgs := loadPackagesForTest(t, tmp)
 
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
-		CacheDir:        cacheDir,
-		AcceptedPairIDs: []string{similarityAcceptAllID},
-		embedder:        embedder,
+		CacheDir:            cacheDir,
+		AcceptedPairIDs:     []string{similarityAcceptAllID},
+		embedder:            embedder,
+		descriptionDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("accept all: %v", err)
@@ -228,7 +239,8 @@ func TestSimilarityRejectsUnknownAcceptance(t *testing.T) {
 	pkgs := loadPackagesForTest(t, tmp)
 
 	_, err := CheckSimilarCode(pkgs, SimilarityOptions{
-		AcceptedPairIDs: []string{"sim-unknown"},
+		AcceptedPairIDs:     []string{"sim-unknown"},
+		descriptionDisabled: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "is not a current finding") {
 		t.Fatalf("unknown acceptance error = %v", err)
@@ -250,13 +262,13 @@ func TestSimilarityLocalityTier(t *testing.T) {
 		want  int
 	}{
 		{
-			name:  "same file",
+			name:  similaritySameFileCase,
 			left:  similarityBlock{RelativePath: testPackageFile, PackageDir: testPackageDir},
 			right: similarityBlock{RelativePath: testPackageFile, PackageDir: testPackageDir},
 			want:  0,
 		},
 		{
-			name:  "same package",
+			name:  similaritySamePackageCase,
 			left:  similarityBlock{RelativePath: testPackageFile, PackageDir: testPackageDir},
 			right: similarityBlock{RelativePath: "pkg/b.go", PackageDir: testPackageDir},
 			want:  1,
@@ -407,12 +419,12 @@ func TestMaximumDotSimilarityKeepsBestChunk(t *testing.T) {
 	t.Parallel()
 
 	blocks := []*similarityBlock{{}, {}}
-	matrix := similarityVectorMatrixForTest(t, blocks, [][][]float32{
+	matrices := similarityVectorMatrixForTest(t, blocks, [][][]float32{
 		{{1, 0}, {0, 1}},
 		{{-1, 0}, {0, 1}},
 	})
 
-	score, leftChunk, rightChunk := maximumDotSimilarity(matrix, blocks[0], blocks[1])
+	score, leftChunk, rightChunk := maximumDotSimilarity(matrices.Source, blocks[0], blocks[1])
 	if math.Abs(score-1) > 1e-12 || leftChunk != 1 || rightChunk != 1 {
 		t.Fatalf(
 			"maximum dot similarity = (%f, %d, %d), want (1, 1, 1)",
@@ -452,8 +464,8 @@ func TestSimilarityThresholdRisesWithDistanceAndTestCode(t *testing.T) {
 		test bool
 		want float64
 	}{
-		{name: "same file", tier: 0, want: 0.970},
-		{name: "same package", tier: 1, want: 0.975},
+		{name: similaritySameFileCase, tier: 0, want: 0.970},
+		{name: similaritySamePackageCase, tier: 1, want: 0.975},
 		{name: "sibling package", tier: 2, want: 0.980},
 		{name: "extra package layer", tier: 3, want: 0.983},
 		{name: "test code", tier: 0, test: true, want: 0.995},
@@ -465,6 +477,35 @@ func TestSimilarityThresholdRisesWithDistanceAndTestCode(t *testing.T) {
 			t.Parallel()
 
 			got := similarityEmbeddingThreshold(test.tier, test.test)
+			if math.Abs(got-test.want) > 1e-12 {
+				t.Fatalf("threshold = %f, want %f", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSimilarityDescriptionThresholdUsesIndependentCalibration(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		tier int
+		test bool
+		want float64
+	}{
+		{name: similaritySameFileCase, tier: 0, want: 0.950},
+		{name: similaritySamePackageCase, tier: 1, want: 0.960},
+		{name: "sibling package", tier: 2, want: 0.960},
+		{name: "extra package layer", tier: 3, want: 0.965},
+		{name: "test code", tier: 0, test: true, want: 0.965},
+		{name: "maximum", tier: 20, test: true, want: 0.995},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := similarityDescriptionThreshold(test.tier, test.test)
 			if math.Abs(got-test.want) > 1e-12 {
 				t.Fatalf("threshold = %f, want %f", got, test.want)
 			}
@@ -488,18 +529,78 @@ func TestSimilarityStructureCannotBypassEmbeddingThreshold(t *testing.T) {
 			Structural:   structural,
 		},
 	}
-	matrix := similarityVectorMatrixForTest(t, blocks, [][][]float32{
+	matrices := similarityVectorMatrixForTest(t, blocks, [][][]float32{
 		{{1, 0}},
 		{{0.8, 0.6}},
 	})
 
 	if matches := groupSimilarityMatches(
 		blocks,
-		scanSimilarityPairs(blocks, matrix, nil),
+		scanSimilarityPairs(blocks, matrices, nil),
 	); len(
 		matches,
 	) != 0 {
 		t.Fatalf("matches = %#v, want embedding gate to reject pair", matches)
+	}
+}
+
+func TestSimilarityDescriptionIsIndependentAndSameKindOnly(t *testing.T) {
+	t.Parallel()
+
+	makeBlocks := func(testKinds ...bool) []*similarityBlock {
+		blocks := make([]*similarityBlock, len(testKinds))
+		for index, isTest := range testKinds {
+			blocks[index] = &similarityBlock{
+				Identity:               string(rune('a' + index)),
+				RelativePath:           "same.go",
+				IsTest:                 isTest,
+				VectorStart:            index,
+				VectorCount:            1,
+				DescriptionVectorStart: index,
+				DescriptionVectorCount: 1,
+			}
+		}
+
+		return blocks
+	}
+
+	sourceScore := 0.20
+	sourceOther := float32(math.Sqrt(1 - sourceScore*sourceScore))
+	matrices := similarityVectorMatrices{
+		Source: similarityVectorMatrix{
+			Values:     []float32{1, 0, float32(sourceScore), sourceOther},
+			Dimensions: 2,
+		},
+		Description: similarityVectorMatrix{
+			Values:     []float32{1, 0, 1, 0},
+			Dimensions: 2,
+		},
+	}
+
+	blocks := makeBlocks(false, false)
+
+	match, ok := similarityMatchForPair(blocks, matrices, 0, 1)
+	if !ok {
+		t.Fatal("behavior-equivalent pair was not reported independently")
+	}
+
+	if match.EmbeddingScore >= similaritySameFileThreshold ||
+		match.DescriptionScore != 1 {
+		t.Fatalf("description-backed match = %#v, found=%t", match, ok)
+	}
+
+	crossKind := matrices
+	crossKind.Source.Values = append([]float32(nil), matrices.Source.Values...)
+	crossKind.Source.Values[2] = 0.20
+
+	crossKind.Source.Values[3] = float32(math.Sqrt(1 - 0.20*0.20))
+	if _, ok := similarityMatchForPair(
+		makeBlocks(false, true),
+		crossKind,
+		0,
+		1,
+	); ok {
+		t.Fatal("production and test descriptions matched across shapes")
 	}
 }
 
@@ -515,14 +616,14 @@ func TestSimilarityCompactsExactCopyGroups(t *testing.T) {
 		}
 	}
 
-	matrix := similarityVectorMatrixForTest(t, blocks, [][][]float32{
+	matrices := similarityVectorMatrixForTest(t, blocks, [][][]float32{
 		{{1, 0}},
 		{{1, 0}},
 		{{1, 0}},
 		{{1, 0}},
 	})
 
-	matches := groupSimilarityMatches(blocks, scanSimilarityPairs(blocks, matrix, nil))
+	matches := groupSimilarityMatches(blocks, scanSimilarityPairs(blocks, matrices, nil))
 	if len(matches) != 1 {
 		t.Fatalf("exact-copy groups = %d, want 1", len(matches))
 	}
@@ -532,13 +633,13 @@ func TestSimilarityCompactsExactCopyGroups(t *testing.T) {
 	}
 
 	changed := map[string]struct{}{blocks[3].Identity: {}}
-	if got := len(scanSimilarityPairs(blocks, matrix, changed)); got != len(blocks)-1 {
+	if got := len(scanSimilarityPairs(blocks, matrices, changed)); got != len(blocks)-1 {
 		t.Fatalf("incremental pairs = %d, want %d", got, len(blocks)-1)
 	}
 
 	if got := len(groupSimilarityMatches(
 		blocks,
-		scanSimilarityPairs(blocks, matrix, changed),
+		scanSimilarityPairs(blocks, matrices, changed),
 	)); got != 1 {
 		t.Fatalf("incremental exact-copy matches = %d, want 1", got)
 	}
@@ -548,7 +649,7 @@ func similarityVectorMatrixForTest(
 	t *testing.T,
 	blocks []*similarityBlock,
 	vectors [][][]float32,
-) similarityVectorMatrix {
+) similarityVectorMatrices {
 	t.Helper()
 
 	if len(blocks) != len(vectors) {
@@ -571,12 +672,12 @@ func similarityVectorMatrixForTest(
 		}
 	}
 
-	matrix, err := packSimilarityVectors(blocks, inputs)
+	matrix, err := packSimilarityVectors(blocks, inputs, similaritySourceVector)
 	if err != nil {
 		t.Fatalf("pack vectors: %v", err)
 	}
 
-	return matrix
+	return similarityVectorMatrices{Source: matrix}
 }
 
 func TestSimilarityPolicyChangeDropsAcceptances(t *testing.T) {
@@ -589,7 +690,7 @@ func TestSimilarityPolicyChangeDropsAcceptances(t *testing.T) {
 		LeftHash:  block.ContentHash,
 		Right:     block.Identity,
 		RightHash: block.ContentHash,
-	}})
+	}}, false, "")
 	stamp.Schema--
 
 	if got := carrySimilarityAcceptances(stamp, true, []*similarityBlock{block}); len(got) != 0 {

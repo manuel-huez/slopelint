@@ -11,17 +11,15 @@ import (
 	"go/scanner"
 	"go/token"
 	"hash/fnv"
-	"math"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 const (
-	similaritySchema           = 6
+	similaritySchema           = 9
 	similarityMinimumBlocks    = 2
 	similarityFirstDistantTier = 2
 	similarityIssueKind        = "semantic_duplicate"
@@ -33,10 +31,11 @@ const (
 	// Byte-bounded overlapping chunks keep every part of large functions inside the
 	// native model context. The cap also fits byte-fallback tokens plus model markers
 	// inside the 2048-token micro-batch, without truncation or tokenizer assumptions.
-	similarityEmbeddingChunkBytes   = 2000
-	similarityEmbeddingChunkOverlap = 256
-	similarityEmbeddingLineSearch   = 512
-	similarityChunkCachePrefix      = "chunk-v1\x00"
+	similarityEmbeddingChunkBytes     = 2000
+	similarityEmbeddingChunkOverlap   = 256
+	similarityEmbeddingLineSearch     = 512
+	similarityChunkCachePrefix        = "chunk-v1\x00"
+	similarityDescriptionVectorPrefix = "description-v2\x00"
 	// Large outer batches amortize Go/C++ calls. llama.cpp splits these into four
 	// parallel sequences while keeping one bounded output allocation.
 	similarityEmbeddingBatchSize = 128
@@ -50,6 +49,13 @@ const (
 	similarityMaximumThreshold     = 0.995
 	similarityTestThresholdOffset  = 0.025
 	similarityTestMaximumThreshold = 0.999
+
+	similarityDescriptionSameFileThreshold    = 0.950
+	similarityDescriptionSamePackageThreshold = 0.960
+	similarityDescriptionDistantThreshold     = 0.960
+	similarityDescriptionTierStep             = 0.005
+	similarityDescriptionTestOffset           = 0.015
+	similarityDescriptionMaximumThreshold     = 0.995
 )
 
 // SimilarityOptions controls repo-wide semantic duplicate analysis.
@@ -59,6 +65,10 @@ type SimilarityOptions struct {
 	CacheDir        string
 	AcceptedPairIDs []string
 	embedder        similarityEmbedder
+	describer       similarityDescriber
+
+	// Tests can isolate native-vector behavior without discovering host Codex auth.
+	descriptionDisabled bool
 }
 
 type similarityBlock struct {
@@ -75,18 +85,25 @@ type similarityBlock struct {
 	Structural   map[uint64]struct{}
 	VectorStart  int
 	VectorCount  int
+
+	Description            string
+	DescriptionDetail      string
+	DescriptionHash        string
+	DescriptionVectorStart int
+	DescriptionVectorCount int
 }
 
 type similarityMatch struct {
-	ID              string
-	Left            *similarityBlock
-	Right           *similarityBlock
-	EmbeddingScore  float64
-	StructuralScore float64
-	LocalityTier    int
-	LeftChunk       int
-	RightChunk      int
-	Members         []*similarityBlock
+	ID               string
+	Left             *similarityBlock
+	Right            *similarityBlock
+	EmbeddingScore   float64
+	DescriptionScore float64
+	StructuralScore  float64
+	LocalityTier     int
+	LeftChunk        int
+	RightChunk       int
+	Members          []*similarityBlock
 }
 
 type similarityVectorInput struct {
@@ -100,6 +117,18 @@ type similarityVectorMatrix struct {
 	Values     []float32
 	Dimensions int
 }
+
+type similarityVectorMatrices struct {
+	Source      similarityVectorMatrix
+	Description similarityVectorMatrix
+}
+
+type similarityVectorKind uint8
+
+const (
+	similaritySourceVector similarityVectorKind = iota
+	similarityDescriptionVector
+)
 
 // CheckSimilarCode checks or attests semantic duplicate analysis for loaded packages.
 // Local runs use the native embedding engine and update the stamp; CI runs only validate it.
@@ -117,11 +146,24 @@ func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, e
 		return nil, verifySimilarityStamp(stamp, stampExists, sourceDigest)
 	}
 
-	if stampExists && stamp.covers(sourceDigest) {
+	descriptionRuntime, err := similarityDescriptionRuntimeForOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if stampExists && stamp.covers(sourceDigest, descriptionRuntime.enabled) {
 		return nil, nil
 	}
 
-	return analyzeChangedSimilarCode(pkgs, root, sourceDigest, stamp, stampExists, opts)
+	return analyzeChangedSimilarCode(
+		pkgs,
+		root,
+		sourceDigest,
+		stamp,
+		stampExists,
+		descriptionRuntime,
+		opts,
+	)
 }
 
 func analyzeChangedSimilarCode(
@@ -130,6 +172,7 @@ func analyzeChangedSimilarCode(
 	sourceDigest string,
 	stamp similarityStamp,
 	stampExists bool,
+	descriptionRuntime similarityDescriptionRuntime,
 	opts SimilarityOptions,
 ) ([]Issue, error) {
 	releaseSimilarityTypes(pkgs)
@@ -158,11 +201,12 @@ func analyzeChangedSimilarCode(
 
 	debug.FreeOSMemory()
 
-	matches, cacheRoot, err := similarityMatchesForBlocks(
+	matches, cacheRoot, descriptionDigest, err := similarityMatchesForBlocks(
 		blocks,
 		stamp,
 		stampExists,
 		root,
+		descriptionRuntime,
 		opts,
 	)
 	if err != nil {
@@ -187,7 +231,13 @@ func analyzeChangedSimilarCode(
 
 	sort.Slice(acceptances, func(i, j int) bool { return acceptances[i].ID < acceptances[j].ID })
 
-	clean := newSimilarityStamp(sourceDigest, len(blocks), acceptances)
+	clean := newSimilarityStamp(
+		sourceDigest,
+		len(blocks),
+		acceptances,
+		descriptionRuntime.enabled,
+		descriptionDigest,
+	)
 	if err := storeSimilarityStamp(root, clean); err != nil {
 		return nil, err
 	}
@@ -249,36 +299,95 @@ func similarityMatchesForBlocks(
 	stamp similarityStamp,
 	stampExists bool,
 	root string,
+	descriptionRuntime similarityDescriptionRuntime,
 	opts SimilarityOptions,
-) ([]similarityMatch, string, error) {
-	cacheRoot, err := similarityVectorCacheRoot(opts.CacheDir)
+) (matches []similarityMatch, cacheRoot string, descriptionDigest string, err error) {
+	cacheRoot, err = similarityVectorCacheRoot(opts.CacheDir)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
 	if len(blocks) < similarityMinimumBlocks {
-		return nil, cacheRoot, nil
+		descriptionDigest, err = similarityDescriptionsDigest(nil)
+		return nil, cacheRoot, descriptionDigest, err
 	}
 
-	vectors, err := populateSimilarityVectors(
-		blocks,
+	embeddings := newSimilarityEmbeddingRuntime(
 		opts.embedder,
 		cacheRoot,
 		opts.CacheEnabled,
 	)
-	if err != nil {
-		return nil, "", err
+	defer func() { err = errors.Join(err, embeddings.close()) }()
+
+	// Source inference and remote behavior description are independent channels.
+	// Overlap them so a cold baseline uses local CPU while Codex waits remotely.
+	descriptionDone := make(chan struct{})
+
+	var descriptionErr error
+	go func() {
+		descriptionDigest, descriptionErr = populateSimilarityDescriptions(
+			blocks,
+			descriptionRuntime,
+			cacheRoot,
+			opts.CacheEnabled,
+		)
+
+		close(descriptionDone)
+	}()
+
+	sourceVectors, sourceErr := embeddings.populate(blocks, similaritySourceVector)
+
+	<-descriptionDone
+
+	if err = errors.Join(sourceErr, descriptionErr); err != nil {
+		return nil, "", "", err
+	}
+
+	var descriptionVectors similarityVectorMatrix
+	if descriptionRuntime.enabled {
+		descriptionVectors, err = embeddings.populate(
+			blocks,
+			similarityDescriptionVector,
+		)
+		if err != nil {
+			return nil, "", "", err
+		}
 	}
 
 	var changed map[string]struct{}
 	if opts.CacheEnabled {
-		changed = changedSimilarityBlocks(blocks, stamp, stampExists, cacheRoot, root)
+		changed = changedSimilarityBlocks(
+			blocks,
+			stamp,
+			stampExists,
+			descriptionRuntime.enabled,
+			cacheRoot,
+			root,
+		)
 	}
 
-	return groupSimilarityMatches(
+	matches = groupSimilarityMatches(
 		blocks,
-		scanSimilarityPairs(blocks, vectors, changed),
-	), cacheRoot, nil
+		scanSimilarityPairs(
+			blocks,
+			similarityVectorMatrices{
+				Source:      sourceVectors,
+				Description: descriptionVectors,
+			},
+			changed,
+		),
+	)
+
+	if err := populateSimilarityMatchDetails(
+		matches,
+		descriptionRuntime,
+		cacheRoot,
+		opts.CacheEnabled,
+	); err != nil {
+		return nil, "", "", err
+	}
+
+	return matches, cacheRoot, descriptionDigest, nil
 }
 
 func reviewSimilarityMatches(
@@ -525,277 +634,4 @@ func structuralShingles(tokens []string) map[uint64]struct{} {
 	}
 
 	return out
-}
-
-func similarityEmbeddingInputs(content string) []string {
-	if len(content) <= similarityEmbeddingChunkBytes {
-		return []string{content}
-	}
-
-	chunks := make([]string, 0, 1+len(content)/similarityEmbeddingChunkBytes)
-
-	for start := 0; start < len(content); {
-		end := min(start+similarityEmbeddingChunkBytes, len(content))
-		if end < len(content) {
-			// Prefer a nearby line boundary so each fragment remains useful code context.
-			searchStart := max(
-				start+similarityEmbeddingChunkBytes/2,
-				end-similarityEmbeddingLineSearch,
-			)
-			if newline := strings.LastIndexByte(content[searchStart:end], '\n'); newline >= 0 {
-				end = searchStart + newline + 1
-			}
-
-			for end > start && !utf8.RuneStart(content[end]) {
-				end--
-			}
-		}
-
-		chunks = append(chunks, content[start:end])
-		if end == len(content) {
-			break
-		}
-
-		start = max(start+1, end-similarityEmbeddingChunkOverlap)
-		for start < end && !utf8.RuneStart(content[start]) {
-			start++
-		}
-	}
-
-	return chunks
-}
-
-func populateSimilarityVectors(
-	blocks []*similarityBlock,
-	embedder similarityEmbedder,
-	cacheRoot string,
-	cacheEnabled bool,
-) (matrix similarityVectorMatrix, err error) {
-	blockInputs, inputs := similarityVectorInputs(blocks)
-
-	missing := loadCachedSimilarityVectors(inputs, cacheRoot, cacheEnabled)
-	if len(missing) == 0 {
-		return packSimilarityVectors(blocks, blockInputs)
-	}
-
-	if embedder == nil {
-		embedder, err = newNativeSimilarityEmbedder(cacheRoot)
-		if err != nil {
-			return similarityVectorMatrix{}, err
-		}
-
-		defer func() {
-			err = errors.Join(err, embedder.close())
-		}()
-	}
-
-	if embedder == nil {
-		return similarityVectorMatrix{}, errors.New("embedding engine is unavailable")
-	}
-
-	for start := 0; start < len(missing); start += similarityEmbeddingBatchSize {
-		end := min(start+similarityEmbeddingBatchSize, len(missing))
-		if err := populateSimilarityVectorBatch(
-			missing[start:end],
-			embedder,
-			cacheRoot,
-			cacheEnabled,
-		); err != nil {
-			return similarityVectorMatrix{}, err
-		}
-	}
-
-	return packSimilarityVectors(blocks, blockInputs)
-}
-
-func similarityVectorInputs(
-	blocks []*similarityBlock,
-) ([][]*similarityVectorInput, []*similarityVectorInput) {
-	byKey := make(map[string]*similarityVectorInput, len(blocks))
-	blockInputs := make([][]*similarityVectorInput, len(blocks))
-
-	for blockIndex, block := range blocks {
-		chunks := similarityEmbeddingInputs(block.Content)
-		blockInputs[blockIndex] = make([]*similarityVectorInput, 0, len(chunks))
-		chunked := len(chunks) > 1
-
-		for index, content := range chunks {
-			cacheContent := content
-			if chunked {
-				cacheContent = similarityChunkCachePrefix + content
-			}
-
-			fingerprint := similarityModelDigest + "\x00" + strconv.Itoa(
-				similarityVectorInputSchema,
-			) + "\x00" + cacheContent
-			sum := sha256.Sum256([]byte(fingerprint))
-			key := hex.EncodeToString(sum[:])
-
-			input := byKey[key]
-			if input == nil {
-				input = &similarityVectorInput{
-					Content:  content,
-					CacheKey: key,
-					Location: fmt.Sprintf("%s chunk %d", block.Identity, index+1),
-				}
-				byKey[key] = input
-			}
-
-			blockInputs[blockIndex] = append(blockInputs[blockIndex], input)
-		}
-	}
-
-	keys := make([]string, 0, len(byKey))
-	for key := range byKey {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	inputs := make([]*similarityVectorInput, 0, len(keys))
-	for _, key := range keys {
-		inputs = append(inputs, byKey[key])
-	}
-
-	return blockInputs, inputs
-}
-
-func loadCachedSimilarityVectors(
-	inputs []*similarityVectorInput,
-	cacheRoot string,
-	cacheEnabled bool,
-) []*similarityVectorInput {
-	missing := make([]*similarityVectorInput, 0)
-
-	for _, input := range inputs {
-		if cacheEnabled {
-			if vector, ok := loadSimilarityVector(cacheRoot, input.CacheKey); ok {
-				input.Vector = vector
-				continue
-			}
-		}
-
-		missing = append(missing, input)
-	}
-
-	return missing
-}
-
-func populateSimilarityVectorBatch(
-	batch []*similarityVectorInput,
-	embedder similarityEmbedder,
-	cacheRoot string,
-	cacheEnabled bool,
-) error {
-	inputs := make([]string, len(batch))
-	for i, input := range batch {
-		inputs[i] = input.Content
-	}
-
-	vectors, err := embedder.embed(inputs)
-	if err != nil {
-		return err
-	}
-
-	if len(vectors) != len(inputs) {
-		return fmt.Errorf(
-			"embedding engine returned %d embeddings for %d code blocks",
-			len(vectors),
-			len(inputs),
-		)
-	}
-
-	for i, input := range batch {
-		vector := vectors[i]
-		if err := normalizeSimilarityVector(vector); err != nil {
-			return fmt.Errorf("embedding %s: %w", input.Location, err)
-		}
-
-		input.Vector = vector
-
-		if cacheEnabled {
-			_ = storeSimilarityVector(cacheRoot, input.CacheKey, vector)
-		}
-	}
-
-	return nil
-}
-
-func packSimilarityVectors(
-	blocks []*similarityBlock,
-	blockInputs [][]*similarityVectorInput,
-) (similarityVectorMatrix, error) {
-	dimensions := 0
-	totalVectors := 0
-
-	for _, inputs := range blockInputs {
-		totalVectors += len(inputs)
-		for _, input := range inputs {
-			if dimensions == 0 {
-				dimensions = len(input.Vector)
-			}
-
-			if len(input.Vector) != dimensions {
-				return similarityVectorMatrix{}, fmt.Errorf(
-					"embedding %s has %d dimensions, want %d",
-					input.Location,
-					len(input.Vector),
-					dimensions,
-				)
-			}
-		}
-	}
-
-	// One flat matrix gives pair workers sequential float32 reads and avoids one
-	// allocation plus pointer chase for every cached chunk.
-	matrix := similarityVectorMatrix{
-		Values:     make([]float32, totalVectors*dimensions),
-		Dimensions: dimensions,
-	}
-	vectorIndex := 0
-
-	for blockIndex, inputs := range blockInputs {
-		blocks[blockIndex].VectorStart = vectorIndex
-		blocks[blockIndex].VectorCount = len(inputs)
-
-		for _, input := range inputs {
-			copy(
-				matrix.Values[vectorIndex*dimensions:(vectorIndex+1)*dimensions],
-				input.Vector,
-			)
-			vectorIndex++
-		}
-	}
-
-	return matrix, nil
-}
-
-func normalizeSimilarityVector(vector []float32) error {
-	if len(vector) == 0 {
-		return errors.New("empty vector")
-	}
-
-	var norm float64
-
-	for _, value := range vector {
-		floatValue := float64(value)
-		if math.IsNaN(floatValue) || math.IsInf(floatValue, 0) {
-			return errors.New("non-finite vector value")
-		}
-
-		norm += floatValue * floatValue
-	}
-
-	if norm == 0 {
-		return errors.New("zero vector")
-	}
-
-	// Normalize once at the engine boundary so cache format and threshold behavior
-	// do not depend on model-runner output conventions.
-	inverseNorm := 1 / math.Sqrt(norm)
-	for index, value := range vector {
-		vector[index] = float32(float64(value) * inverseNorm)
-	}
-
-	return nil
 }

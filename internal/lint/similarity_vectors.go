@@ -77,12 +77,34 @@ func (runtime *similarityEmbeddingRuntime) populate(
 	missing := loadCachedSimilarityVectors(inputs, runtime.cacheRoot, runtime.cache)
 
 	if len(missing) > 0 {
+		// Encoder batches share token work with their longest sequence. Length order
+		// keeps large functions from padding batches of short functions.
+		sort.Slice(missing, func(i, j int) bool {
+			if len(missing[i].Content) != len(missing[j].Content) {
+				return len(missing[i].Content) < len(missing[j].Content)
+			}
+
+			return missing[i].CacheKey < missing[j].CacheKey
+		})
+
 		if err := runtime.ensureEngine(); err != nil {
 			return similarityVectorMatrix{}, err
 		}
 
-		for start := 0; start < len(missing); start += similarityEmbeddingBatchSize {
-			end := min(start+similarityEmbeddingBatchSize, len(missing))
+		for start := 0; start < len(missing); {
+			end := start
+			bytes := 0
+
+			for end < len(missing) && end-start < similarityEmbeddingBatchSize {
+				nextBytes := len(missing[end].Content)
+				if end > start && bytes+nextBytes > similarityEmbeddingBatchBytes {
+					break
+				}
+
+				bytes += nextBytes
+				end++
+			}
+
 			if err := populateSimilarityVectorBatch(
 				missing[start:end],
 				runtime.embedder,
@@ -91,6 +113,8 @@ func (runtime *similarityEmbeddingRuntime) populate(
 			); err != nil {
 				return similarityVectorMatrix{}, err
 			}
+
+			start = end
 		}
 	}
 

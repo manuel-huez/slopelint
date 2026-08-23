@@ -37,8 +37,9 @@ const (
 	similarityChunkCachePrefix        = "chunk-v1\x00"
 	similarityDescriptionVectorPrefix = "description-v2\x00"
 	// Large outer batches amortize Go/C++ calls. llama.cpp splits these into four
-	// parallel sequences while keeping one bounded output allocation.
-	similarityEmbeddingBatchSize = 128
+	// parallel sequences. Byte cap checkpoints long-code batches more often.
+	similarityEmbeddingBatchSize  = 128
+	similarityEmbeddingBatchBytes = 64000
 
 	// Related analyzer functions score highly even when behavior differs. Precision-first
 	// thresholds keep only near-identical embeddings; locality still lowers nearby gates.

@@ -19,11 +19,13 @@ import (
 )
 
 const (
-	similaritySchema           = 9
-	similarityMinimumBlocks    = 2
-	similarityFirstDistantTier = 2
-	similarityIssueKind        = "semantic_duplicate"
-	similarityAcceptAllID      = "all"
+	similaritySchema        = 10
+	similarityMinimumBlocks = 2
+	// Immediate siblings and parent-child packages share refactor ownership.
+	// Deeper branches do not; skipping them bounds cold all-pairs work.
+	similarityMaximumLocalityTier = 2
+	similarityIssueKind           = "semantic_duplicate"
+	similarityAcceptAllID         = "all"
 
 	// Small functions produce common boilerplate matches already covered by structural rules.
 	similarityMinimumTokens = 50
@@ -46,24 +48,20 @@ const (
 	similaritySameFileThreshold    = 0.970
 	similaritySamePackageThreshold = 0.975
 	similarityDistantThreshold     = 0.980
-	similarityTierThresholdStep    = 0.003
-	similarityMaximumThreshold     = 0.995
 	similarityTestThresholdOffset  = 0.025
 	similarityTestMaximumThreshold = 0.999
 
 	similarityDescriptionSameFileThreshold    = 0.950
 	similarityDescriptionSamePackageThreshold = 0.960
 	similarityDescriptionDistantThreshold     = 0.960
-	similarityDescriptionTierStep             = 0.005
 	similarityDescriptionTestOffset           = 0.015
-	similarityDescriptionMaximumThreshold     = 0.995
 )
 
 // SimilarityOptions controls repo-wide semantic duplicate analysis.
 type SimilarityOptions struct {
 	CI              bool
 	CacheEnabled    bool
-	CacheDir        string
+	cacheDir        string
 	AcceptedPairIDs []string
 	embedder        similarityEmbedder
 	describer       similarityDescriber
@@ -76,6 +74,7 @@ type similarityBlock struct {
 	Identity     string
 	Symbol       string
 	PackageDir   string
+	PackageParts []string
 	RelativePath string
 	Content      string
 	ContentHash  string
@@ -124,6 +123,13 @@ type similarityVectorMatrices struct {
 	Description similarityVectorMatrix
 }
 
+type similarityScanResult struct {
+	matches           []similarityMatch
+	rawMatches        []similarityMatch
+	cacheRoot         string
+	descriptionDigest string
+}
+
 type similarityVectorKind uint8
 
 const (
@@ -154,6 +160,31 @@ func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, e
 
 	if stampExists && stamp.covers(sourceDigest, descriptionRuntime.enabled) {
 		return nil, nil
+	}
+
+	if opts.CacheEnabled {
+		cacheRoot, cacheErr := similarityVectorCacheRoot(opts.cacheDir)
+		if cacheErr != nil {
+			return nil, cacheErr
+		}
+
+		cache, ok := loadSimilarityScanCache(cacheRoot, root, descriptionRuntime.enabled)
+		if ok && cache.covers(sourceDigest, descriptionRuntime.enabled) {
+			findings, valid := cache.replayFindings(root)
+			if valid {
+				return completeSimilarityReview(
+					root,
+					sourceDigest,
+					cache.DescriptionDigest,
+					cache.Descriptions,
+					cache.Blocks,
+					findings,
+					stamp,
+					stampExists,
+					opts.AcceptedPairIDs,
+				)
+			}
+		}
 	}
 
 	return analyzeChangedSimilarCode(
@@ -202,10 +233,8 @@ func analyzeChangedSimilarCode(
 
 	debug.FreeOSMemory()
 
-	matches, cacheRoot, descriptionDigest, err := similarityMatchesForBlocks(
+	scan, err := similarityMatchesForBlocks(
 		blocks,
-		stamp,
-		stampExists,
 		root,
 		descriptionRuntime,
 		opts,
@@ -214,41 +243,35 @@ func analyzeChangedSimilarCode(
 		return nil, err
 	}
 
-	acceptances, issues, err := reviewSimilarityMatches(
-		matches,
+	cachedBlocks := cacheSimilarityBlocks(blocks)
+
+	findings := similarityFindingsForMatches(scan.matches)
+	if opts.CacheEnabled {
+		// Scan cache is an optimization only. Source digest and committed stamp
+		// remain the correctness boundary.
+		_ = storeSimilarityScanCache(
+			scan.cacheRoot,
+			root,
+			sourceDigest,
+			scan.descriptionDigest,
+			descriptionRuntime.enabled,
+			cachedBlocks,
+			scan.rawMatches,
+			findings,
+		)
+	}
+
+	return completeSimilarityReview(
+		root,
+		sourceDigest,
+		scan.descriptionDigest,
+		descriptionRuntime.enabled,
+		cachedBlocks,
+		findings,
 		stamp,
 		stampExists,
-		blocks,
 		opts.AcceptedPairIDs,
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(issues) > 0 {
-		sortIssues(issues)
-		return issues, nil
-	}
-
-	sort.Slice(acceptances, func(i, j int) bool { return acceptances[i].ID < acceptances[j].ID })
-
-	clean := newSimilarityStamp(
-		sourceDigest,
-		len(blocks),
-		acceptances,
-		descriptionRuntime.enabled,
-		descriptionDigest,
-	)
-	if err := storeSimilarityStamp(root, clean); err != nil {
-		return nil, err
-	}
-
-	if opts.CacheEnabled {
-		// Manifest is an optimization only. Stamp remains sufficient for correctness.
-		_ = storeSimilarityManifest(cacheRoot, root, sourceDigest, blocks)
-	}
-
-	return nil, nil
 }
 
 func releaseSimilarityTypes(pkgs []*LoadedPackage) {
@@ -297,25 +320,23 @@ func loadSimilarityCheck(
 
 func similarityMatchesForBlocks(
 	blocks []*similarityBlock,
-	stamp similarityStamp,
-	stampExists bool,
 	root string,
 	descriptionRuntime similarityDescriptionRuntime,
 	opts SimilarityOptions,
-) (matches []similarityMatch, cacheRoot string, descriptionDigest string, err error) {
-	cacheRoot, err = similarityVectorCacheRoot(opts.CacheDir)
+) (result similarityScanResult, err error) {
+	result.cacheRoot, err = similarityVectorCacheRoot(opts.cacheDir)
 	if err != nil {
-		return nil, "", "", err
+		return similarityScanResult{}, err
 	}
 
 	if len(blocks) < similarityMinimumBlocks {
-		descriptionDigest, err = similarityDescriptionsDigest(nil)
-		return nil, cacheRoot, descriptionDigest, err
+		result.descriptionDigest, err = similarityDescriptionsDigest(nil)
+		return result, err
 	}
 
 	embeddings := newSimilarityEmbeddingRuntime(
 		opts.embedder,
-		cacheRoot,
+		result.cacheRoot,
 		opts.CacheEnabled,
 	)
 	defer func() { err = errors.Join(err, embeddings.close()) }()
@@ -326,10 +347,10 @@ func similarityMatchesForBlocks(
 
 	var descriptionErr error
 	go func() {
-		descriptionDigest, descriptionErr = populateSimilarityDescriptions(
+		result.descriptionDigest, descriptionErr = populateSimilarityDescriptions(
 			blocks,
 			descriptionRuntime,
-			cacheRoot,
+			result.cacheRoot,
 			opts.CacheEnabled,
 		)
 
@@ -341,7 +362,7 @@ func similarityMatchesForBlocks(
 	<-descriptionDone
 
 	if err = errors.Join(sourceErr, descriptionErr); err != nil {
-		return nil, "", "", err
+		return similarityScanResult{}, err
 	}
 
 	var descriptionVectors similarityVectorMatrix
@@ -351,51 +372,120 @@ func similarityMatchesForBlocks(
 			similarityDescriptionVector,
 		)
 		if err != nil {
-			return nil, "", "", err
+			return similarityScanResult{}, err
 		}
 	}
 
-	var changed map[string]struct{}
-	if opts.CacheEnabled {
-		changed = changedSimilarityBlocks(
-			blocks,
-			stamp,
-			stampExists,
-			descriptionRuntime.enabled,
-			cacheRoot,
-			root,
-		)
-	}
-
-	matches = groupSimilarityMatches(
-		blocks,
-		scanSimilarityPairs(
-			blocks,
-			similarityVectorMatrices{
-				Source:      sourceVectors,
-				Description: descriptionVectors,
-			},
-			changed,
-		),
+	var (
+		previous   similarityScanCache
+		previousOK bool
+		changed    map[string]struct{}
 	)
 
-	if err := populateSimilarityMatchDetails(
-		matches,
-		descriptionRuntime,
-		cacheRoot,
-		opts.CacheEnabled,
-	); err != nil {
-		return nil, "", "", err
+	if opts.CacheEnabled {
+		previous, previousOK = loadSimilarityScanCache(
+			result.cacheRoot,
+			root,
+			descriptionRuntime.enabled,
+		)
+
+		previousOK = previousOK && previous.policyMatches(descriptionRuntime.enabled)
+
+		if previousOK {
+			changed = previous.changedBlocks(blocks)
+		}
 	}
 
-	return matches, cacheRoot, descriptionDigest, nil
+	result.rawMatches = scanSimilarityPairs(
+		blocks,
+		similarityVectorMatrices{
+			Source:      sourceVectors,
+			Description: descriptionVectors,
+		},
+		changed,
+	)
+	if previousOK {
+		result.rawMatches = append(
+			previous.restoreMatches(blocks, changed),
+			result.rawMatches...,
+		)
+		sortSimilarityMatches(result.rawMatches)
+	}
+
+	result.matches = groupSimilarityMatches(blocks, result.rawMatches)
+
+	if err := populateSimilarityMatchDetails(
+		result.matches,
+		descriptionRuntime,
+		result.cacheRoot,
+		opts.CacheEnabled,
+	); err != nil {
+		return similarityScanResult{}, err
+	}
+
+	return result, nil
 }
 
-func reviewSimilarityMatches(
-	matches []similarityMatch,
+func completeSimilarityReview(
+	root string,
+	sourceDigest string,
+	descriptionDigest string,
+	descriptions bool,
+	blocks []similarityCachedBlock,
+	findings []similarityFinding,
 	stamp similarityStamp,
 	stampExists bool,
-	blocks []*similarityBlock,
+	requestedIDs []string,
+) ([]Issue, error) {
+	acceptances, issues, err := reviewSimilarityFindings(
+		findings,
+		stamp,
+		stampExists,
+		similarityBlockHashes(blocks),
+		requestedIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(issues) > 0 {
+		sortIssues(issues)
+		return issues, nil
+	}
+
+	sort.Slice(acceptances, func(i, j int) bool { return acceptances[i].ID < acceptances[j].ID })
+
+	clean := newSimilarityStamp(
+		sourceDigest,
+		len(blocks),
+		acceptances,
+		descriptions,
+		descriptionDigest,
+	)
+	if err := storeSimilarityStamp(root, clean); err != nil {
+		return nil, err
+	}
+
+	return nil, nil
+}
+
+func similarityFindingsForMatches(matches []similarityMatch) []similarityFinding {
+	findings := make([]similarityFinding, 0, len(matches))
+	for _, match := range matches {
+		findings = append(findings, similarityFinding{
+			acceptance: match.acceptance(),
+			issue:      match.issue(),
+		})
+	}
+
+	return findings
+}
+
+func reviewSimilarityFindings(
+	findings []similarityFinding,
+	stamp similarityStamp,
+	stampExists bool,
+	blockHashes map[string]string,
 	requestedIDs []string,
 ) ([]similarityAcceptance, []Issue, error) {
 	requested := make(map[string]struct{}, len(requestedIDs))
@@ -410,12 +500,12 @@ func reviewSimilarityMatches(
 		requested[id] = struct{}{}
 	}
 
-	current := make(map[string]similarityMatch, len(matches))
-	for _, match := range matches {
-		current[match.ID] = match
+	current := make(map[string]similarityFinding, len(findings))
+	for _, finding := range findings {
+		current[finding.acceptance.ID] = finding
 	}
 
-	acceptances := carrySimilarityAcceptances(stamp, stampExists, blocks)
+	acceptances := carrySimilarityAcceptances(stamp, stampExists, blockHashes)
 	carried := make(map[string]struct{}, len(acceptances))
 
 	for _, accepted := range acceptances {
@@ -431,18 +521,18 @@ func reviewSimilarityMatches(
 		}
 	}
 
-	issues := make([]Issue, 0, len(matches))
-	for _, match := range matches {
-		if _, ok := carried[match.ID]; ok {
+	issues := make([]Issue, 0, len(findings))
+	for _, finding := range findings {
+		if _, ok := carried[finding.acceptance.ID]; ok {
 			continue
 		}
 
-		if _, ok := requested[match.ID]; ok || acceptAll {
-			acceptances = append(acceptances, match.acceptance())
+		if _, ok := requested[finding.acceptance.ID]; ok || acceptAll {
+			acceptances = append(acceptances, finding.acceptance)
 			continue
 		}
 
-		issues = append(issues, match.issue())
+		issues = append(issues, finding.issue)
 	}
 
 	return acceptances, issues, nil
@@ -497,6 +587,8 @@ func collectSimilarityFileBlocks(
 		packageDir = ""
 	}
 
+	packageParts := similarityPathParts(packageDir)
+
 	blocks := make([]*similarityBlock, 0)
 
 	for _, decl := range file.Decls {
@@ -520,6 +612,7 @@ func collectSimilarityFileBlocks(
 			Identity:     relativePath + "::" + symbol,
 			Symbol:       symbol,
 			PackageDir:   packageDir,
+			PackageParts: packageParts,
 			RelativePath: relativePath,
 			Content:      content,
 			ContentHash:  hex.EncodeToString(sum[:]),

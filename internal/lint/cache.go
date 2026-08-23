@@ -53,12 +53,6 @@ type analysisCacheFingerprint struct {
 	ImportedFacts []analysisCacheImportedFact `json:"imported_facts"`
 }
 
-type repoAnalysisCachePackage struct {
-	ImportPath string `json:"import_path"`
-	Name       string `json:"name"`
-	BuildID    string `json:"build_id"`
-}
-
 type analysisCacheExecutable struct {
 	Path             string `json:"path"`
 	Size             int64  `json:"size"`
@@ -84,7 +78,7 @@ func newAnalysisCache(
 		return nil, errAnalysisCacheDisabled
 	}
 
-	root, err := analysisCacheRoot(opts.CacheDir)
+	root, err := analysisCacheRoot(opts.cacheDir)
 	if err != nil {
 		return nil, err
 	}
@@ -100,19 +94,21 @@ func newAnalysisCache(
 }
 
 func newRepoAnalysisCache(
-	pkgs []*LoadedPackage,
+	patterns []string,
+	dir string,
 	opts Options,
+	similarity *SimilarityOptions,
 ) (*repoAnalysisCache, error) {
 	if !opts.CacheEnabled {
 		return nil, errAnalysisCacheDisabled
 	}
 
-	root, err := analysisCacheRoot(opts.CacheDir)
+	root, err := analysisCacheRoot(opts.cacheDir)
 	if err != nil {
 		return nil, err
 	}
 
-	key, err := repoAnalysisCacheKey(pkgs, opts)
+	key, err := repoAnalysisCacheKey(patterns, dir, opts, similarity)
 	if err != nil {
 		return nil, err
 	}
@@ -135,13 +131,4 @@ func CacheEnabledFromEnv() bool {
 	default:
 		return true
 	}
-}
-
-// ResolveCacheDir returns explicit cache dir, or SLOPELINT_CACHE_DIR when set.
-func ResolveCacheDir(dir string) string {
-	if dir != "" {
-		return dir
-	}
-
-	return strings.TrimSpace(os.Getenv("SLOPELINT_CACHE_DIR"))
 }

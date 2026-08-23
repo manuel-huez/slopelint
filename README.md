@@ -92,7 +92,8 @@ It also:
   package boundaries
 - propagates boolean and `error`/`nil`-style result facts
 - supports opt-in contracts via `//slopelint:ensures ...`
-- caches diagnostics and exported summaries on disk for faster reruns
+- replays the complete repo result before `go list` when relevant source,
+  options, toolchain, similarity policy, and stamp are unchanged
 
 ## Examples
 
@@ -213,7 +214,9 @@ use two concurrent Codex processes per available Go CPU. A request holds at most
 32 blocks and targets 200 KB; one larger function stays intact instead of being
 truncated. Each valid batch is cached immediately and reports progress, so
 retries request only missing IDs. Cached descriptions and vectors make later
-runs local.
+runs local. The complete finding set is also cached. An unchanged Git worktree
+uses a source-scoped Git fingerprint and replays before package loading or model
+startup; changed or untracked Go inputs invalidate that result.
 
 Every finding includes a stable `sim-...` pair ID. After review, accept specific
 intentional pairs and rerun the same lint command:
@@ -245,25 +248,25 @@ about `479 MiB`.
 
 Repo calibration uses a precision-first operating point instead of the
 benchmark's maximum-F1 threshold. Nearby production blocks require at least
-`0.970` cosine similarity, distant blocks start at `0.980`, and test blocks add
-`0.025`. Luna prompt calibration covered renamed equivalent functions,
+`0.970` cosine similarity in one file, `0.975` in one package, or `0.980` across
+immediate sibling or parent-child packages. Deeper package branches are not
+compared. Test blocks add `0.025`. Luna prompt calibration covered renamed equivalent functions,
 earliest/latest opposites, equivalent tests with different structure, opposite
 blank-value contracts, unknown private helpers, pointer-mutation ambiguity, and
 prompt injection inside code. Low, medium, and high reasoning were compared on
 normal and adversarial sets. Medium retained every critical factual and
 separation check from high, while low made two unsupported claims and high took
 longer, especially for tests. Behavior signatures require `0.950` similarity in
-one file and `0.960` in one package or at the first distant tier; tests add
-`0.015`. Structural similarity remains diagnostic context and gates neither
-semantic channel.
+one file and `0.960` in one package or an immediate sibling or parent-child
+package; tests add `0.015`. Structural similarity remains diagnostic context and
+gates neither semantic channel.
 
 Useful `slopelint` flags:
 
 - `-max-states`: maximum symbolic states before widening, default `32`
 - `-closed-world`: treat matched `main` packages as complete production entrypoints;
   enables repo-wide exported dead-code findings
-- `-cache`: reuse cached analysis for unchanged packages, default `true`
-- `-cache-dir=/path/to/cache`: override persistent cache location
+- `-cache`: replay the complete result for unchanged repo inputs, default `true`
 
 Useful inherited `singlechecker` flags:
 
@@ -275,7 +278,6 @@ Useful inherited `singlechecker` flags:
 Useful env vars:
 
 - `SLOPELINT_CACHE=0`: disable cache
-- `SLOPELINT_CACHE_DIR=/path/to/cache`: override cache root
 - `SLOPELINT_SIMILARITY=local|ci|off`: override automatic local/CI mode;
   default is `ci` when `CI`, `WORKERS_CI`, or `CF_PAGES` is truthy, otherwise
   `local`
@@ -284,7 +286,8 @@ Useful env vars:
 - `SLOPELINT_CODEX_DESCRIPTIONS=auto|off`: use authenticated Codex descriptions
   when available, or keep semantic analysis fully local; default `auto`
 
-Default cache locations:
+All repos share one global content-addressed cache root. Content hashes and
+repo-scoped scan keys prevent collisions:
 
 - `os.UserCacheDir()/slopelint/analysis-v4`
 - `os.UserCacheDir()/slopelint/similarity-v1`
@@ -318,7 +321,8 @@ analysis. CI runs validate the committed stamp without model inference.
   loaded package/build configuration; generated files and function literals are
   excluded; large functions use overlapping byte-bounded chunks, and every chunk
   is embedded without truncation; connected similarity groups report one
-  finding with every member instead of every possible pair
+  finding with every member instead of every possible pair; comparisons stop
+  beyond immediate sibling or parent-child packages
 - Luna describes each eligible function in isolation; behavior that
   exists only in caller context or an unknown private helper can still be missed
 - one semantic similarity run covers one Go module because each module owns one

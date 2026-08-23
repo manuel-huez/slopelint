@@ -1,7 +1,6 @@
 package lint
 
 import (
-	"errors"
 	"sort"
 
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
@@ -15,25 +14,18 @@ func LintRepository(
 	opts Options,
 	similarity *SimilarityOptions,
 ) ([]Issue, error) {
+	cache, cacheErr := newRepoAnalysisCache(patterns, dir, opts, similarity)
+	if cacheErr == nil {
+		if entry, ok := cache.load(); ok {
+			if issues, valid := replayRepoAnalysisCache(entry, opts.CacheHitHook); valid {
+				return issues, nil
+			}
+		}
+	}
+
 	targets, byImportPath, err := resolvePackageMetadata(patterns, dir)
 	if err != nil {
 		return nil, err
-	}
-
-	metadata, err := packageMetadata(targets)
-	if err != nil {
-		return nil, err
-	}
-
-	cache, err := newRepoAnalysisCache(metadata, opts)
-	if err == nil {
-		if entry, ok := cache.load(); ok {
-			if issues, ok := replayRepoAnalysisCache(entry, opts.CacheHitHook); ok {
-				return appendSimilarityIssues(issues, metadata, similarity)
-			}
-		}
-	} else if !errors.Is(err, errAnalysisCacheDisabled) {
-		cache = nil
 	}
 
 	pkgs, err := loadPackageTargets(targets, byImportPath)
@@ -42,12 +34,24 @@ func LintRepository(
 	}
 
 	issues := lintLoadedPackages(pkgs, opts)
-	if cache != nil {
-		// Cache persistence is best-effort; analysis results remain valid without it.
-		_ = cache.store(issues)
+
+	issues, err = appendSimilarityIssues(issues, pkgs, similarity)
+	if err != nil {
+		return nil, err
 	}
 
-	return appendSimilarityIssues(issues, pkgs, similarity)
+	// Similarity can update its committed stamp. Recompute the fast source key so
+	// the stored result describes the state that the next command will observe.
+	if freshCache, cacheErr := newRepoAnalysisCache(
+		patterns,
+		dir,
+		opts,
+		similarity,
+	); cacheErr == nil {
+		_ = freshCache.store(issues)
+	}
+
+	return issues, nil
 }
 
 func appendSimilarityIssues(

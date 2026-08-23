@@ -267,7 +267,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	}}
 	options := SimilarityOptions{
 		CacheEnabled:    true,
-		CacheDir:        cacheDir,
+		cacheDir:        cacheDir,
 		AcceptedPairIDs: []string{similarityAcceptAllID},
 		describer:       describer,
 		embedder:        embedder,
@@ -350,7 +350,7 @@ func third(values []int) int {
 
 	issues, err := CheckSimilarCode(loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled:    true,
-		CacheDir:        cacheDir,
+		cacheDir:        cacheDir,
 		AcceptedPairIDs: []string{similarityAcceptAllID},
 		describer:       describer,
 		embedder:        embedder,
@@ -379,7 +379,7 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 	}}
 	issues, err := CheckSimilarCode(loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled:        true,
-		CacheDir:            cacheDir,
+		cacheDir:            cacheDir,
 		embedder:            embedder,
 		descriptionDisabled: true,
 	})
@@ -387,7 +387,7 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 
 	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 		describer:    new(similarityTestDescriber),
 		embedder:     embedder,
 	})

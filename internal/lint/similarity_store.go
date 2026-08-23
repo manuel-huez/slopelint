@@ -47,17 +47,6 @@ type similarityAcceptance struct {
 	RightHash string `json:"right_hash"`
 }
 
-type similarityManifest struct {
-	Schema       int                       `json:"schema"`
-	SourceDigest string                    `json:"source_digest"`
-	Blocks       []similarityManifestBlock `json:"blocks"`
-}
-
-type similarityManifestBlock struct {
-	Identity    string `json:"identity"`
-	ContentHash string `json:"content_hash"`
-}
-
 type similaritySourceFile struct {
 	Package string `json:"package"`
 	Path    string `json:"path"`
@@ -406,114 +395,26 @@ func similarityVectorPath(root, key string) string {
 	return filepath.Join(root, "vectors", key[:2], key[2:]+".bin")
 }
 
-func changedSimilarityBlocks(
-	blocks []*similarityBlock,
-	stamp similarityStamp,
-	stampExists bool,
-	descriptionsEnabled bool,
-	cacheRoot string,
-	moduleRoot string,
-) map[string]struct{} {
-	// A clean prior manifest proves unchanged pairs were already reviewed. Only a changed
-	// endpoint can create a new duplicate; deletion alone cannot create one.
-	if !stampExists || !stamp.policyMatches() ||
-		(stamp.DescriptionModel != "") != descriptionsEnabled {
-		return nil
-	}
-
-	manifest, ok := loadSimilarityManifest(cacheRoot, moduleRoot)
-	if !ok || manifest.Schema != similarityCacheSchema ||
-		manifest.SourceDigest != stamp.SourceDigest {
-		return nil
-	}
-
-	previous := make(map[string]string, len(manifest.Blocks))
-
-	for _, block := range manifest.Blocks {
-		previous[block.Identity] = block.ContentHash
-	}
-
-	changed := make(map[string]struct{})
-
-	for _, block := range blocks {
-		if previous[block.Identity] != block.ContentHash {
-			changed[block.Identity] = struct{}{}
-		}
-	}
-
-	return changed
-}
-
-func loadSimilarityManifest(root, moduleRoot string) (similarityManifest, bool) {
-	data, err := os.ReadFile(similarityManifestPath(root, moduleRoot))
-	if err != nil {
-		return similarityManifest{}, false
-	}
-
-	var manifest similarityManifest
-	if json.Unmarshal(data, &manifest) != nil {
-		return similarityManifest{}, false
-	}
-
-	return manifest, true
-}
-
-func storeSimilarityManifest(
-	root string,
-	moduleRoot string,
-	sourceDigest string,
-	blocks []*similarityBlock,
-) error {
-	manifest := similarityManifest{
-		Schema:       similarityCacheSchema,
-		SourceDigest: sourceDigest,
-		Blocks:       make([]similarityManifestBlock, 0, len(blocks)),
-	}
-	for _, block := range blocks {
-		manifest.Blocks = append(manifest.Blocks, similarityManifestBlock{
-			Identity:    block.Identity,
-			ContentHash: block.ContentHash,
-		})
-	}
-
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-
-	return writeFileAtomically(similarityManifestPath(root, moduleRoot), data)
-}
-
-func similarityManifestPath(root, moduleRoot string) string {
-	absolute, err := filepath.Abs(moduleRoot)
-	if err != nil {
-		absolute = moduleRoot
-	}
-
-	sum := sha256.Sum256([]byte(absolute))
-	key := hex.EncodeToString(sum[:])
-
-	return filepath.Join(root, "repos", key[:2], key[2:]+".json")
-}
-
 func carrySimilarityAcceptances(
 	stamp similarityStamp,
 	exists bool,
-	blocks []*similarityBlock,
+	current map[string]string,
 ) []similarityAcceptance {
-	if !exists || !stamp.policyMatches() {
+	if !exists {
 		return nil
-	}
-
-	current := make(map[string]string, len(blocks))
-	for _, block := range blocks {
-		current[block.Identity] = block.ContentHash
 	}
 
 	out := make([]similarityAcceptance, 0, len(stamp.Accepted))
 	for _, accepted := range stamp.Accepted {
 		if current[accepted.Left] != accepted.LeftHash ||
 			current[accepted.Right] != accepted.RightHash {
+			continue
+		}
+
+		if accepted.ID != similarityPairID(
+			&similarityBlock{Identity: accepted.Left, ContentHash: accepted.LeftHash},
+			&similarityBlock{Identity: accepted.Right, ContentHash: accepted.RightHash},
+		) {
 			continue
 		}
 

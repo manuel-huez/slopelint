@@ -152,9 +152,14 @@ func similarityMatchForPair(
 ) (similarityMatch, bool) {
 	left := blocks[leftIndex]
 	right := blocks[rightIndex]
+
+	tier := similarityLocalityTier(left, right)
+	if tier > similarityMaximumLocalityTier {
+		return similarityMatch{}, false
+	}
+
 	embedding, leftChunk, rightChunk := maximumDotSimilarity(vectors.Source, left, right)
 	description := maximumDescriptionDotSimilarity(vectors.Description, left, right)
-	tier := similarityLocalityTier(left, right)
 	sourceThreshold := similarityEmbeddingThreshold(tier, left.IsTest || right.IsTest)
 	descriptionThreshold := similarityDescriptionThreshold(tier, left.IsTest && right.IsTest)
 
@@ -369,11 +374,7 @@ func similarityEmbeddingThreshold(tier int, testPair bool) float64 {
 	case 1:
 		threshold = similaritySamePackageThreshold
 	default:
-		threshold = min(
-			similarityDistantThreshold+
-				similarityTierThresholdStep*float64(tier-similarityFirstDistantTier),
-			similarityMaximumThreshold,
-		)
+		threshold = similarityDistantThreshold
 	}
 
 	if testPair {
@@ -395,18 +396,11 @@ func similarityDescriptionThreshold(tier int, testPair bool) float64 {
 	case 1:
 		threshold = similarityDescriptionSamePackageThreshold
 	default:
-		threshold = min(
-			similarityDescriptionDistantThreshold+
-				similarityDescriptionTierStep*float64(tier-similarityFirstDistantTier),
-			similarityDescriptionMaximumThreshold,
-		)
+		threshold = similarityDescriptionDistantThreshold
 	}
 
 	if testPair {
-		threshold = min(
-			threshold+similarityDescriptionTestOffset,
-			similarityDescriptionMaximumThreshold,
-		)
+		threshold += similarityDescriptionTestOffset
 	}
 
 	return threshold
@@ -421,8 +415,16 @@ func similarityLocalityTier(left, right *similarityBlock) int {
 		return 1
 	}
 
-	leftParts := similarityPathParts(left.PackageDir)
-	rightParts := similarityPathParts(right.PackageDir)
+	leftParts := left.PackageParts
+	if leftParts == nil {
+		leftParts = similarityPathParts(left.PackageDir)
+	}
+
+	rightParts := right.PackageParts
+	if rightParts == nil {
+		rightParts = similarityPathParts(right.PackageDir)
+	}
+
 	common := 0
 
 	for common < len(leftParts) && common < len(rightParts) && leftParts[common] == rightParts[common] {

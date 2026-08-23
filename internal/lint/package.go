@@ -16,5 +16,4 @@ type LoadedPackage struct {
 	TypesPkg   *types.Package
 	TypesInfo  *types.Info
 	repoFiles  []string
-	buildID    string
 }

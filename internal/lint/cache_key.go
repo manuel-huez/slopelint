@@ -54,44 +54,6 @@ func analysisCacheKey(
 	return analysisCacheFingerprintKey(fingerprint)
 }
 
-func repoAnalysisCacheKey(pkgs []*LoadedPackage, opts Options) (string, error) {
-	maxStates := opts.MaxStates
-	if maxStates <= 0 {
-		maxStates = 32
-	}
-
-	packages := repoAnalysisCachePackages(pkgs)
-	for _, pkg := range packages {
-		// Go build IDs cover compiler settings plus transitive dependency inputs.
-		// Without one, lightweight replay cannot prove imported type data unchanged.
-		if pkg.BuildID == "" {
-			return "", fmt.Errorf("package %s has no Go build ID", pkg.ImportPath)
-		}
-	}
-
-	fingerprint := struct {
-		Schema      int                        `json:"schema"`
-		MaxStates   int                        `json:"max_states"`
-		ClosedWorld bool                       `json:"closed_world"`
-		Packages    []repoAnalysisCachePackage `json:"packages"`
-		Files       []analysisCacheFile        `json:"files"`
-	}{
-		Schema:      analysisCacheSchema,
-		MaxStates:   maxStates,
-		ClosedWorld: opts.ClosedWorld,
-		Packages:    packages,
-	}
-
-	files, err := repoAnalysisCacheFiles(pkgs)
-	if err != nil {
-		return "", err
-	}
-
-	fingerprint.Files = files
-
-	return analysisCacheFingerprintKey(fingerprint)
-}
-
 func analysisCacheFingerprintKey(fingerprint any) (string, error) {
 	data, err := json.Marshal(fingerprint)
 	if err != nil {
@@ -103,38 +65,17 @@ func analysisCacheFingerprintKey(fingerprint any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func repoAnalysisCachePackages(pkgs []*LoadedPackage) []repoAnalysisCachePackage {
-	out := make([]repoAnalysisCachePackage, 0, len(pkgs))
-	for _, pkg := range pkgs {
-		if pkg == nil {
-			continue
-		}
-
-		out = append(out, repoAnalysisCachePackage{
-			ImportPath: pkg.ImportPath,
-			Name:       pkg.Name,
-			BuildID:    pkg.buildID,
-		})
-	}
-
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ImportPath != out[j].ImportPath {
-			return out[i].ImportPath < out[j].ImportPath
-		}
-
-		if out[i].Name != out[j].Name {
-			return out[i].Name < out[j].Name
-		}
-
-		return out[i].BuildID < out[j].BuildID
-	})
-
-	return out
-}
-
 func analysisCacheExecutableStamp() analysisCacheExecutable {
 	path, err := os.Executable()
 	if err != nil {
+		return analysisCacheExecutable{}
+	}
+
+	return analysisCacheExecutableForPath(path)
+}
+
+func analysisCacheExecutableForPath(path string) analysisCacheExecutable {
+	if path == "" {
 		return analysisCacheExecutable{}
 	}
 
@@ -171,42 +112,6 @@ func analysisCacheFiles(pass *analysis.Pass) ([]analysisCacheFile, error) {
 			Filename: name,
 			SHA256:   hex.EncodeToString(sum[:]),
 		})
-	}
-
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Filename < files[j].Filename
-	})
-
-	return files, nil
-}
-
-func repoAnalysisCacheFiles(pkgs []*LoadedPackage) ([]analysisCacheFile, error) {
-	seen := make(map[string]struct{})
-	files := make([]analysisCacheFile, 0)
-
-	for _, pkg := range pkgs {
-		if pkg == nil {
-			continue
-		}
-
-		for _, name := range pkg.repoFiles {
-			if _, ok := seen[name]; ok {
-				continue
-			}
-
-			seen[name] = struct{}{}
-
-			content, err := os.ReadFile(name)
-			if err != nil {
-				return nil, err
-			}
-
-			sum := sha256.Sum256(content)
-			files = append(files, analysisCacheFile{
-				Filename: name,
-				SHA256:   hex.EncodeToString(sum[:]),
-			})
-		}
 	}
 
 	sort.Slice(files, func(i, j int) bool {

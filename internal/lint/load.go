@@ -25,7 +25,6 @@ type packageMeta struct {
 	ImportPath      string   `json:"ImportPath"`
 	Name            string   `json:"Name"`
 	ForTest         string   `json:"ForTest"`
-	BuildID         string   `json:"BuildID"`
 	Export          string   `json:"Export"`
 	GoFiles         []string `json:"GoFiles"`
 	CgoFiles        []string `json:"CgoFiles"`
@@ -181,26 +180,6 @@ func loadPackageTargets(
 	return loaded, nil
 }
 
-func packageMetadata(targets []*packageMeta) ([]*LoadedPackage, error) {
-	pkgs := make([]*LoadedPackage, len(targets))
-	for index, target := range targets {
-		repoFiles, err := packageRepoFiles(target)
-		if err != nil {
-			return nil, err
-		}
-
-		pkgs[index] = &LoadedPackage{
-			ImportPath: target.targetImportPath(),
-			Name:       target.Name,
-			Dir:        target.Dir,
-			repoFiles:  repoFiles,
-			buildID:    target.BuildID,
-		}
-	}
-
-	return pkgs, nil
-}
-
 func loadPackageSyntax(pkgs []*LoadedPackage) error {
 	return runPackageJobs(len(pkgs), func(index int) error {
 		pkg := pkgs[index]
@@ -347,7 +326,6 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 		Files:      files,
 		TypesPkg:   typesPkg,
 		TypesInfo:  info,
-		buildID:    meta.BuildID,
 	}, nil
 }
 

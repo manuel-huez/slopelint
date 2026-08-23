@@ -24,7 +24,7 @@ const (
 type Options struct {
 	MaxStates    int
 	CacheEnabled bool
-	CacheDir     string
+	cacheDir     string
 	CacheHitHook func(string)
 	ClosedWorld  bool
 	skipDeadCode bool

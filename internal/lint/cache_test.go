@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -46,7 +47,7 @@ func f(s string) {
 	issues1, err := RunAnalysis(pass1, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 	})
 	if err != nil {
 		t.Fatalf("first run: %v", err)
@@ -59,7 +60,7 @@ func f(s string) {
 	issues2, err := RunAnalysis(pass2, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 		CacheHitHook: func(importPath string) {
 			hits = append(hits, importPath)
 		},
@@ -99,7 +100,7 @@ func f(s string) {
 	issues1, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 	}, nil)
 	if err != nil {
 		t.Fatalf("first repo lint: %v", err)
@@ -115,7 +116,7 @@ func f(s string) {
 	issues2, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 		CacheHitHook: func(importPath string) {
 			hits = append(hits, importPath)
 		},
@@ -137,7 +138,7 @@ func f(s string) {
 	}
 }
 
-func TestLintRepositoryCacheBuildIDTracksDependencies(t *testing.T) {
+func TestLintRepositoryCacheTracksDependencies(t *testing.T) {
 	const usePackagePattern = "./use"
 
 	tmp := newTestModule(t)
@@ -153,7 +154,7 @@ import "example.com/sample/dep"
 func Name(item dep.Item) string { return item.Name }
 `)
 
-	opts := Options{MaxStates: 32, CacheEnabled: true, CacheDir: cacheDir}
+	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
 	if _, err := LintRepository([]string{usePackagePattern}, tmp, opts, nil); err != nil {
 		t.Fatalf("first repo lint: %v", err)
 	}
@@ -185,6 +186,191 @@ type Item struct {
 
 	if len(hits) != 0 {
 		t.Fatalf("dependency export change cache hits = %v, want none", hits)
+	}
+}
+
+func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
+	tmp := newTestModule(t)
+	sourcePath := filepath.Join(tmp, "sample.go")
+	source := "package sample\n"
+	writeFile(t, sourcePath, source)
+	writeFile(t, filepath.Join(tmp, "notes.md"), "first\n")
+	initTestGitRepository(t, tmp)
+
+	baseline, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("baseline digest: %v", err)
+	}
+
+	writeFile(t, filepath.Join(tmp, "notes.md"), "second\n")
+
+	markdownOnly, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("markdown digest: %v", err)
+	}
+
+	if markdownOnly != baseline {
+		t.Fatal("non-lint Markdown change invalidated repo cache")
+	}
+
+	writeFile(t, sourcePath, source+"func changed() {}\n")
+
+	changedSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("changed source digest: %v", err)
+	}
+
+	if changedSource == baseline {
+		t.Fatal("tracked Go change did not invalidate repo cache")
+	}
+
+	writeFile(t, sourcePath, source)
+	writeFile(t, filepath.Join(tmp, "new.go"), "package sample\n\nfunc added() {}\n")
+
+	untrackedSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("untracked source digest: %v", err)
+	}
+
+	if untrackedSource == baseline {
+		t.Fatal("untracked Go file did not invalidate repo cache")
+	}
+
+	writeFile(t, filepath.Join(tmp, similarityStampName), "{}\n")
+
+	stampSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("stamp digest: %v", err)
+	}
+
+	if stampSource == untrackedSource {
+		t.Fatal("similarity stamp did not invalidate repo cache")
+	}
+}
+
+func TestRepoAnalysisGitDigestStableAcrossCommits(t *testing.T) {
+	tmp := newTestModule(t)
+	sourcePath := filepath.Join(tmp, "sample.go")
+	writeFile(t, sourcePath, "package sample\n")
+	writeFile(t, filepath.Join(tmp, "notes.md"), "first\n")
+	initTestGitRepository(t, tmp)
+
+	writeFile(t, sourcePath, "package sample\n\nfunc added() {}\n")
+
+	changedSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("changed source digest: %v", err)
+	}
+
+	commitTestGitRepository(t, tmp, "sample.go", "source")
+
+	afterSourceCommit, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("source commit digest: %v", err)
+	}
+
+	if afterSourceCommit != changedSource {
+		t.Fatal("committing unchanged Go worktree invalidated repo cache")
+	}
+
+	writeFile(t, filepath.Join(tmp, "notes.md"), "second\n")
+	commitTestGitRepository(t, tmp, "notes.md", "notes")
+
+	afterNotesCommit, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	if err != nil {
+		t.Fatalf("notes commit digest: %v", err)
+	}
+
+	if afterNotesCommit != changedSource {
+		t.Fatal("non-lint commit invalidated repo cache")
+	}
+}
+
+func TestRepoAnalysisSubmoduleSupportFollowsGoDirectoryRules(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
+	head := initTestGitRepository(t, tmp)
+
+	writeFile(
+		t,
+		filepath.Join(tmp, ".gitmodules"),
+		"[submodule \"fixture\"]\n\tpath = .repos/fixture\n",
+	)
+
+	hiddenSubmodule := exec.Command(
+		"git",
+		"update-index",
+		"--add",
+		"--cacheinfo",
+		"160000,"+head+",.repos/fixture",
+	)
+
+	hiddenSubmodule.Dir = tmp
+	if output, err := hiddenSubmodule.CombinedOutput(); err != nil {
+		t.Fatalf("add ignored submodule: %v: %s", err, output)
+	}
+
+	if supported, err := repoAnalysisSubmodulesSupported(tmp); err != nil || !supported {
+		t.Fatalf("ignored submodule support = %t, err=%v", supported, err)
+	}
+
+	relevantSubmodule := exec.Command(
+		"git",
+		"update-index",
+		"--add",
+		"--cacheinfo",
+		"160000,"+head+",deps/fixture",
+	)
+
+	relevantSubmodule.Dir = tmp
+	if output, err := relevantSubmodule.CombinedOutput(); err != nil {
+		t.Fatalf("add relevant submodule: %v: %s", err, output)
+	}
+
+	if supported, err := repoAnalysisSubmodulesSupported(tmp); err != nil || supported {
+		t.Fatalf("relevant submodule support = %t, err=%v", supported, err)
+	}
+}
+
+func initTestGitRepository(t *testing.T, dir string) string {
+	t.Helper()
+
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "slopelint@example.com"},
+		{"config", "user.name", "slopelint test"},
+	} {
+		cmd := exec.Command("git", args...)
+
+		cmd.Dir = dir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+
+	commitTestGitRepository(t, dir, ".", "seed")
+
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git HEAD: %v", err)
+	}
+
+	return strings.TrimSpace(string(output))
+}
+
+func commitTestGitRepository(t *testing.T, dir, path, message string) {
+	t.Helper()
+
+	for _, args := range [][]string{{"add", path}, {"commit", "-m", message}} {
+		cmd := exec.Command("git", args...)
+
+		cmd.Dir = dir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
 	}
 }
 
@@ -229,7 +415,7 @@ func f(req *guard.Req) {
 	if _, err := RunAnalysis(guardPass1, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 	}); err != nil {
 		t.Fatalf("guard first run: %v", err)
 	}
@@ -239,7 +425,7 @@ func f(req *guard.Req) {
 	issues1, err := RunAnalysis(usePass1, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 	})
 	if err != nil {
 		t.Fatalf("use first run: %v", err)
@@ -275,7 +461,7 @@ func Check(req *Req) error {
 	if _, err := RunAnalysis(guardPass2, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 	}); err != nil {
 		t.Fatalf("guard second run: %v", err)
 	}
@@ -285,7 +471,7 @@ func Check(req *Req) error {
 	issues2, err := RunAnalysis(usePass2, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
-		CacheDir:     cacheDir,
+		cacheDir:     cacheDir,
 		CacheHitHook: func(importPath string) {
 			if importPath == usePkg.ImportPath {
 				t.Fatalf("expected imported-fact change to invalidate use cache")

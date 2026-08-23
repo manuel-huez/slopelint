@@ -141,13 +141,7 @@ func buildRepoAnalysisCacheEntry(issues []Issue) (analysisCacheEntry, error) {
 	cachedIssues, err := buildAnalysisCacheIssues(
 		issues,
 		func(issue Issue) (token.Position, error) {
-			if issue.fset == nil {
-				return token.Position{}, errors.New(
-					"cannot cache issue without file set",
-				)
-			}
-
-			return issue.fset.Position(issue.Pos), nil
+			return issuePosition(issue), nil
 		},
 	)
 	if err != nil {

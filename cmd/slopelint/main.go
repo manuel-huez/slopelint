@@ -91,7 +91,6 @@ func runStandalone(args []string, stderr io.Writer) int {
 		"maximum number of symbolic states before widening",
 	)
 	cacheEnabled := flags.Bool("cache", true, "reuse cached analysis for unchanged packages")
-	cacheDir := flags.String("cache-dir", "", "directory for persistent analysis cache")
 	closedWorld := flags.Bool(
 		"closed-world",
 		false,
@@ -120,11 +119,9 @@ func runStandalone(args []string, stderr io.Writer) int {
 	}
 
 	cacheActive := *cacheEnabled && lint.CacheEnabledFromEnv()
-	cacheRoot := lint.ResolveCacheDir(*cacheDir)
 	options := lint.Options{
 		MaxStates:    *maxStates,
 		CacheEnabled: cacheActive,
-		CacheDir:     cacheRoot,
 		ClosedWorld:  *closedWorld,
 	}
 
@@ -133,7 +130,6 @@ func runStandalone(args []string, stderr io.Writer) int {
 		similarityOptions = &lint.SimilarityOptions{
 			CI:              mode == similarityCI,
 			CacheEnabled:    cacheActive,
-			CacheDir:        cacheRoot,
 			AcceptedPairIDs: similarityAcceptedPairIDs(),
 		}
 	}

@@ -72,7 +72,15 @@ func resolvePackageMetadata(
 
 func goList(patterns []string, dir string) ([]*packageMeta, error) {
 	args := append(
-		[]string{"list", "-buildvcs=false", "-deps", "-test", "-export", "-compiled", "-json"},
+		[]string{
+			"list",
+			"-buildvcs=false",
+			"-deps",
+			"-test",
+			"-export",
+			"-compiled",
+			"-json=Dir,ImportPath,Name,ForTest,Export,GoFiles,CgoFiles,CompiledGoFiles,Match,Error",
+		},
 		patterns...,
 	)
 	cmd := exec.Command("go", args...)
@@ -178,32 +186,6 @@ func loadPackageTargets(
 	}
 
 	return loaded, nil
-}
-
-func loadPackageSyntax(pkgs []*LoadedPackage) error {
-	return runPackageJobs(len(pkgs), func(index int) error {
-		pkg := pkgs[index]
-		if pkg == nil || len(pkg.Files) > 0 {
-			return nil
-		}
-
-		fset := token.NewFileSet()
-
-		files := make([]*ast.File, 0, len(pkg.repoFiles))
-		for _, filename := range pkg.repoFiles {
-			file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
-			if err != nil {
-				return fmt.Errorf("parse %s: %w", filename, err)
-			}
-
-			files = append(files, file)
-		}
-
-		pkg.FSet = fset
-		pkg.Files = files
-
-		return nil
-	})
 }
 
 func runPackageJobs(count int, work func(int) error) error {

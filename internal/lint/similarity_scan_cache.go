@@ -9,9 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
-const similarityScanCacheSchema = 1
+const similarityScanCacheSchema = 4
 
 type similarityScanCache struct {
 	Schema            int                       `json:"schema"`
@@ -24,6 +25,7 @@ type similarityScanCache struct {
 	DescriptionModel  string                    `json:"description_model,omitempty"`
 	DescriptionEffort string                    `json:"description_effort,omitempty"`
 	DescriptionDigest string                    `json:"description_digest,omitempty"`
+	Files             []similarityCachedFile    `json:"files"`
 	Blocks            []similarityCachedBlock   `json:"blocks"`
 	Matches           []similarityCachedMatch   `json:"matches"`
 	Findings          []similarityCachedFinding `json:"findings"`
@@ -42,8 +44,26 @@ type similarityCachedMatch struct {
 }
 
 type similarityCachedBlock struct {
-	Identity    string `json:"identity"`
-	ContentHash string `json:"content_hash"`
+	Identity               string   `json:"identity"`
+	Symbol                 string   `json:"symbol"`
+	PackageDir             string   `json:"package_dir,omitempty"`
+	RelativePath           string   `json:"relative_path"`
+	Content                string   `json:"content"`
+	ContentHash            string   `json:"content_hash"`
+	Offset                 int      `json:"offset"`
+	Line                   int      `json:"line"`
+	Column                 int      `json:"column"`
+	IsTest                 bool     `json:"is_test,omitempty"`
+	Structural             []uint64 `json:"structural"`
+	VectorCount            int      `json:"vector_count"`
+	Description            string   `json:"description,omitempty"`
+	DescriptionHash        string   `json:"description_hash,omitempty"`
+	DescriptionVectorCount int      `json:"description_vector_count,omitempty"`
+}
+
+type similarityCachedFile struct {
+	RelativePath string `json:"relative_path"`
+	ContentHash  string `json:"content_hash"`
 }
 
 type similarityCachedFinding struct {
@@ -134,18 +154,18 @@ func loadSimilarityScanCache(
 }
 
 func (cache similarityScanCache) valid() bool {
-	blockHashes := make(map[string]string, len(cache.Blocks))
-	for _, block := range cache.Blocks {
-		if !similarityStringsPresent(block.Identity, block.ContentHash) ||
-			len(block.ContentHash) != sha256.Size*2 {
-			return false
-		}
+	files, ok := validSimilarityCachedFiles(cache.Files)
+	if !ok {
+		return false
+	}
 
-		if _, duplicate := blockHashes[block.Identity]; duplicate {
-			return false
-		}
-
-		blockHashes[block.Identity] = block.ContentHash
+	blockHashes, ok := validSimilarityCachedBlocks(
+		cache.Blocks,
+		files,
+		cache.Descriptions,
+	)
+	if !ok {
+		return false
 	}
 
 	matches := make(map[string]similarityCachedMatch, len(cache.Matches))
@@ -177,12 +197,117 @@ func (cache similarityScanCache) valid() bool {
 	return true
 }
 
+func validSimilarityCachedFiles(files []similarityCachedFile) (map[string]string, bool) {
+	hashes := make(map[string]string, len(files))
+
+	for _, file := range files {
+		if file.RelativePath == "" || !filepath.IsLocal(file.RelativePath) ||
+			len(file.ContentHash) != sha256.Size*2 {
+			return nil, false
+		}
+
+		if _, duplicate := hashes[file.RelativePath]; duplicate {
+			return nil, false
+		}
+
+		hashes[file.RelativePath] = file.ContentHash
+	}
+
+	return hashes, true
+}
+
+func validSimilarityCachedBlocks(
+	blocks []similarityCachedBlock,
+	files map[string]string,
+	descriptions bool,
+) (map[string]string, bool) {
+	hashes := make(map[string]string, len(blocks))
+
+	for _, block := range blocks {
+		if !validSimilarityCachedBlock(block, files, descriptions) {
+			return nil, false
+		}
+
+		if _, duplicate := hashes[block.Identity]; duplicate {
+			return nil, false
+		}
+
+		hashes[block.Identity] = block.ContentHash
+	}
+
+	return hashes, true
+}
+
+func validSimilarityCachedBlock(
+	block similarityCachedBlock,
+	files map[string]string,
+	descriptions bool,
+) bool {
+	if !validSimilarityCachedBlockSource(block, files) || block.VectorCount <= 0 {
+		return false
+	}
+
+	if descriptions {
+		return block.DescriptionVectorCount > 0 &&
+			similarityStringsPresent(block.Description, block.DescriptionHash) &&
+			len(block.DescriptionHash) == sha256.Size*2
+	}
+
+	return block.DescriptionVectorCount == 0 &&
+		block.Description == "" && block.DescriptionHash == ""
+}
+
+func validSimilarityCachedBlockSource(
+	block similarityCachedBlock,
+	files map[string]string,
+) bool {
+	if !similarityStringsPresent(
+		block.Identity,
+		block.Symbol,
+		block.RelativePath,
+		block.Content,
+		block.ContentHash,
+	) || !filepath.IsLocal(block.RelativePath) || files[block.RelativePath] == "" ||
+		len(block.ContentHash) != sha256.Size*2 || block.Offset < 0 ||
+		block.Line <= 0 || block.Column <= 0 || len(block.Structural) == 0 {
+		return false
+	}
+
+	digest := sha256.Sum256([]byte(block.Content))
+
+	return hex.EncodeToString(digest[:]) == block.ContentHash &&
+		validSimilarityCachedBlockLocation(block) &&
+		strictlyIncreasing(block.Structural)
+}
+
+func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
+	packageDir := filepath.ToSlash(filepath.Dir(block.RelativePath))
+	if packageDir == "." {
+		packageDir = ""
+	}
+
+	return block.Identity == block.RelativePath+"::"+block.Symbol &&
+		block.IsTest == strings.HasSuffix(block.RelativePath, "_test.go") &&
+		block.PackageDir == packageDir
+}
+
+func strictlyIncreasing(values []uint64) bool {
+	for index := 1; index < len(values); index++ {
+		if values[index-1] >= values[index] {
+			return false
+		}
+	}
+
+	return true
+}
+
 func storeSimilarityScanCache(
 	root string,
 	moduleRoot string,
 	sourceDigest string,
 	descriptionDigest string,
 	descriptions bool,
+	files []similarityCachedFile,
 	blocks []similarityCachedBlock,
 	matches []similarityMatch,
 	findings []similarityFinding,
@@ -194,6 +319,7 @@ func storeSimilarityScanCache(
 		Model:            similarityModelName,
 		ModelDigest:      similarityModelDigest,
 		Descriptions:     descriptions,
+		Files:            files,
 		Blocks:           blocks,
 		Matches:          make([]similarityCachedMatch, 0, len(matches)),
 		Findings:         make([]similarityCachedFinding, 0, len(findings)),
@@ -422,13 +548,94 @@ func (cache similarityScanCache) changedBlocks(blocks []*similarityBlock) map[st
 func cacheSimilarityBlocks(blocks []*similarityBlock) []similarityCachedBlock {
 	cached := make([]similarityCachedBlock, 0, len(blocks))
 	for _, block := range blocks {
+		structural := make([]uint64, 0, len(block.Structural))
+		for shingle := range block.Structural {
+			structural = append(structural, shingle)
+		}
+
+		slices.Sort(structural)
+
 		cached = append(cached, similarityCachedBlock{
-			Identity:    block.Identity,
-			ContentHash: block.ContentHash,
+			Identity:               block.Identity,
+			Symbol:                 block.Symbol,
+			PackageDir:             block.PackageDir,
+			RelativePath:           block.RelativePath,
+			Content:                block.Content,
+			ContentHash:            block.ContentHash,
+			Offset:                 block.Position.Offset,
+			Line:                   block.Position.Line,
+			Column:                 block.Position.Column,
+			IsTest:                 block.IsTest,
+			Structural:             structural,
+			VectorCount:            block.VectorCount,
+			Description:            block.Description,
+			DescriptionHash:        block.DescriptionHash,
+			DescriptionVectorCount: block.DescriptionVectorCount,
 		})
 	}
 
 	return cached
+}
+
+func (cache similarityScanCache) restoreBlockMetadata(blocks []*similarityBlock) {
+	cached := make(map[string]similarityCachedBlock, len(cache.Blocks))
+	for _, block := range cache.Blocks {
+		cached[block.Identity] = block
+	}
+
+	for _, block := range blocks {
+		previous, ok := cached[block.Identity]
+		if !ok || previous.ContentHash != block.ContentHash {
+			continue
+		}
+
+		block.VectorCount = previous.VectorCount
+		block.Description = previous.Description
+		block.DescriptionHash = previous.DescriptionHash
+		block.DescriptionVectorCount = previous.DescriptionVectorCount
+	}
+}
+
+func (cache similarityScanCache) blocksForFile(
+	root string,
+	relativePath string,
+) []*similarityBlock {
+	blocks := make([]*similarityBlock, 0)
+
+	for _, cached := range cache.Blocks {
+		if cached.RelativePath != relativePath {
+			continue
+		}
+
+		structural := make(map[uint64]struct{}, len(cached.Structural))
+		for _, shingle := range cached.Structural {
+			structural[shingle] = struct{}{}
+		}
+
+		blocks = append(blocks, &similarityBlock{
+			Identity:     cached.Identity,
+			Symbol:       cached.Symbol,
+			PackageDir:   cached.PackageDir,
+			PackageParts: similarityPathParts(cached.PackageDir),
+			RelativePath: cached.RelativePath,
+			Content:      cached.Content,
+			ContentHash:  cached.ContentHash,
+			Position: token.Position{
+				Filename: filepath.Join(root, filepath.FromSlash(cached.RelativePath)),
+				Offset:   cached.Offset,
+				Line:     cached.Line,
+				Column:   cached.Column,
+			},
+			IsTest:                 cached.IsTest,
+			Structural:             structural,
+			VectorCount:            cached.VectorCount,
+			Description:            cached.Description,
+			DescriptionHash:        cached.DescriptionHash,
+			DescriptionVectorCount: cached.DescriptionVectorCount,
+		})
+	}
+
+	return blocks
 }
 
 func similarityBlockHashes(blocks []similarityCachedBlock) map[string]string {

@@ -8,11 +8,12 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
+	"go/parser"
 	"go/scanner"
 	"go/token"
 	"hash/fnv"
+	"os"
 	"path/filepath"
-	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,8 +80,6 @@ type similarityBlock struct {
 	Content      string
 	ContentHash  string
 	Position     token.Position
-	Pos          token.Pos
-	FSet         *token.FileSet
 	IsTest       bool
 	Structural   map[uint64]struct{}
 	VectorStart  int
@@ -207,35 +206,27 @@ func analyzeChangedSimilarCode(
 	descriptionRuntime similarityDescriptionRuntime,
 	opts SimilarityOptions,
 ) ([]Issue, error) {
-	releaseSimilarityTypes(pkgs)
-
-	// Cache hits carry source metadata only. Parse syntax here only when a stale or
-	// missing stamp proves that block extraction is required.
-	if err := loadPackageSyntax(pkgs); err != nil {
-		return nil, err
-	}
-
-	blocks, err := collectSimilarityBlocks(pkgs, root)
+	cacheRoot, err := similarityVectorCacheRoot(opts.cacheDir)
 	if err != nil {
 		return nil, err
 	}
 
-	// Blocks retain token files and formatted content, not AST nodes. Drop syntax
-	// before model allocation so repo analysis and inference memory do not overlap.
-	for _, pkg := range pkgs {
-		if pkg == nil {
-			continue
-		}
-
-		pkg.FSet = nil
-		pkg.Files = nil
+	var previous similarityScanCache
+	if opts.CacheEnabled {
+		previous, _ = loadSimilarityScanCache(cacheRoot, root, descriptionRuntime.enabled)
 	}
 
-	debug.FreeOSMemory()
+	files, blocks, err := collectSimilarityBlocks(pkgs, root, previous)
+	if err != nil {
+		return nil, err
+	}
+
+	releaseSimilarityTypes(pkgs)
 
 	scan, err := similarityMatchesForBlocks(
 		blocks,
-		root,
+		cacheRoot,
+		previous,
 		descriptionRuntime,
 		opts,
 	)
@@ -255,6 +246,7 @@ func analyzeChangedSimilarCode(
 			sourceDigest,
 			scan.descriptionDigest,
 			descriptionRuntime.enabled,
+			files,
 			cachedBlocks,
 			scan.rawMatches,
 			findings,
@@ -275,25 +267,17 @@ func analyzeChangedSimilarCode(
 }
 
 func releaseSimilarityTypes(pkgs []*LoadedPackage) {
-	// Reparse stable repo files after releasing type graphs and compiler-generated
-	// CGo syntax, so those large phases do not overlap with vectors and pair state.
-	releasedAnalysis := false
-
+	// Blocks retain formatted content and positions only. Release type graphs and
+	// syntax before vectors and pair state allocate their larger working sets.
 	for _, pkg := range pkgs {
 		if pkg == nil {
 			continue
 		}
 
-		releasedAnalysis = releasedAnalysis ||
-			pkg.TypesPkg != nil || pkg.TypesInfo != nil || len(pkg.Files) > 0
 		pkg.TypesPkg = nil
 		pkg.TypesInfo = nil
 		pkg.FSet = nil
 		pkg.Files = nil
-	}
-
-	if releasedAnalysis {
-		debug.FreeOSMemory()
 	}
 }
 
@@ -320,91 +304,64 @@ func loadSimilarityCheck(
 
 func similarityMatchesForBlocks(
 	blocks []*similarityBlock,
-	root string,
+	cacheRoot string,
+	previous similarityScanCache,
 	descriptionRuntime similarityDescriptionRuntime,
 	opts SimilarityOptions,
 ) (result similarityScanResult, err error) {
-	result.cacheRoot, err = similarityVectorCacheRoot(opts.cacheDir)
-	if err != nil {
-		return similarityScanResult{}, err
-	}
+	result.cacheRoot = cacheRoot
 
 	if len(blocks) < similarityMinimumBlocks {
 		result.descriptionDigest, err = similarityDescriptionsDigest(nil)
 		return result, err
 	}
 
-	embeddings := newSimilarityEmbeddingRuntime(
-		opts.embedder,
-		result.cacheRoot,
+	previous, changed, noChangedBlocks := previousSimilarityScan(
+		blocks,
+		previous,
+		descriptionRuntime.enabled,
 		opts.CacheEnabled,
 	)
-	defer func() { err = errors.Join(err, embeddings.close()) }()
 
-	// Source inference and remote behavior description are independent channels.
-	// Overlap them so a cold baseline uses local CPU while Codex waits remotely.
-	descriptionDone := make(chan struct{})
-
-	var descriptionErr error
-	go func() {
-		result.descriptionDigest, descriptionErr = populateSimilarityDescriptions(
+	if noChangedBlocks {
+		return restoreUnchangedSimilarityScan(
+			result,
+			previous,
 			blocks,
+			changed,
 			descriptionRuntime,
-			result.cacheRoot,
 			opts.CacheEnabled,
 		)
+	}
 
-		close(descriptionDone)
-	}()
+	scanBlocks := blocks
 
-	sourceVectors, sourceErr := embeddings.populate(blocks, similaritySourceVector)
+	descriptionBlocks := blocks
+	if previous.Schema != 0 {
+		scanBlocks = incrementalSimilarityScanBlocks(blocks, changed)
+		descriptionBlocks = changedSimilarityBlocks(blocks, changed)
+	}
 
-	<-descriptionDone
-
-	if err = errors.Join(sourceErr, descriptionErr); err != nil {
+	vectors, descriptionDigest, err := populateSimilarityScanVectors(
+		scanBlocks,
+		descriptionBlocks,
+		blocks,
+		descriptionRuntime,
+		result.cacheRoot,
+		opts,
+	)
+	if err != nil {
 		return similarityScanResult{}, err
 	}
 
-	var descriptionVectors similarityVectorMatrix
-	if descriptionRuntime.enabled {
-		descriptionVectors, err = embeddings.populate(
-			blocks,
-			similarityDescriptionVector,
-		)
-		if err != nil {
-			return similarityScanResult{}, err
-		}
-	}
-
-	var (
-		previous   similarityScanCache
-		previousOK bool
-		changed    map[string]struct{}
-	)
-
-	if opts.CacheEnabled {
-		previous, previousOK = loadSimilarityScanCache(
-			result.cacheRoot,
-			root,
-			descriptionRuntime.enabled,
-		)
-
-		previousOK = previousOK && previous.policyMatches(descriptionRuntime.enabled)
-
-		if previousOK {
-			changed = previous.changedBlocks(blocks)
-		}
-	}
+	result.descriptionDigest = descriptionDigest
 
 	result.rawMatches = scanSimilarityPairs(
-		blocks,
-		similarityVectorMatrices{
-			Source:      sourceVectors,
-			Description: descriptionVectors,
-		},
+		scanBlocks,
+		vectors,
 		changed,
 	)
-	if previousOK {
+	if previous.Schema != 0 {
 		result.rawMatches = append(
 			previous.restoreMatches(blocks, changed),
 			result.rawMatches...,
@@ -412,18 +369,194 @@ func similarityMatchesForBlocks(
 		sortSimilarityMatches(result.rawMatches)
 	}
 
-	result.matches = groupSimilarityMatches(blocks, result.rawMatches)
-
-	if err := populateSimilarityMatchDetails(
-		result.matches,
+	if err := populateSimilarityScanDetails(
+		&result,
+		blocks,
 		descriptionRuntime,
-		result.cacheRoot,
 		opts.CacheEnabled,
 	); err != nil {
 		return similarityScanResult{}, err
 	}
 
 	return result, nil
+}
+
+func restoreUnchangedSimilarityScan(
+	result similarityScanResult,
+	previous similarityScanCache,
+	blocks []*similarityBlock,
+	changed map[string]struct{},
+	descriptionRuntime similarityDescriptionRuntime,
+	cacheEnabled bool,
+) (similarityScanResult, error) {
+	result.descriptionDigest = previous.DescriptionDigest
+	if descriptionRuntime.enabled && len(previous.Blocks) != len(blocks) {
+		var err error
+
+		result.descriptionDigest, err = similarityDescriptionsDigest(blocks)
+		if err != nil {
+			return similarityScanResult{}, err
+		}
+	}
+
+	result.rawMatches = previous.restoreMatches(blocks, changed)
+
+	if err := populateSimilarityScanDetails(
+		&result,
+		blocks,
+		descriptionRuntime,
+		cacheEnabled,
+	); err != nil {
+		return similarityScanResult{}, err
+	}
+
+	return result, nil
+}
+
+func populateSimilarityScanVectors(
+	scanBlocks []*similarityBlock,
+	descriptionBlocks []*similarityBlock,
+	allBlocks []*similarityBlock,
+	descriptionRuntime similarityDescriptionRuntime,
+	cacheRoot string,
+	opts SimilarityOptions,
+) (vectors similarityVectorMatrices, descriptionDigest string, err error) {
+	embeddings := newSimilarityEmbeddingRuntime(opts.embedder, cacheRoot, opts.CacheEnabled)
+	defer func() { err = errors.Join(err, embeddings.close()) }()
+
+	// Source inference and remote behavior description are independent channels.
+	// Overlap them so a cold baseline uses local CPU while Codex waits remotely.
+	descriptionDone := make(chan struct{})
+
+	var descriptionErr error
+
+	go func() {
+		descriptionDigest, descriptionErr = populateIncrementalSimilarityDescriptions(
+			descriptionBlocks,
+			allBlocks,
+			descriptionRuntime,
+			cacheRoot,
+			opts.CacheEnabled,
+		)
+
+		close(descriptionDone)
+	}()
+
+	vectors.Source, err = embeddings.populate(scanBlocks, similaritySourceVector)
+
+	<-descriptionDone
+
+	if err = errors.Join(err, descriptionErr); err != nil {
+		return similarityVectorMatrices{}, "", err
+	}
+
+	if descriptionRuntime.enabled {
+		vectors.Description, err = embeddings.populate(
+			scanBlocks,
+			similarityDescriptionVector,
+		)
+	}
+
+	return vectors, descriptionDigest, err
+}
+
+func previousSimilarityScan(
+	blocks []*similarityBlock,
+	previous similarityScanCache,
+	descriptions bool,
+	cacheEnabled bool,
+) (similarityScanCache, map[string]struct{}, bool) {
+	if !cacheEnabled || previous.Schema == 0 {
+		return similarityScanCache{}, nil, false
+	}
+
+	if !previous.policyMatches(descriptions) {
+		return similarityScanCache{}, nil, false
+	}
+
+	changed := previous.changedBlocks(blocks)
+	previous.restoreBlockMetadata(blocks)
+
+	return previous, changed, len(changed) == 0
+}
+
+func populateIncrementalSimilarityDescriptions(
+	changed []*similarityBlock,
+	all []*similarityBlock,
+	runtime similarityDescriptionRuntime,
+	cacheRoot string,
+	cacheEnabled bool,
+) (string, error) {
+	if !runtime.enabled {
+		return "", nil
+	}
+
+	if _, err := populateSimilarityDescriptions(
+		changed,
+		runtime,
+		cacheRoot,
+		cacheEnabled,
+	); err != nil {
+		return "", err
+	}
+
+	return similarityDescriptionsDigest(all)
+}
+
+func changedSimilarityBlocks(
+	blocks []*similarityBlock,
+	changed map[string]struct{},
+) []*similarityBlock {
+	selected := make([]*similarityBlock, 0, len(changed))
+
+	for _, block := range blocks {
+		if _, ok := changed[block.Identity]; ok {
+			selected = append(selected, block)
+		}
+	}
+
+	return selected
+}
+
+func incrementalSimilarityScanBlocks(
+	blocks []*similarityBlock,
+	changed map[string]struct{},
+) []*similarityBlock {
+	changedBlocks := changedSimilarityBlocks(blocks, changed)
+	selected := make([]*similarityBlock, 0, len(blocks))
+
+	for _, block := range blocks {
+		include := false
+
+		for _, changedBlock := range changedBlocks {
+			if similarityLocalityTier(block, changedBlock) <= similarityMaximumLocalityTier {
+				include = true
+				break
+			}
+		}
+
+		if include {
+			selected = append(selected, block)
+		}
+	}
+
+	return selected
+}
+
+func populateSimilarityScanDetails(
+	result *similarityScanResult,
+	blocks []*similarityBlock,
+	descriptionRuntime similarityDescriptionRuntime,
+	cacheEnabled bool,
+) error {
+	result.matches = groupSimilarityMatches(blocks, result.rawMatches)
+
+	return populateSimilarityMatchDetails(
+		result.matches,
+		descriptionRuntime,
+		result.cacheRoot,
+		cacheEnabled,
+	)
 }
 
 func completeSimilarityReview(
@@ -538,34 +671,166 @@ func reviewSimilarityFindings(
 	return acceptances, issues, nil
 }
 
+type similarityBlockSourceFile struct {
+	pkg          *LoadedPackage
+	fset         *token.FileSet
+	file         *ast.File
+	absolutePath string
+	relativePath string
+	contentHash  string
+}
+
 func collectSimilarityBlocks(
 	pkgs []*LoadedPackage,
 	root string,
-) ([]*similarityBlock, error) {
-	blocks := make([]*similarityBlock, 0)
+	previous similarityScanCache,
+) ([]similarityCachedFile, []*similarityBlock, error) {
+	files, err := similaritySourceFiles(pkgs, root)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	for _, pkg := range pkgs {
-		if pkg == nil || pkg.FSet == nil {
+	previousFiles := make(map[string]string, len(previous.Files))
+	for _, file := range previous.Files {
+		previousFiles[file.RelativePath] = file.ContentHash
+	}
+
+	cachedFiles := make([]similarityCachedFile, 0, len(files))
+	blocks := make([]*similarityBlock, 0, len(previous.Blocks))
+
+	for _, file := range files {
+		cachedFiles = append(cachedFiles, similarityCachedFile{
+			RelativePath: file.relativePath,
+			ContentHash:  file.contentHash,
+		})
+
+		if previousFiles[file.relativePath] == file.contentHash {
+			blocks = append(blocks, previous.blocksForFile(root, file.relativePath)...)
 			continue
 		}
 
-		for _, file := range pkg.Files {
-			if file == nil || ast.IsGenerated(file) {
-				continue
-			}
-
-			fileBlocks, err := collectSimilarityFileBlocks(pkg, file, root)
-			if err != nil {
-				return nil, err
-			}
-
-			blocks = append(blocks, fileBlocks...)
+		fileBlocks, err := collectSimilaritySourceFileBlocks(file, root)
+		if err != nil {
+			return nil, nil, err
 		}
+
+		blocks = append(blocks, fileBlocks...)
 	}
 
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Identity < blocks[j].Identity })
 
-	return blocks, nil
+	return cachedFiles, blocks, nil
+}
+
+func similaritySourceFiles(
+	pkgs []*LoadedPackage,
+	root string,
+) ([]similarityBlockSourceFile, error) {
+	filesByPath := make(map[string]similarityBlockSourceFile)
+
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+
+		packageFiles, err := similarityPackageSourceFiles(pkg, root)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, file := range packageFiles {
+			if _, duplicate := filesByPath[file.relativePath]; !duplicate {
+				filesByPath[file.relativePath] = file
+			}
+		}
+	}
+
+	paths := make([]string, 0, len(filesByPath))
+	for path := range filesByPath {
+		paths = append(paths, path)
+	}
+
+	sort.Strings(paths)
+
+	files := make([]similarityBlockSourceFile, 0, len(paths))
+	for _, path := range paths {
+		files = append(files, filesByPath[path])
+	}
+
+	return files, nil
+}
+
+func similarityPackageSourceFiles(
+	pkg *LoadedPackage,
+	root string,
+) ([]similarityBlockSourceFile, error) {
+	syntax := make(map[string]*ast.File, len(pkg.Files))
+	for _, file := range pkg.Files {
+		if file != nil && pkg.FSet != nil {
+			filename := pkg.FSet.PositionFor(file.Package, true).Filename
+			syntax[filepath.Clean(filename)] = file
+		}
+	}
+
+	files := make([]similarityBlockSourceFile, 0, len(pkg.repoFiles))
+	for _, filename := range pkg.repoFiles {
+		absolutePath := filepath.Clean(filename)
+
+		relativePath, err := filepath.Rel(root, absolutePath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve similarity path for %s: %w", filename, err)
+		}
+
+		relativePath = filepath.ToSlash(relativePath)
+		if !filepath.IsLocal(relativePath) {
+			return nil, fmt.Errorf("similarity source %s is outside module root", filename)
+		}
+
+		content, err := os.ReadFile(absolutePath)
+		if err != nil {
+			return nil, err
+		}
+
+		digest := sha256.Sum256(content)
+		files = append(files, similarityBlockSourceFile{
+			pkg:          pkg,
+			fset:         pkg.FSet,
+			file:         syntax[absolutePath],
+			absolutePath: absolutePath,
+			relativePath: relativePath,
+			contentHash:  hex.EncodeToString(digest[:]),
+		})
+	}
+
+	return files, nil
+}
+
+func collectSimilaritySourceFileBlocks(
+	source similarityBlockSourceFile,
+	root string,
+) ([]*similarityBlock, error) {
+	fset := source.fset
+	file := source.file
+
+	if file == nil || fset == nil {
+		fset = token.NewFileSet()
+
+		var err error
+
+		file, err = parser.ParseFile(fset, source.absolutePath, nil, parser.ParseComments)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", source.absolutePath, err)
+		}
+	}
+
+	if ast.IsGenerated(file) {
+		return nil, nil
+	}
+
+	pkg := *source.pkg
+	pkg.FSet = fset
+
+	return collectSimilarityFileBlocks(&pkg, file, root)
 }
 
 func collectSimilarityFileBlocks(
@@ -617,8 +882,6 @@ func collectSimilarityFileBlocks(
 			Content:      content,
 			ContentHash:  hex.EncodeToString(sum[:]),
 			Position:     pkg.FSet.Position(fn.Pos()),
-			Pos:          fn.Pos(),
-			FSet:         pkg.FSet,
 			IsTest:       strings.HasSuffix(relativePath, "_test.go"),
 			Structural:   structuralShingles(tokens),
 		})

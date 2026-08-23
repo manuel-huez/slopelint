@@ -57,6 +57,23 @@ func (cache *analysisCache) store(
 	return writeAnalysisCacheEntry(cache.path, entry)
 }
 
+func (cache *analysisCache) storeStandalone(
+	l *linter,
+	issues []Issue,
+	dependencies []analysisCacheImportedFact,
+) error {
+	if cache == nil {
+		return nil
+	}
+
+	entry, err := buildStandaloneAnalysisCacheEntry(l, issues, dependencies)
+	if err != nil {
+		return err
+	}
+
+	return writeAnalysisCacheEntry(cache.path, entry)
+}
+
 func (cache *repoAnalysisCache) store(issues []Issue) error {
 	if cache == nil {
 		return nil
@@ -136,6 +153,31 @@ func buildAnalysisCacheEntry(
 func buildRepoAnalysisCacheEntry(issues []Issue) (analysisCacheEntry, error) {
 	entry := analysisCacheEntry{
 		Issues: make([]analysisCacheIssue, 0, len(issues)),
+	}
+
+	cachedIssues, err := buildAnalysisCacheIssues(
+		issues,
+		func(issue Issue) (token.Position, error) {
+			return issuePosition(issue), nil
+		},
+	)
+	if err != nil {
+		return analysisCacheEntry{}, err
+	}
+
+	entry.Issues = cachedIssues
+
+	return entry, nil
+}
+
+func buildStandaloneAnalysisCacheEntry(
+	l *linter,
+	issues []Issue,
+	dependencies []analysisCacheImportedFact,
+) (analysisCacheEntry, error) {
+	entry := analysisCacheEntry{
+		Exports:      cachedExportsForLinter(l),
+		Dependencies: dependencies,
 	}
 
 	cachedIssues, err := buildAnalysisCacheIssues(

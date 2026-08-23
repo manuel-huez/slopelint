@@ -11,7 +11,7 @@ import (
 
 // Bump whenever analyzer semantics or persisted cache/replay invariants change.
 // Standalone cache keys intentionally do not follow unrelated binary releases.
-const analysisCacheSchema = 4
+const analysisCacheSchema = 5
 
 const cacheDirPerm = 0o755
 
@@ -26,8 +26,9 @@ type repoAnalysisCache struct {
 }
 
 type analysisCacheEntry struct {
-	Issues  []analysisCacheIssue  `json:"issues"`
-	Exports []analysisCacheExport `json:"exports"`
+	Issues       []analysisCacheIssue        `json:"issues"`
+	Exports      []analysisCacheExport       `json:"exports"`
+	Dependencies []analysisCacheImportedFact `json:"dependencies,omitempty"`
 }
 
 type analysisCacheIssue struct {
@@ -66,6 +67,7 @@ type analysisCacheFile struct {
 
 type analysisCacheImportedFact struct {
 	FuncKey string          `json:"func_key"`
+	Present bool            `json:"present"`
 	Fact    callSummaryFact `json:"fact"`
 }
 
@@ -90,6 +92,30 @@ func newAnalysisCache(
 
 	return &analysisCache{
 		path: filepath.Join(root, key[:2], key[2:]+".json"),
+	}, nil
+}
+
+func newStandaloneAnalysisCache(
+	pkg *LoadedPackage,
+	opts Options,
+	typeDigests map[string]string,
+) (*analysisCache, error) {
+	if !opts.CacheEnabled {
+		return nil, errAnalysisCacheDisabled
+	}
+
+	root, err := analysisCacheRoot(opts.cacheDir)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := standaloneAnalysisCacheKey(pkg, opts, typeDigests)
+	if err != nil {
+		return nil, err
+	}
+
+	return &analysisCache{
+		path: filepath.Join(root, "packages", key[:2], key[2:]+".json"),
 	}, nil
 }
 

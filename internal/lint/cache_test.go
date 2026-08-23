@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -23,8 +24,8 @@ func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v4") {
-		t.Fatalf("analysis cache root = %q, want schema 4 suffix", root)
+	if !strings.HasSuffix(root, "analysis-v5") {
+		t.Fatalf("analysis cache root = %q, want schema 5 suffix", root)
 	}
 }
 
@@ -186,6 +187,78 @@ type Item struct {
 
 	if len(hits) != 0 {
 		t.Fatalf("dependency export change cache hits = %v, want none", hits)
+	}
+}
+
+func TestStandalonePackageCacheRecomputesOnlyAffectedPackages(t *testing.T) {
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
+	depPath := filepath.Join(tmp, "dep", "dep.go")
+
+	writeFile(t, depPath, `package dep
+
+type Value struct { Name string }
+
+func Present(value *Value) bool { return value != nil }
+`)
+	writeFile(t, filepath.Join(tmp, "use", "use.go"), `package use
+
+import "example.com/sample/dep"
+
+func Name(value *dep.Value) string {
+	if !dep.Present(value) { return "" }
+	if value == nil { return "" }
+	return value.Name
+}
+`)
+	writeFile(t, filepath.Join(tmp, "other", "other.go"), `package other
+
+func Value() int { return 1 }
+`)
+
+	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
+	first := lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+
+	writeFile(t, depPath, `// Package dep owns shared value guards.
+package dep
+
+type Value struct { Name string }
+
+func Present(value *Value) bool { return value != nil }
+`)
+
+	var hits []string
+
+	opts.CacheHitHook = func(importPath string) { hits = append(hits, importPath) }
+	second := lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+
+	sort.Strings(hits)
+
+	wantHits := []string{"example.com/sample/other", "example.com/sample/use"}
+	if !slices.Equal(hits, wantHits) {
+		t.Fatalf("comment edit cache hits = %v, want %v", hits, wantHits)
+	}
+
+	if joinMessages(first) != joinMessages(second) {
+		t.Fatalf(
+			"comment edit changed diagnostics:\nfirst:\n%s\n\nsecond:\n%s",
+			joinMessages(first),
+			joinMessages(second),
+		)
+	}
+
+	writeFile(t, depPath, `package dep
+
+type Value struct { Name string }
+
+func Present(value *Value) bool { return value != nil && value.Name != "" }
+`)
+
+	hits = nil
+	_ = lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+
+	if !slices.Equal(hits, []string{"example.com/sample/other"}) {
+		t.Fatalf("summary edit cache hits = %v, want only unrelated package", hits)
 	}
 }
 

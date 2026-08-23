@@ -216,7 +216,12 @@ truncated. Each valid batch is cached immediately and reports progress, so
 retries request only missing IDs. Cached descriptions and vectors make later
 runs local. The complete finding set is also cached. An unchanged Git worktree
 uses a source-scoped Git fingerprint and replays before package loading or model
-startup; changed or untracked Go inputs invalidate that result.
+startup. Changed or untracked Go inputs fall through to package-level replay:
+unchanged package diagnostics and exported behavior summaries stay cached, while
+the edited package and importers affected by a type API or used-summary change
+run again. Semantic block extraction parses changed files only, retains matches
+between unchanged blocks, and compares changed blocks only with locality-eligible
+candidates.
 
 Every finding includes a stable `sim-...` pair ID. After review, accept specific
 intentional pairs and rerun the same lint command:
@@ -289,7 +294,7 @@ Useful env vars:
 All repos share one global content-addressed cache root. Content hashes and
 repo-scoped scan keys prevent collisions:
 
-- `os.UserCacheDir()/slopelint/analysis-v4`
+- `os.UserCacheDir()/slopelint/analysis-v5`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 - `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -125,6 +126,10 @@ func (runtime *similarityEmbeddingRuntime) ensureEngine() error {
 	if runtime.embedder != nil {
 		return nil
 	}
+
+	// Type graphs were released before inference. Reclaim them only when model
+	// allocation is necessary; fully cached incremental scans skip this pause.
+	debug.FreeOSMemory()
 
 	embedder, err := newNativeSimilarityEmbedder(runtime.cacheRoot)
 	if err != nil {

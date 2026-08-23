@@ -81,6 +81,104 @@ func replayRepoAnalysisCache(
 	entry *analysisCacheEntry,
 	cacheHitHook func(string),
 ) ([]Issue, bool) {
+	issues, ok := replayPositionedAnalysisIssues(entry)
+	if !ok {
+		return nil, false
+	}
+
+	if cacheHitHook != nil {
+		cacheHitHook("repo")
+	}
+
+	return issues, true
+}
+
+func replayStandaloneAnalysisCache(
+	entry *analysisCacheEntry,
+	summaries map[string]callSummary,
+	cacheHitHook func(string),
+	importPath string,
+) ([]Issue, []analysisCacheExport, bool) {
+	if entry == nil {
+		return nil, nil, false
+	}
+
+	if !analysisCacheDependenciesMatch(entry.Dependencies, summaries) {
+		return nil, nil, false
+	}
+
+	exports, ok := validAnalysisCacheExports(entry.Exports)
+	if !ok {
+		return nil, nil, false
+	}
+
+	issues, ok := replayPositionedAnalysisIssues(entry)
+	if !ok {
+		return nil, nil, false
+	}
+
+	if cacheHitHook != nil {
+		cacheHitHook(importPath)
+	}
+
+	return issues, exports, true
+}
+
+func analysisCacheDependenciesMatch(
+	cached []analysisCacheImportedFact,
+	summaries map[string]callSummary,
+) bool {
+	dependencies := make(map[string]struct{}, len(cached))
+	for _, dependency := range cached {
+		if dependency.FuncKey == "" {
+			return false
+		}
+
+		if _, duplicate := dependencies[dependency.FuncKey]; duplicate {
+			return false
+		}
+
+		dependencies[dependency.FuncKey] = struct{}{}
+
+		current, present := summaries[dependency.FuncKey]
+		if present != dependency.Present {
+			return false
+		}
+
+		if present && !callSummaryEqual(current, callSummaryFromFact(&dependency.Fact)) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func validAnalysisCacheExports(
+	cached []analysisCacheExport,
+) ([]analysisCacheExport, bool) {
+	exports := make([]analysisCacheExport, len(cached))
+	seen := make(map[string]struct{}, len(cached))
+
+	for index, export := range cached {
+		if export.FuncKey == "" {
+			return nil, false
+		}
+
+		if _, duplicate := seen[export.FuncKey]; duplicate {
+			return nil, false
+		}
+
+		seen[export.FuncKey] = struct{}{}
+		exports[index] = analysisCacheExport{
+			FuncKey: export.FuncKey,
+			Fact:    *cloneCallSummaryFact(&export.Fact),
+		}
+	}
+
+	return exports, true
+}
+
+func replayPositionedAnalysisIssues(entry *analysisCacheEntry) ([]Issue, bool) {
 	if entry == nil {
 		return nil, false
 	}
@@ -102,10 +200,6 @@ func replayRepoAnalysisCache(
 				Column:   cached.Column,
 			},
 		})
-	}
-
-	if cacheHitHook != nil {
-		cacheHitHook("repo")
 	}
 
 	return issues, true

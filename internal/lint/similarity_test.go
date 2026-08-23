@@ -2,6 +2,7 @@ package lint
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 const (
 	similaritySameFileCase    = "same file"
 	similaritySamePackageCase = "same package"
+	similarityPackageA        = "internal/a"
+	similarityFileA           = "internal/a/a.go"
 )
 
 func TestSimilarityLocalWritesStampAndCIUsesItWithoutNativeEngine(t *testing.T) {
@@ -287,14 +290,14 @@ func TestSimilarityLocalityTier(t *testing.T) {
 		},
 		{
 			name:  "siblings",
-			left:  similarityBlock{RelativePath: "internal/a/a.go", PackageDir: "internal/a"},
+			left:  similarityBlock{RelativePath: similarityFileA, PackageDir: similarityPackageA},
 			right: similarityBlock{RelativePath: "internal/b/b.go", PackageDir: "internal/b"},
 			want:  2,
 		},
 		{
 			name:  "parent child",
 			left:  similarityBlock{RelativePath: "internal/a.go", PackageDir: "internal"},
-			right: similarityBlock{RelativePath: "internal/a/a.go", PackageDir: "internal/a"},
+			right: similarityBlock{RelativePath: similarityFileA, PackageDir: similarityPackageA},
 			want:  2,
 		},
 		{
@@ -548,16 +551,132 @@ func TestSimilaritySkipsPackagesBeyondImmediateRelations(t *testing.T) {
 	}
 }
 
+func TestSimilarityBlockCacheParsesOnlyChangedFiles(t *testing.T) {
+	tmp := newTestModule(t)
+	firstPath := filepath.Join(tmp, "first.go")
+	secondPath := filepath.Join(tmp, "second.go")
+
+	writeFile(t, firstPath, similarityTestSource)
+	writeFile(t, secondPath, strings.NewReplacer(
+		"func first", "func third",
+		"func second", "func fourth",
+	).Replace(similarityTestSource))
+
+	files, blocks, err := collectSimilarityBlocks(
+		loadPackagesForTest(t, tmp),
+		tmp,
+		similarityScanCache{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(blocks) != 4 {
+		t.Fatalf("initial blocks = %d, want 4", len(blocks))
+	}
+
+	for _, block := range blocks {
+		block.VectorCount = 1
+	}
+
+	previous := similarityScanCache{
+		Files:  files,
+		Blocks: cacheSimilarityBlocks(blocks),
+	}
+
+	writeFile(t, firstPath, "// Changed file comment.\n"+similarityTestSource)
+
+	_, blocks, err = collectSimilarityBlocks(loadPackagesForTest(t, tmp), tmp, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, block := range blocks {
+		wantCount := 1
+		if block.RelativePath == "first.go" {
+			wantCount = 0
+		}
+
+		if block.VectorCount != wantCount {
+			t.Fatalf(
+				"%s vector count = %d, want %d",
+				block.Identity,
+				block.VectorCount,
+				wantCount,
+			)
+		}
+	}
+}
+
+func TestIncrementalSimilarityScanLoadsOnlyLocalCandidates(t *testing.T) {
+	t.Parallel()
+
+	blocks := []*similarityBlock{
+		{
+			Identity:     similarityFileA + "::changed",
+			RelativePath: similarityFileA,
+			PackageDir:   similarityPackageA,
+		},
+		{
+			Identity:     "internal/a/b.go::same",
+			RelativePath: "internal/a/b.go",
+			PackageDir:   similarityPackageA,
+		},
+		{
+			Identity:     "internal/a/child/c.go::child",
+			RelativePath: "internal/a/child/c.go",
+			PackageDir:   "internal/a/child",
+		},
+		{
+			Identity:     "internal/b/child/d.go::distant",
+			RelativePath: "internal/b/child/d.go",
+			PackageDir:   "internal/b/child",
+		},
+	}
+	changed := map[string]struct{}{blocks[0].Identity: {}}
+
+	selected := incrementalSimilarityScanBlocks(blocks, changed)
+	if len(selected) != 3 {
+		t.Fatalf("incremental candidates = %d, want changed plus 2 local blocks", len(selected))
+	}
+
+	for _, block := range selected {
+		if block.Identity == blocks[3].Identity {
+			t.Fatal("distant block loaded for incremental scan")
+		}
+	}
+}
+
 func TestSimilarityScanCacheRejectsMismatchedFinding(t *testing.T) {
 	t.Parallel()
 
+	leftContent := "func first() {}"
+	leftDigest := sha256.Sum256([]byte(leftContent))
 	left := similarityCachedBlock{
-		Identity:    "pkg/a.go::first",
-		ContentHash: strings.Repeat("a", sha256.Size*2),
+		Identity:     "pkg/a.go::first",
+		Symbol:       "first",
+		PackageDir:   "pkg",
+		RelativePath: "pkg/a.go",
+		Content:      leftContent,
+		ContentHash:  hex.EncodeToString(leftDigest[:]),
+		Line:         1,
+		Column:       1,
+		Structural:   []uint64{1},
+		VectorCount:  1,
 	}
+	rightContent := "func second() {}"
+	rightDigest := sha256.Sum256([]byte(rightContent))
 	right := similarityCachedBlock{
-		Identity:    "pkg/b.go::second",
-		ContentHash: strings.Repeat("b", sha256.Size*2),
+		Identity:     "pkg/b.go::second",
+		Symbol:       "second",
+		PackageDir:   "pkg",
+		RelativePath: "pkg/b.go",
+		Content:      rightContent,
+		ContentHash:  hex.EncodeToString(rightDigest[:]),
+		Line:         1,
+		Column:       1,
+		Structural:   []uint64{2},
+		VectorCount:  1,
 	}
 	id := similarityPairID(
 		&similarityBlock{Identity: left.Identity, ContentHash: left.ContentHash},
@@ -565,6 +684,10 @@ func TestSimilarityScanCacheRejectsMismatchedFinding(t *testing.T) {
 	)
 
 	cache := similarityScanCache{
+		Files: []similarityCachedFile{
+			{RelativePath: left.RelativePath, ContentHash: strings.Repeat("c", sha256.Size*2)},
+			{RelativePath: right.RelativePath, ContentHash: strings.Repeat("d", sha256.Size*2)},
+		},
 		Blocks: []similarityCachedBlock{left, right},
 		Matches: []similarityCachedMatch{{
 			ID:              id,

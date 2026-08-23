@@ -535,10 +535,9 @@ func (match similarityMatch) issue() Issue {
 	)
 
 	return Issue{
-		Pos:     match.Left.Pos,
-		Kind:    similarityIssueKind,
-		Message: message,
-		fset:    match.Left.FSet,
+		Kind:     similarityIssueKind,
+		Message:  message,
+		position: match.Left.Position,
 	}
 }
 

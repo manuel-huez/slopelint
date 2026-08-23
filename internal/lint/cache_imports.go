@@ -39,6 +39,7 @@ func analysisCacheImportedFacts(
 
 		out = append(out, analysisCacheImportedFact{
 			FuncKey: funcObjectKey(fn),
+			Present: true,
 			Fact:    *cloneCallSummaryFact(fact),
 		})
 	}

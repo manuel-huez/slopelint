@@ -237,10 +237,15 @@ func f(items []int) {
 func TestStateDedupePreservesFirstSeenOrder(t *testing.T) {
 	t.Parallel()
 
+	const (
+		firstKey  = "first"
+		secondKey = "second"
+	)
+
 	first := newState()
-	first.facts["first"] = fact{not: map[string]evidence{"nil": {text: "first"}}}
+	first.facts[firstKey] = fact{not: map[string]evidence{"nil": {text: firstKey}}}
 	second := newState()
-	second.facts["second"] = fact{not: map[string]evidence{"nil": {text: "second"}}}
+	second.facts[secondKey] = fact{not: map[string]evidence{"nil": {text: secondKey}}}
 
 	states := dedupeStateSlice([]state{first, second, first})
 	if len(states) != 2 {

@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	similarityDescriptionPromptSchema = 2
+	similarityDescriptionPromptSchema = 4
 	similarityDescriptionModel        = "gpt-5.6-luna"
-	similarityDescriptionEffort       = "medium"
+	similarityDescriptionEffort       = "low"
 	similarityDescriptionEnv          = "SLOPELINT_CODEX_DESCRIPTIONS"
 
 	similarityDescriptionProduction = "production"

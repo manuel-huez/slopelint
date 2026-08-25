@@ -1,7 +1,6 @@
 package lint
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,9 +25,11 @@ type packageMeta struct {
 	Name            string   `json:"Name"`
 	ForTest         string   `json:"ForTest"`
 	Export          string   `json:"Export"`
+	BuildID         string   `json:"BuildID"`
 	GoFiles         []string `json:"GoFiles"`
 	CgoFiles        []string `json:"CgoFiles"`
 	CompiledGoFiles []string `json:"CompiledGoFiles"`
+	Imports         []string `json:"Imports"`
 	Match           []string `json:"Match"`
 	Error           *struct {
 		Err string `json:"Err"`
@@ -79,32 +80,27 @@ func goList(patterns []string, dir string) ([]*packageMeta, error) {
 			"-test",
 			"-export",
 			"-compiled",
-			"-json=Dir,ImportPath,Name,ForTest,Export,GoFiles,CgoFiles,CompiledGoFiles,Match,Error",
+			"-json=Dir,ImportPath,Name,ForTest,Export,BuildID,GoFiles,CgoFiles,CompiledGoFiles,Imports,Match,Error",
 		},
 		patterns...,
 	)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
 
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
-
-	cmd.Stdout = &stdout
-
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return nil, fmt.Errorf("go %v failed: %w\n%s", args, err, stderr.String())
-		}
-
-		return nil, fmt.Errorf("go %v failed: %w", args, err)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("open go list output: %w", err)
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
+	var stderr strings.Builder
 
-	var metas []*packageMeta
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start go %v: %w", args, err)
+	}
+
+	dec := json.NewDecoder(stdout)
+	metas := make([]*packageMeta, 0)
 
 	for {
 		var meta packageMeta
@@ -113,10 +109,16 @@ func goList(patterns []string, dir string) ([]*packageMeta, error) {
 				break
 			}
 
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+
 			return nil, fmt.Errorf("decode go list output: %w", err)
 		}
 
 		if meta.Error != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+
 			return nil, fmt.Errorf(
 				"go list reported an error for %s: %s",
 				meta.ImportPath,
@@ -125,6 +127,14 @@ func goList(patterns []string, dir string) ([]*packageMeta, error) {
 		}
 
 		metas = append(metas, &meta)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("go %v failed: %w\n%s", args, err, stderr.String())
+		}
+
+		return nil, fmt.Errorf("go %v failed: %w", args, err)
 	}
 
 	return metas, nil
@@ -167,25 +177,45 @@ func matchedPackageTargets(
 	return targets
 }
 
-func loadPackageTargets(
-	targets []*packageMeta,
-	byImportPath map[string]*packageMeta,
-) ([]*LoadedPackage, error) {
-	loaded := make([]*LoadedPackage, len(targets))
+type packageLoadContext struct {
+	byImportPath map[string]*packageMeta
+}
 
-	err := runPackageJobs(len(targets), func(index int) error {
-		pkg, err := loadOne(targets[index], byImportPath)
-		if err == nil {
-			loaded[index] = pkg
+func (loadContext *packageLoadContext) importer(fset *token.FileSet) types.Importer {
+	return importer.ForCompiler(fset, runtime.Compiler, func(path string) (io.ReadCloser, error) {
+		dep := loadContext.byImportPath[path]
+		if dep == nil {
+			return nil, fmt.Errorf("missing package metadata for import %q", path)
 		}
 
-		return err
+		if dep.Export == "" {
+			return nil, fmt.Errorf("missing export data for import %q", path)
+		}
+
+		return os.Open(dep.Export)
 	})
-	if err != nil {
-		return nil, err
+}
+
+func loadPackageTypeDigests(
+	paths []string,
+	loadContext *packageLoadContext,
+) (map[string]string, error) {
+	fset := token.NewFileSet()
+	exportImporter := loadContext.importer(fset)
+	digests := make(map[string]string, len(paths))
+
+	// One importer reuses the transitive export graph when several changed build
+	// IDs need fresh public API digests.
+	for _, path := range paths {
+		imported, err := exportImporter.Import(path)
+		if err != nil {
+			return nil, fmt.Errorf("import %s for cache fingerprint: %w", path, err)
+		}
+
+		digests[path] = analysisCacheTypeDigest(imported)
 	}
 
-	return loaded, nil
+	return digests, nil
 }
 
 func runPackageJobs(count int, work func(int) error) error {
@@ -238,7 +268,7 @@ func loadWorkerCount(targetCount int) int {
 	return workers
 }
 
-func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPackage, error) {
+func loadOne(meta *packageMeta, loadContext *packageLoadContext) (*LoadedPackage, error) {
 	compiledFiles, err := packageCompiledFiles(meta)
 	if err != nil {
 		return nil, err
@@ -253,7 +283,12 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 
 	files := make([]*ast.File, 0, len(compiledFiles))
 	for _, filename := range compiledFiles {
-		file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+		file, err := parser.ParseFile(
+			fset,
+			filename,
+			nil,
+			parser.ParseComments|parser.SkipObjectResolution,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", filename, err)
 		}
@@ -261,30 +296,16 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 		files = append(files, file)
 	}
 
-	lookup := func(path string) (io.ReadCloser, error) {
-		dep := byImportPath[path]
-		if dep == nil {
-			return nil, fmt.Errorf("missing package metadata for import %q", path)
-		}
-
-		if dep.Export == "" {
-			return nil, fmt.Errorf("missing export data for import %q", path)
-		}
-
-		return os.Open(dep.Export)
-	}
-
 	info := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
 		Defs:       make(map[*ast.Ident]types.Object),
 		Uses:       make(map[*ast.Ident]types.Object),
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		Scopes:     make(map[ast.Node]*types.Scope),
 		Instances:  make(map[*ast.Ident]types.Instance),
 	}
 
 	conf := types.Config{
-		Importer: importer.ForCompiler(fset, runtime.Compiler, lookup),
+		Importer: loadContext.importer(fset),
 		Error: func(err error) {
 			// The type checker will keep going, and Check will return a summarized error.
 		},

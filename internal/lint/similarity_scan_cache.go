@@ -3,6 +3,8 @@ package lint
 import (
 	"cmp"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"go/token"
@@ -14,8 +16,10 @@ import (
 )
 
 const (
-	similarityScanCacheSchema    = 5
+	similarityScanCacheSchema    = 6
 	similarityScanCacheSnapshots = 16
+	// Sorted 64-bit hash deltas average close to one eight-byte varint.
+	similarityPackedStructuralBytesPerValue = 8
 )
 
 type similarityScanCache struct {
@@ -48,21 +52,21 @@ type similarityCachedMatch struct {
 }
 
 type similarityCachedBlock struct {
-	Identity               string   `json:"identity"`
-	Symbol                 string   `json:"symbol"`
-	PackageDir             string   `json:"package_dir,omitempty"`
-	RelativePath           string   `json:"relative_path"`
-	Content                string   `json:"content"`
-	ContentHash            string   `json:"content_hash"`
-	Offset                 int      `json:"offset"`
-	Line                   int      `json:"line"`
-	Column                 int      `json:"column"`
-	IsTest                 bool     `json:"is_test,omitempty"`
-	Structural             []uint64 `json:"structural"`
-	VectorCount            int      `json:"vector_count"`
-	Description            string   `json:"description,omitempty"`
-	DescriptionHash        string   `json:"description_hash,omitempty"`
-	DescriptionVectorCount int      `json:"description_vector_count,omitempty"`
+	Identity               string `json:"identity"`
+	Symbol                 string `json:"symbol"`
+	PackageDir             string `json:"package_dir,omitempty"`
+	RelativePath           string `json:"relative_path"`
+	Content                string `json:"content"`
+	ContentHash            string `json:"content_hash"`
+	Offset                 int    `json:"offset"`
+	Line                   int    `json:"line"`
+	Column                 int    `json:"column"`
+	IsTest                 bool   `json:"is_test,omitempty"`
+	Structural             string `json:"structural"`
+	VectorCount            int    `json:"vector_count"`
+	Description            string `json:"description,omitempty"`
+	DescriptionHash        string `json:"description_hash,omitempty"`
+	DescriptionVectorCount int    `json:"description_vector_count,omitempty"`
 }
 
 type similarityCachedFile struct {
@@ -307,7 +311,12 @@ func validSimilarityCachedBlockSource(
 		block.ContentHash,
 	) || !filepath.IsLocal(block.RelativePath) || files[block.RelativePath] == "" ||
 		len(block.ContentHash) != sha256.Size*2 || block.Offset < 0 ||
-		block.Line <= 0 || block.Column <= 0 || len(block.Structural) == 0 {
+		block.Line <= 0 || block.Column <= 0 || block.Structural == "" {
+		return false
+	}
+
+	structural, ok := unpackSimilarityStructural(block.Structural)
+	if !ok {
 		return false
 	}
 
@@ -315,7 +324,7 @@ func validSimilarityCachedBlockSource(
 
 	return hex.EncodeToString(digest[:]) == block.ContentHash &&
 		validSimilarityCachedBlockLocation(block) &&
-		strictlyIncreasing(block.Structural)
+		strictlyIncreasing(structural)
 }
 
 func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
@@ -620,7 +629,7 @@ func cacheSimilarityBlocks(blocks []*similarityBlock) []similarityCachedBlock {
 			Line:                   block.Position.Line,
 			Column:                 block.Position.Column,
 			IsTest:                 block.IsTest,
-			Structural:             structural,
+			Structural:             packSimilarityStructural(structural),
 			VectorCount:            block.VectorCount,
 			Description:            block.Description,
 			DescriptionHash:        block.DescriptionHash,
@@ -667,8 +676,13 @@ func (cache similarityScanCache) blocksForFile(
 			continue
 		}
 
-		structural := make(map[uint64]struct{}, len(cached.Structural))
-		for _, shingle := range cached.Structural {
+		packed, ok := unpackSimilarityStructural(cached.Structural)
+		if !ok {
+			continue
+		}
+
+		structural := make(map[uint64]struct{}, len(packed))
+		for _, shingle := range packed {
 			structural[shingle] = struct{}{}
 		}
 
@@ -696,6 +710,66 @@ func (cache similarityScanCache) blocksForFile(
 	}
 
 	return blocks
+}
+
+func packSimilarityStructural(values []uint64) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	// Sorted hashes become positive deltas. Varints halve snapshot size versus
+	// decimal JSON while preserving exact structural evidence.
+	data := make([]byte, 0, len(values)*binary.MaxVarintLen64)
+	buffer := make([]byte, binary.MaxVarintLen64)
+	previous := uint64(0)
+
+	for index, value := range values {
+		delta := value
+		if index > 0 {
+			delta = value - previous
+		}
+
+		count := binary.PutUvarint(buffer, delta)
+		data = append(data, buffer[:count]...)
+		previous = value
+	}
+
+	return base64.RawStdEncoding.EncodeToString(data)
+}
+
+func unpackSimilarityStructural(packed string) ([]uint64, bool) {
+	data, err := base64.RawStdEncoding.DecodeString(packed)
+	if err != nil || len(data) == 0 {
+		return nil, false
+	}
+
+	values := make(
+		[]uint64,
+		0,
+		max(1, len(data)/similarityPackedStructuralBytesPerValue),
+	)
+	previous := uint64(0)
+
+	for len(data) > 0 {
+		delta, count := binary.Uvarint(data)
+		if count <= 0 || len(values) > 0 && delta == 0 {
+			return nil, false
+		}
+
+		value := delta
+		if len(values) > 0 {
+			value = previous + delta
+			if value <= previous {
+				return nil, false
+			}
+		}
+
+		values = append(values, value)
+		previous = value
+		data = data[count:]
+	}
+
+	return values, true
 }
 
 func similarityBlockHashes(blocks []similarityCachedBlock) map[string]string {

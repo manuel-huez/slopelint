@@ -49,7 +49,7 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 		TypesInfo:  pass.TypesInfo,
 	}
 
-	cache, err := analysisCacheForPackage(pkg, opts, "", func() (string, error) {
+	cache, err := analysisCacheForSourceRoot(pkg.Dir, opts, "", func() (string, error) {
 		return analysisCacheKey(pass, pkg, opts)
 	})
 	if err == nil {

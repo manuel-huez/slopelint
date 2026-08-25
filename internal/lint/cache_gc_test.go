@@ -11,6 +11,22 @@ import (
 	"time"
 )
 
+func TestSimilarityStructuralCachePackingRoundTrip(t *testing.T) {
+	values := []uint64{0, 1, 255, 1 << 40, ^uint64(0)}
+	packed := packSimilarityStructural(values)
+	got, ok := unpackSimilarityStructural(packed)
+
+	if !ok || len(got) != len(values) {
+		t.Fatalf("unpack = %v, valid=%t", got, ok)
+	}
+
+	for index := range values {
+		if got[index] != values[index] {
+			t.Fatalf("unpack[%d] = %d, want %d", index, got[index], values[index])
+		}
+	}
+}
+
 func TestPruneCachesRemovesOnlyUnreachableOrExpiredData(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
@@ -286,7 +302,7 @@ func cacheGCTestBlock() similarityCachedBlock {
 		ContentHash:            hex.EncodeToString(contentDigest[:]),
 		Line:                   1,
 		Column:                 1,
-		Structural:             []uint64{1},
+		Structural:             packSimilarityStructural([]uint64{1}),
 		VectorCount:            1,
 		Description:            description,
 		DescriptionHash:        hex.EncodeToString(descriptionDigest[:]),

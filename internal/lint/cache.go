@@ -9,7 +9,11 @@ import (
 
 // Bump whenever analyzer semantics or persisted cache/replay invariants change.
 // Standalone cache keys intentionally do not follow unrelated binary releases.
-const analysisCacheSchema = 6
+const analysisCacheSchema = 7
+
+const analysisCacheTypeDigestRefreshLimit = 8
+
+const unsafeImportPath = "unsafe"
 
 const cacheDirPerm = 0o755
 
@@ -86,8 +90,8 @@ type analysisCacheImportedFact struct {
 	Fact    callSummaryFact `json:"fact"`
 }
 
-func analysisCacheForPackage(
-	pkg *LoadedPackage,
+func analysisCacheForSourceRoot(
+	sourceRoot string,
 	opts Options,
 	namespace string,
 	keyForPackage func() (string, error),
@@ -108,7 +112,7 @@ func analysisCacheForPackage(
 
 	return &analysisCache{
 		path:       filepath.Join(root, namespace, key[:2], key[2:]+".json"),
-		sourceRoot: pkg.Dir,
+		sourceRoot: sourceRoot,
 	}, nil
 }
 

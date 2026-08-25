@@ -192,12 +192,55 @@ func loadPackagesForTest(t *testing.T, dir string) []*LoadedPackage {
 		t.Fatalf("resolve packages: %v", err)
 	}
 
-	pkgs, err := loadPackageTargets(targets, byImportPath)
+	loadContext := &packageLoadContext{byImportPath: byImportPath}
+
+	pkgs := make([]*LoadedPackage, len(targets))
+
+	err = runPackageJobs(len(targets), func(index int) error {
+		pkg, loadErr := loadOne(targets[index], loadContext)
+		pkgs[index] = pkg
+
+		return loadErr
+	})
 	if err != nil {
 		t.Fatalf("load packages: %v", err)
 	}
 
 	return pkgs
+}
+
+func lintLoadedPackages(pkgs []*LoadedPackage, opts Options) []Issue {
+	inputs := make([]repoPackageInput, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+
+		imports := make([]string, 0, len(pkg.TypesPkg.Imports()))
+		for _, imported := range pkg.TypesPkg.Imports() {
+			imports = append(imports, imported.Path())
+		}
+
+		files, err := analysisCacheSourceFiles(pkg.repoFiles, pkg.Dir)
+		inputs = append(inputs, repoPackageInput{
+			importPath: pkg.ImportPath,
+			name:       pkg.Name,
+			dir:        pkg.Dir,
+			imports:    imports,
+			files:      files,
+			sourceErr:  err,
+			pkg:        pkg,
+		})
+	}
+
+	issues, _ := lintRepoPackageInputs(
+		inputs,
+		opts,
+		nil,
+		analysisCacheTypeDigests(pkgs),
+	)
+
+	return issues
 }
 
 func firstRangeStmt(files []*ast.File) *ast.RangeStmt {

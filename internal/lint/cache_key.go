@@ -68,7 +68,9 @@ type analysisCacheTypeAPI struct {
 }
 
 func standaloneAnalysisCacheKey(
-	pkg *LoadedPackage,
+	importPath string,
+	importPaths []string,
+	files []analysisCacheSourceFile,
 	opts Options,
 	typeDigests map[string]string,
 ) (string, error) {
@@ -77,20 +79,20 @@ func standaloneAnalysisCacheKey(
 		maxStates = 32
 	}
 
-	files, err := analysisCacheFiles(&analysis.Pass{
-		Fset:     pkg.FSet,
-		Files:    pkg.Files,
-		ReadFile: os.ReadFile,
-	})
-	if err != nil {
-		return "", err
+	cacheFiles := make([]analysisCacheFile, len(files))
+	for index, file := range files {
+		cacheFiles[index] = analysisCacheFile{SHA256: file.SHA256}
 	}
 
-	imports := make([]analysisCacheTypeAPI, 0, len(pkg.TypesPkg.Imports()))
-	for _, imported := range pkg.TypesPkg.Imports() {
+	sort.Slice(cacheFiles, func(i, j int) bool {
+		return cacheFiles[i].SHA256 < cacheFiles[j].SHA256
+	})
+
+	imports := make([]analysisCacheTypeAPI, 0, len(importPaths))
+	for _, path := range importPaths {
 		imports = append(imports, analysisCacheTypeAPI{
-			Path:   imported.Path(),
-			Digest: typeDigests[imported.Path()],
+			Path:   path,
+			Digest: typeDigests[path],
 		})
 	}
 
@@ -98,29 +100,168 @@ func standaloneAnalysisCacheKey(
 
 	return analysisCacheFingerprintKey(standaloneAnalysisCacheFingerprint{
 		Schema:       analysisCacheSchema,
-		Package:      pkg.ImportPath,
+		Package:      importPath,
 		MaxStates:    maxStates,
 		SkipDeadCode: opts.skipDeadCode,
 		GoRuntime:    runtime.Version() + "/" + runtime.GOOS + "/" + runtime.GOARCH,
-		Files:        files,
+		Files:        cacheFiles,
 		Imports:      imports,
 	})
 }
 
-func analysisCacheTypeDigests(pkgs []*LoadedPackage) map[string]string {
+func loadAnalysisCacheTypeDigests(
+	targets []*packageMeta,
+	byImportPath map[string]*packageMeta,
+	cacheDir string,
+) (map[string]string, []string) {
+	root, err := analysisCacheRoot(cacheDir)
+	if err != nil {
+		return nil, analysisCacheTypePaths(targets, byImportPath)
+	}
+
 	digests := make(map[string]string)
+	missing := make([]string, 0)
 
-	for _, pkg := range pkgs {
-		for _, imported := range pkg.TypesPkg.Imports() {
-			if _, ok := digests[imported.Path()]; ok {
-				continue
+	for _, path := range analysisCacheTypePaths(targets, byImportPath) {
+		if path == unsafeImportPath {
+			digests[path] = analysisCacheTypeDigest(types.Unsafe)
+			continue
+		}
+
+		cachePath, ok := analysisCacheTypeDigestPath(root, byImportPath[path])
+		if !ok {
+			missing = append(missing, path)
+			continue
+		}
+
+		data, err := os.ReadFile(cachePath)
+		if err != nil || len(data) != sha256.Size*2 {
+			missing = append(missing, path)
+			continue
+		}
+
+		if _, err := hex.DecodeString(string(data)); err != nil {
+			missing = append(missing, path)
+			continue
+		}
+
+		digests[path] = string(data)
+
+		refreshCacheEntry(cachePath)
+	}
+
+	return digests, missing
+}
+
+func storeAnalysisCacheTypeDigests(
+	targets []*packageMeta,
+	byImportPath map[string]*packageMeta,
+	cacheDir string,
+	digests map[string]string,
+) {
+	root, err := analysisCacheRoot(cacheDir)
+	if err != nil {
+		return
+	}
+
+	for _, path := range analysisCacheTypePaths(targets, byImportPath) {
+		digest := digests[path]
+		if path == unsafeImportPath || len(digest) != sha256.Size*2 {
+			continue
+		}
+
+		cachePath, ok := analysisCacheTypeDigestPath(root, byImportPath[path])
+		if ok {
+			_ = writeFileAtomically(cachePath, []byte(digest))
+		}
+	}
+}
+
+func analysisCacheTypePaths(
+	targets []*packageMeta,
+	byImportPath map[string]*packageMeta,
+) []string {
+	paths := make(map[string]struct{})
+
+	for _, target := range targets {
+		for _, path := range target.Imports {
+			dep := byImportPath[path]
+			if path == unsafeImportPath || dep != nil && dep.Export != "" {
+				paths[path] = struct{}{}
 			}
-
-			digests[imported.Path()] = analysisCacheTypeDigest(imported)
 		}
 	}
 
-	return digests
+	ordered := make([]string, 0, len(paths))
+	for path := range paths {
+		ordered = append(ordered, path)
+	}
+
+	sort.Strings(ordered)
+
+	return ordered
+}
+
+func analysisCacheTypeDigestPath(
+	root string,
+	meta *packageMeta,
+) (string, bool) {
+	if meta == nil || meta.ImportPath == "" || meta.BuildID == "" {
+		return "", false
+	}
+
+	key, err := analysisCacheFingerprintKey(struct {
+		Schema    int    `json:"schema"`
+		Package   string `json:"package"`
+		BuildID   string `json:"build_id"`
+		GoRuntime string `json:"go_runtime"`
+	}{
+		Schema:    analysisCacheSchema,
+		Package:   meta.ImportPath,
+		BuildID:   meta.BuildID,
+		GoRuntime: runtime.Version() + "/" + runtime.GOOS + "/" + runtime.GOARCH,
+	})
+	if err != nil {
+		return "", false
+	}
+
+	return filepath.Join(root, "type-api", key[:2], key[2:]), true
+}
+
+type analysisCacheSourceFile struct {
+	Name         string
+	RelativePath string
+	SHA256       string
+	Size         int
+}
+
+func analysisCacheSourceFiles(
+	paths []string,
+	sourceRoot string,
+) ([]analysisCacheSourceFile, error) {
+	files := make([]analysisCacheSourceFile, 0, len(paths))
+
+	for _, name := range paths {
+		content, err := os.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+
+		relativePath, err := filepath.Rel(sourceRoot, name)
+		if err != nil || !filepath.IsLocal(relativePath) {
+			return nil, errAnalysisCacheDisabled
+		}
+
+		digest := sha256.Sum256(content)
+		files = append(files, analysisCacheSourceFile{
+			Name:         name,
+			RelativePath: filepath.ToSlash(relativePath),
+			SHA256:       hex.EncodeToString(digest[:]),
+			Size:         len(content),
+		})
+	}
+
+	return files, nil
 }
 
 func analysisCacheTypeDigest(pkg *types.Package) string {
@@ -174,6 +315,22 @@ func analysisCacheTypeDigest(pkg *types.Package) string {
 	}
 
 	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func analysisCacheTypeDigests(pkgs []*LoadedPackage) map[string]string {
+	digests := make(map[string]string)
+
+	for _, pkg := range pkgs {
+		for _, imported := range pkg.TypesPkg.Imports() {
+			if _, ok := digests[imported.Path()]; ok {
+				continue
+			}
+
+			digests[imported.Path()] = analysisCacheTypeDigest(imported)
+		}
+	}
+
+	return digests
 }
 
 func analysisCacheFingerprintKey(fingerprint any) (string, error) {

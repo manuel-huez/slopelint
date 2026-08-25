@@ -485,6 +485,36 @@ func TestSimilarityDescriptionPromptUsesJSONDataAndStrictKindSchema(t *testing.T
 	)
 }
 
+func TestDecodeSimilarityDescriptionBatchReturnsValidSubset(t *testing.T) {
+	t.Parallel()
+
+	validID := strings.Repeat("a", 64)
+	invalidID := strings.Repeat("b", 64)
+	batch := similarityDescriptionBatch{
+		kind: similarityDescriptionProduction,
+		requests: []similarityDescriptionRequest{
+			{ID: validID, Kind: similarityDescriptionProduction},
+			{ID: invalidID, Kind: similarityDescriptionProduction},
+		},
+	}
+	data := []byte(`{"descriptions":[` +
+		`{"id":"b0001","intent_signature":"Returns normalized values in stable sorted order",` +
+		`"flow_signature":"Reads input values, normalizes each value, then returns sorted results",` +
+		`"boundary_signature":""},` +
+		`{"id":"b0002","intent_signature":"Too short",` +
+		`"flow_signature":"Reads each value and returns the accepted result",` +
+		`"boundary_signature":""}]}`)
+
+	descriptions, err := decodeSimilarityDescriptionBatch(data, batch)
+	if err == nil || !strings.Contains(err.Error(), "intent_signature has 2 words") {
+		t.Fatalf("partial validation error = %v", err)
+	}
+
+	if len(descriptions) != 1 || descriptions[0].ID != validID {
+		t.Fatalf("valid descriptions = %#v", descriptions)
+	}
+}
+
 func TestSimilarityDescriptionBatchesNeverMixShapes(t *testing.T) {
 	t.Parallel()
 
@@ -517,8 +547,10 @@ func TestSimilarityDescriptionBatchesNeverMixShapes(t *testing.T) {
 	})
 
 	batches := similarityDescriptionBatches(requests)
-	if len(batches) != 5 {
-		t.Fatalf("batches = %d, want 5", len(batches))
+
+	wantBatches := (65+similarityDescriptionBatchBlocks-1)/similarityDescriptionBatchBlocks + 2
+	if len(batches) != wantBatches {
+		t.Fatalf("batches = %d, want %d", len(batches), wantBatches)
 	}
 
 	for _, batch := range batches {

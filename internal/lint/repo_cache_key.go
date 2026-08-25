@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/mod/modfile"
 )
@@ -43,6 +44,14 @@ var repoAnalysisSourcePathspecs = []string{
 	"*.for",
 	"*.f90",
 	similarityStampName,
+}
+
+var similarityRepositoryPathspecs = []string{
+	"*.go",
+	"go.mod",
+	"go.sum",
+	"go.work",
+	"go.work.sum",
 }
 
 func repoAnalysisCacheKey(
@@ -84,7 +93,12 @@ func repoAnalysisCacheKey(
 
 	goPath, _ := exec.LookPath("go")
 
-	sourceDigest, err := repoAnalysisSourceDigest(absoluteDir, patterns, goWork)
+	sourceDigest, err := repoAnalysisSourceDigest(
+		absoluteDir,
+		patterns,
+		goWork,
+		location,
+	)
 	if err != nil {
 		return "", "", err
 	}
@@ -121,9 +135,11 @@ func repoAnalysisCacheKey(
 }
 
 type repositoryCacheLocation struct {
-	sourceRoot  string
-	identity    string
-	relativeDir string
+	sourceRoot   string
+	identity     string
+	relativeDir  string
+	objectFormat string
+	git          bool
 }
 
 func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) {
@@ -132,7 +148,7 @@ func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) 
 		return repositoryCacheLocation{}, err
 	}
 
-	sourceRoot, _, commonDir, gitErr := repoAnalysisGitInfo(absoluteDir)
+	sourceRoot, objectFormat, commonDir, gitErr := repoAnalysisGitInfo(absoluteDir)
 
 	var identity string
 
@@ -153,9 +169,11 @@ func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) 
 	}
 
 	return repositoryCacheLocation{
-		sourceRoot:  filepath.Clean(sourceRoot),
-		identity:    filepath.Clean(identity),
-		relativeDir: filepath.ToSlash(relativeDir),
+		sourceRoot:   filepath.Clean(sourceRoot),
+		identity:     filepath.Clean(identity),
+		relativeDir:  filepath.ToSlash(relativeDir),
+		objectFormat: objectFormat,
+		git:          gitErr == nil,
 	}, nil
 }
 
@@ -262,14 +280,16 @@ func repoAnalysisSourceDigest(
 	dir string,
 	patterns []string,
 	goWork string,
+	location repositoryCacheLocation,
 ) (string, error) {
 	if !repoAnalysisLocalPatterns(patterns) {
 		return "", errAnalysisCacheDisabled
 	}
 
-	root, objectFormat, _, err := repoAnalysisGitInfo(dir)
-	if err == nil {
-		submodulesSupported, submoduleErr := repoAnalysisSubmodulesSupported(root)
+	if location.git {
+		submodulesSupported, submoduleErr := repoAnalysisSubmodulesSupported(
+			location.sourceRoot,
+		)
 		if submoduleErr != nil {
 			return "", submoduleErr
 		}
@@ -278,23 +298,30 @@ func repoAnalysisSourceDigest(
 			return "", errAnalysisCacheDisabled
 		}
 
-		if err := repoAnalysisExternalModuleCheck(dir, root, goWork); err != nil {
+		if err := repoAnalysisExternalModuleCheck(
+			dir,
+			location.sourceRoot,
+			goWork,
+		); err != nil {
 			return "", err
 		}
 
-		return repoAnalysisGitDigest(root, objectFormat)
+		return repoAnalysisGitDigest(
+			location.sourceRoot,
+			location.objectFormat,
+			repoAnalysisSourcePathspecs,
+		)
 	}
 
-	root, err = findGoModuleRoot(dir)
-	if err != nil {
+	if err := repoAnalysisExternalModuleCheck(
+		dir,
+		location.sourceRoot,
+		goWork,
+	); err != nil {
 		return "", err
 	}
 
-	if err := repoAnalysisExternalModuleCheck(dir, root, goWork); err != nil {
-		return "", err
-	}
-
-	return repoAnalysisWalkDigest(root)
+	return repoAnalysisWalkDigest(location.sourceRoot)
 }
 
 func repoAnalysisLocalPatterns(patterns []string) bool {
@@ -356,33 +383,47 @@ func repoAnalysisGitInfo(dir string) (string, string, string, error) {
 	return root, string(fields[1]), commonDir, nil
 }
 
-func repoAnalysisGitDigest(root, objectFormat string) (string, error) {
-	files, err := repoAnalysisGitIndex(root)
-	if err != nil {
-		return "", err
-	}
-
-	modified, err := repoAnalysisGitOutput(
-		root,
-		"modified files",
-		[]string{"diff-files", "--name-only", "-z", "--"},
-		repoAnalysisSourcePathspecs...,
+func repoAnalysisGitDigest(
+	root string,
+	objectFormat string,
+	pathspecs []string,
+) (string, error) {
+	var (
+		files     map[string]string
+		modified  []byte
+		untracked []byte
+		errs      [3]error
+		jobs      sync.WaitGroup
 	)
-	if err != nil {
-		return "", err
+
+	jobs.Go(func() {
+		files, errs[0] = repoAnalysisGitIndex(root, pathspecs)
+	})
+	jobs.Go(func() {
+		modified, errs[1] = repoAnalysisGitOutput(
+			root,
+			"modified files",
+			[]string{"diff-files", "--name-only", "-z", "--"},
+			pathspecs...,
+		)
+	})
+	jobs.Go(func() {
+		untracked, errs[2] = repoAnalysisGitOutput(
+			root,
+			"untracked files",
+			[]string{"ls-files", "--others", "--exclude-standard", "-z", "--"},
+			pathspecs...,
+		)
+	})
+	jobs.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			return "", err
+		}
 	}
 
 	if err := repoAnalysisApplyWorktree(files, modified, root, objectFormat); err != nil {
-		return "", err
-	}
-
-	untracked, err := repoAnalysisGitOutput(
-		root,
-		"untracked files",
-		[]string{"ls-files", "--others", "--exclude-standard", "-z", "--"},
-		repoAnalysisSourcePathspecs...,
-	)
-	if err != nil {
 		return "", err
 	}
 
@@ -408,12 +449,12 @@ func repoAnalysisGitDigest(root, objectFormat string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-func repoAnalysisGitIndex(root string) (map[string]string, error) {
+func repoAnalysisGitIndex(root string, pathspecs []string) (map[string]string, error) {
 	index, err := repoAnalysisGitOutput(
 		root,
 		"tracked files",
 		[]string{"ls-files", "--stage", "-z", "--"},
-		repoAnalysisSourcePathspecs...,
+		pathspecs...,
 	)
 	if err != nil {
 		return nil, err

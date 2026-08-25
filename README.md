@@ -195,7 +195,7 @@ No Ollama service or model install is required.
 
 When an authenticated `codex` executable is available, the same lint command
 runs source inference while `gpt-5.6-luna` creates three signatures for every
-missing block with medium reasoning. Production functions get intent, flow, and
+missing block with low reasoning. Production functions get intent, flow, and
 boundary signatures. Tests get contract, scenario, and oracle signatures.
 Slopelint embeds one compact labeled bundle containing all three; one embedding
 avoids tripling local inference work. After either channel finds a pair, Luna
@@ -210,9 +210,9 @@ threshold. Neither channel filters, promotes, fuses with, or weakens the other.
 
 Code in missing blocks is sent through the configured Codex service. Set
 `SLOPELINT_CODEX_DESCRIPTIONS=off` when source must stay local. Description requests
-use two concurrent Codex processes per available Go CPU. A request holds at most
-32 blocks and targets 200 KB; one larger function stays intact instead of being
-truncated. Each valid batch is cached immediately and reports progress, so
+use at most one Codex process per available Go CPU, capped at eight. A request
+holds at most 16 blocks and targets 64 KB; one larger function stays intact
+instead of being truncated. Each valid batch is cached immediately and reports progress, so
 retries request only missing IDs. Cached descriptions and vectors make later
 runs local. The complete finding set is also cached. An unchanged Git worktree
 uses a source-scoped Git fingerprint and replays before package loading or model
@@ -273,10 +273,10 @@ immediate sibling or parent-child packages. Deeper package branches are not
 compared. Test blocks add `0.025`. Luna prompt calibration covered renamed equivalent functions,
 earliest/latest opposites, equivalent tests with different structure, opposite
 blank-value contracts, unknown private helpers, pointer-mutation ambiguity, and
-prompt injection inside code. Low, medium, and high reasoning were compared on
-normal and adversarial sets. Medium retained every critical factual and
-separation check from high, while low made two unsupported claims and high took
-longer, especially for tests. Behavior signatures require `0.950` similarity in
+prompt injection inside code. Prompt v4 adds explicit Go byte/rune, nil/empty,
+ordering, and boundary rules. A low-versus-medium production-and-test replay
+retained checked semantics while cutting local CPU and peak RSS, so low is the
+default. Behavior signatures require `0.950` similarity in
 one file and `0.960` in one package or an immediate sibling or parent-child
 package; tests add `0.015`. Structural similarity remains diagnostic context and
 gates neither semantic channel.
@@ -309,7 +309,7 @@ Useful env vars:
 All repos share one global content-addressed cache root. Content hashes and
 repo-scoped scan keys prevent collisions:
 
-- `os.UserCacheDir()/slopelint/analysis-v6`
+- `os.UserCacheDir()/slopelint/analysis-v7`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 - `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`

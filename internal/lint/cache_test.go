@@ -38,8 +38,8 @@ func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v6") {
-		t.Fatalf("analysis cache root = %q, want schema 6 suffix", root)
+	if !strings.HasSuffix(root, "analysis-v7") {
+		t.Fatalf("analysis cache root = %q, want schema 7 suffix", root)
 	}
 }
 
@@ -325,7 +325,11 @@ func Value() int { return 1 }
 `)
 
 	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
-	first := lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+
+	first, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
+	if err != nil {
+		t.Fatalf("first repo lint: %v", err)
+	}
 
 	writeFile(t, depPath, `// Package dep owns shared value guards.
 package dep
@@ -338,7 +342,11 @@ func Present(value *Value) bool { return value != nil }
 	var hits []string
 
 	opts.CacheHitHook = func(importPath string) { hits = append(hits, importPath) }
-	second := lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+
+	second, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
+	if err != nil {
+		t.Fatalf("comment-edit repo lint: %v", err)
+	}
 
 	sort.Strings(hits)
 
@@ -363,7 +371,10 @@ func Present(value *Value) bool { return value != nil && value.Name != "" }
 `)
 
 	hits = nil
-	_ = lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+
+	if _, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil); err != nil {
+		t.Fatalf("summary-edit repo lint: %v", err)
+	}
 
 	if !slices.Equal(hits, []string{"example.com/sample/other"}) {
 		t.Fatalf("summary edit cache hits = %v, want only unrelated package", hits)
@@ -378,14 +389,14 @@ func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
 	writeFile(t, filepath.Join(tmp, "notes.md"), "first\n")
 	initTestGitRepository(t, tmp)
 
-	baseline, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	baseline, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("baseline digest: %v", err)
 	}
 
 	writeFile(t, filepath.Join(tmp, "notes.md"), "second\n")
 
-	markdownOnly, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	markdownOnly, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("markdown digest: %v", err)
 	}
@@ -396,7 +407,7 @@ func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
 
 	writeFile(t, sourcePath, source+"func changed() {}\n")
 
-	changedSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	changedSource, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("changed source digest: %v", err)
 	}
@@ -408,7 +419,7 @@ func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
 	writeFile(t, sourcePath, source)
 	writeFile(t, filepath.Join(tmp, "new.go"), "package sample\n\nfunc added() {}\n")
 
-	untrackedSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	untrackedSource, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("untracked source digest: %v", err)
 	}
@@ -419,7 +430,7 @@ func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
 
 	writeFile(t, filepath.Join(tmp, similarityStampName), "{}\n")
 
-	stampSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	stampSource, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("stamp digest: %v", err)
 	}
@@ -438,14 +449,14 @@ func TestRepoAnalysisGitDigestStableAcrossCommits(t *testing.T) {
 
 	writeFile(t, sourcePath, "package sample\n\nfunc added() {}\n")
 
-	changedSource, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	changedSource, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("changed source digest: %v", err)
 	}
 
 	commitTestGitRepository(t, tmp, "sample.go", "source")
 
-	afterSourceCommit, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	afterSourceCommit, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("source commit digest: %v", err)
 	}
@@ -457,7 +468,7 @@ func TestRepoAnalysisGitDigestStableAcrossCommits(t *testing.T) {
 	writeFile(t, filepath.Join(tmp, "notes.md"), "second\n")
 	commitTestGitRepository(t, tmp, "notes.md", "notes")
 
-	afterNotesCommit, err := repoAnalysisSourceDigest(tmp, []string{allPackagesPattern}, "")
+	afterNotesCommit, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
 	if err != nil {
 		t.Fatalf("notes commit digest: %v", err)
 	}
@@ -465,6 +476,18 @@ func TestRepoAnalysisGitDigestStableAcrossCommits(t *testing.T) {
 	if afterNotesCommit != changedSource {
 		t.Fatal("non-lint commit invalidated repo cache")
 	}
+}
+
+func repoAnalysisSourceDigestForTest(
+	dir string,
+	patterns []string,
+) (string, error) {
+	location, err := repositoryCacheLocationForDir(dir)
+	if err != nil {
+		return "", err
+	}
+
+	return repoAnalysisSourceDigest(dir, patterns, "", location)
 }
 
 func TestRepoAnalysisSubmoduleSupportFollowsGoDirectoryRules(t *testing.T) {

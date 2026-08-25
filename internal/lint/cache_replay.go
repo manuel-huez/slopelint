@@ -103,7 +103,8 @@ func replayStandaloneAnalysisCache(
 	entry *analysisCacheEntry,
 	summaries map[string]callSummary,
 	cacheHitHook func(string),
-	pkg *LoadedPackage,
+	importPath string,
+	files []analysisCacheSourceFile,
 ) ([]Issue, []analysisCacheExport, bool) {
 	if entry == nil {
 		return nil, nil, false
@@ -118,13 +119,13 @@ func replayStandaloneAnalysisCache(
 		return nil, nil, false
 	}
 
-	issues, ok := replayStandaloneAnalysisIssues(entry, pkg)
+	issues, ok := replayStandaloneAnalysisIssues(entry, files)
 	if !ok {
 		return nil, nil, false
 	}
 
 	if cacheHitHook != nil {
-		cacheHitHook(pkg.ImportPath)
+		cacheHitHook(importPath)
 	}
 
 	return issues, exports, true
@@ -216,9 +217,19 @@ func replayPositionedAnalysisIssues(
 
 func replayStandaloneAnalysisIssues(
 	entry *analysisCacheEntry,
-	pkg *LoadedPackage,
+	files []analysisCacheSourceFile,
 ) ([]Issue, bool) {
-	files, filesByContent := packageCacheFiles(pkg.Files, pkg.FSet, pkg.Dir)
+	var (
+		filesByPath    = make(map[string]*analysisCacheSourceFile, len(files))
+		filesByContent = make(map[string][]*analysisCacheSourceFile, len(files))
+	)
+
+	for index := range files {
+		file := &files[index]
+		filesByPath[file.RelativePath] = file
+		filesByContent[file.SHA256] = append(filesByContent[file.SHA256], file)
+	}
+
 	issues := make([]Issue, 0, len(entry.Issues))
 
 	for _, cached := range entry.Issues {
@@ -226,8 +237,8 @@ func replayStandaloneAnalysisIssues(
 			return nil, false
 		}
 
-		file := cachedPackageFile(cached, files, filesByContent)
-		if file == nil || cached.Offset > file.Size() {
+		file := cachedAnalysisSourceFile(cached, filesByPath, filesByContent)
+		if file == nil || cached.Offset > file.Size {
 			return nil, false
 		}
 
@@ -235,7 +246,7 @@ func replayStandaloneAnalysisIssues(
 			Kind:    cached.Kind,
 			Message: cached.Message,
 			position: token.Position{
-				Filename: file.Name(),
+				Filename: file.Name,
 				Offset:   cached.Offset,
 				Line:     cached.Line,
 				Column:   cached.Column,
@@ -244,6 +255,23 @@ func replayStandaloneAnalysisIssues(
 	}
 
 	return issues, true
+}
+
+func cachedAnalysisSourceFile(
+	cached analysisCacheIssue,
+	files map[string]*analysisCacheSourceFile,
+	filesByContent map[string][]*analysisCacheSourceFile,
+) *analysisCacheSourceFile {
+	if hinted := files[cached.Filename]; hinted != nil && hinted.SHA256 == cached.FileID {
+		return hinted
+	}
+
+	candidates := filesByContent[cached.FileID]
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+
+	return nil
 }
 
 func validCachedAnalysisIssue(cached analysisCacheIssue) bool {

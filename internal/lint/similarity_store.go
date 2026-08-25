@@ -29,6 +29,7 @@ const (
 type similarityStamp struct {
 	Schema            int                    `json:"schema"`
 	SourceDigest      string                 `json:"source_digest"`
+	RepositoryDigest  string                 `json:"repository_digest,omitempty"`
 	Model             string                 `json:"model"`
 	ModelDigest       string                 `json:"model_digest"`
 	DescriptionSchema int                    `json:"description_schema,omitempty"`
@@ -303,6 +304,10 @@ func verifySimilarityStamp(
 }
 
 func storeSimilarityStamp(root string, stamp similarityStamp) error {
+	if repositoryDigest, err := similarityRepositoryDigest(root); err == nil {
+		stamp.RepositoryDigest = repositoryDigest
+	}
+
 	data, err := json.MarshalIndent(stamp, "", "  ")
 	if err != nil {
 		return err
@@ -316,6 +321,19 @@ func storeSimilarityStamp(root string, stamp similarityStamp) error {
 	}
 
 	return nil
+}
+
+func similarityRepositoryDigest(root string) (string, error) {
+	location, err := repositoryCacheLocationForDir(root)
+	if err != nil || !location.git {
+		return "", errAnalysisCacheDisabled
+	}
+
+	return repoAnalysisGitDigest(
+		location.sourceRoot,
+		location.objectFormat,
+		similarityRepositoryPathspecs,
+	)
 }
 
 func similarityVectorCacheRoot(dir string) (string, error) {

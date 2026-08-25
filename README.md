@@ -251,11 +251,11 @@ code gets a new pair ID and needs review again.
 
 When `CI`, Cloudflare Workers Builds' `WORKERS_CI`, or Cloudflare Pages'
 `CF_PAGES` is truthy, the same standalone command never starts Codex, downloads a
-model, loads inference weights, runs structural analysis, or invokes Go. It checks
-the committed stamp's policy and Git repository digest, then exits. Missing,
-stale, or obsolete stamps fail before other lint work. Local mode owns all code
-analysis and writes the reviewed attestation. The digest excludes the stamp, so
-committing it does not invalidate itself.
+model, or loads inference weights. It checks the committed semantic stamp's policy
+and Git repository digest before running the normal structural lint. Missing,
+stale, or obsolete stamps fail before Go starts. Local mode owns semantic analysis
+and writes the reviewed attestation. The digest excludes the stamp, so committing
+it does not invalidate itself.
 
 Model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
 similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`

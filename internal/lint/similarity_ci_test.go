@@ -67,17 +67,19 @@ func TestLintRepositoryCIStaleStampFailsBeforeGoList(t *testing.T) {
 	}
 }
 
-func TestLintRepositoryCIValidStampSkipsGoList(t *testing.T) {
+func TestLintRepositoryCIValidStampStillRunsStructuralLint(t *testing.T) {
 	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
+	writeFile(
+		t,
+		filepath.Join(tmp, "sample.go"),
+		"package sample\n"+strings.Repeat("// filler\n", 1000),
+	)
 	initTestGitRepository(t, tmp)
 
 	stamp := newSimilarityStamp("source", 1, nil, false, "")
 	if err := storeSimilarityStamp(tmp, stamp); err != nil {
 		t.Fatal(err)
 	}
-
-	t.Setenv("PATH", gitOnlyPath(t))
 
 	issues, err := LintRepository(
 		[]string{allPackagesPattern},
@@ -89,8 +91,8 @@ func TestLintRepositoryCIValidStampSkipsGoList(t *testing.T) {
 		t.Fatalf("valid CI stamp: %v", err)
 	}
 
-	if len(issues) != 0 {
-		t.Fatalf("valid CI issues = %v", issues)
+	if messages := joinMessages(issues); !strings.Contains(messages, "source file has 1001 lines") {
+		t.Fatalf("valid CI issues = %s", messages)
 	}
 }
 

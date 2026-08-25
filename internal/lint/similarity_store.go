@@ -319,16 +319,12 @@ func storeSimilarityStamp(root string, stamp similarityStamp) error {
 }
 
 func similarityVectorCacheRoot(dir string) (string, error) {
-	if dir == "" {
-		userCacheDir, err := os.UserCacheDir()
-		if err != nil {
-			return "", err
-		}
-
-		dir = filepath.Join(userCacheDir, "slopelint")
+	root, err := slopelintCacheRoot(dir)
+	if err != nil {
+		return "", err
 	}
 
-	return filepath.Join(dir, fmt.Sprintf("similarity-v%d", similarityCacheSchema)), nil
+	return filepath.Join(root, fmt.Sprintf("similarity-v%d", similarityCacheSchema)), nil
 }
 
 func loadSimilarityVector(root, key string) ([]float32, bool) {

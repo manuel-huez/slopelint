@@ -90,9 +90,9 @@ type similarityDescription struct {
 }
 
 type similarityDescriptionInput struct {
-	kind   string
-	detail bool
-	blocks []*similarityBlock
+	kind       string
+	recordKind similarityDescriptionRecordKind
+	blocks     []*similarityBlock
 }
 
 type similarityDescriptionRecordKind uint8
@@ -241,28 +241,17 @@ func indexSimilarityDescriptionInputs(
 	recordKind similarityDescriptionRecordKind,
 ) (map[string]*similarityDescriptionInput, []string) {
 	inputs := make(map[string]*similarityDescriptionInput, len(blocks))
-	detail := recordKind == similarityDescriptionDetails
 
 	for _, block := range blocks {
-		kind := similarityDescriptionProduction
-		if block.IsTest {
-			kind = similarityDescriptionTest
-		}
-
-		fingerprint := strings.Join([]string{
-			strconv.Itoa(similarityDescriptionPromptSchema),
-			similarityDescriptionModel,
-			similarityDescriptionEffort,
-			kind,
-			strconv.FormatBool(detail),
+		kind, key := similarityDescriptionCacheKey(
 			block.ContentHash,
-		}, "\x00")
-		sum := sha256.Sum256([]byte(fingerprint))
-		key := hex.EncodeToString(sum[:])
+			block.IsTest,
+			recordKind,
+		)
 
 		input := inputs[key]
 		if input == nil {
-			input = &similarityDescriptionInput{kind: kind, detail: detail}
+			input = &similarityDescriptionInput{kind: kind, recordKind: recordKind}
 			inputs[key] = input
 		}
 
@@ -277,6 +266,29 @@ func indexSimilarityDescriptionInputs(
 	sort.Strings(keys)
 
 	return inputs, keys
+}
+
+func similarityDescriptionCacheKey(
+	contentHash string,
+	isTest bool,
+	recordKind similarityDescriptionRecordKind,
+) (string, string) {
+	kind := similarityDescriptionProduction
+	if isTest {
+		kind = similarityDescriptionTest
+	}
+
+	fingerprint := strings.Join([]string{
+		strconv.Itoa(similarityDescriptionPromptSchema),
+		similarityDescriptionModel,
+		similarityDescriptionEffort,
+		kind,
+		strconv.FormatBool(recordKind == similarityDescriptionDetails),
+		contentHash,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(fingerprint))
+
+	return kind, hex.EncodeToString(sum[:])
 }
 
 func loadCachedSimilarityDescriptions(
@@ -294,7 +306,7 @@ func loadCachedSimilarityDescriptions(
 				cacheRoot,
 				key,
 				input.kind,
-				input.detail,
+				input.recordKind,
 			); ok {
 				applySimilarityDescription(input.blocks, description)
 				continue
@@ -304,7 +316,7 @@ func loadCachedSimilarityDescriptions(
 		missing = append(missing, similarityDescriptionRequest{
 			ID:       key,
 			Kind:     input.kind,
-			Detail:   input.detail,
+			Detail:   input.recordKind == similarityDescriptionDetails,
 			Content:  input.blocks[0].Content,
 			Location: input.blocks[0].Identity,
 		})
@@ -468,16 +480,17 @@ func loadSimilarityDescription(
 	root string,
 	key string,
 	kind string,
-	detail bool,
+	recordKind similarityDescriptionRecordKind,
 ) (similarityDescription, bool) {
-	data, err := os.ReadFile(similarityDescriptionPath(root, key, detail))
+	data, err := os.ReadFile(similarityDescriptionPath(root, key, recordKind))
 	if err != nil {
 		return similarityDescription{}, false
 	}
 
 	var description similarityDescription
 	if json.Unmarshal(data, &description) != nil ||
-		description.Kind != kind || description.Detail != detail {
+		description.Kind != kind ||
+		description.Detail != (recordKind == similarityDescriptionDetails) {
 		return similarityDescription{}, false
 	}
 
@@ -500,12 +513,21 @@ func storeSimilarityDescription(
 		return err
 	}
 
-	return writeFileAtomically(similarityDescriptionPath(root, key, description.Detail), data)
+	recordKind := similarityDescriptionSignatures
+	if description.Detail {
+		recordKind = similarityDescriptionDetails
+	}
+
+	return writeFileAtomically(similarityDescriptionPath(root, key, recordKind), data)
 }
 
-func similarityDescriptionPath(root, key string, detail bool) string {
+func similarityDescriptionPath(
+	root string,
+	key string,
+	recordKind similarityDescriptionRecordKind,
+) string {
 	kind := "signatures"
-	if detail {
+	if recordKind == similarityDescriptionDetails {
 		kind = "details"
 	}
 

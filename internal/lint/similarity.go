@@ -250,7 +250,7 @@ func analyzeChangedSimilarCode(
 	if opts.CacheEnabled {
 		// Scan cache is an optimization only. Source digest and committed stamp
 		// remain the correctness boundary.
-		_ = storeSimilarityScanCache(
+		if storeSimilarityScanCache(
 			scan.cacheRoot,
 			root,
 			sourceDigest,
@@ -260,7 +260,9 @@ func analyzeChangedSimilarCode(
 			cachedBlocks,
 			scan.rawMatches,
 			findings,
-		)
+		) == nil {
+			maybePruneCaches(opts.cacheDir)
+		}
 	}
 
 	return completeSimilarityReview(

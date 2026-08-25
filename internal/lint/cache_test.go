@@ -141,6 +141,30 @@ func TestLintRepositoryCachesStandaloneResult(t *testing.T) {
 	}
 }
 
+func TestLintRepositoryCacheHitSkipsMaintenanceSweep(t *testing.T) {
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
+	writeAnalysisCacheDiagnosticFile(t, filepath.Join(tmp, "sample.go"))
+
+	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
+	if _, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil); err != nil {
+		t.Fatalf("first repo lint: %v", err)
+	}
+
+	marker := filepath.Join(cacheDir, cachePruneMarkerName)
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("remove maintenance marker: %v", err)
+	}
+
+	if _, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil); err != nil {
+		t.Fatalf("cached repo lint: %v", err)
+	}
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("hot cache hit ran maintenance: %v", err)
+	}
+}
+
 func TestLintRepositoryCacheSharesLinkedWorktree(t *testing.T) {
 	primary := newTestModule(t)
 	cacheDir := t.TempDir()

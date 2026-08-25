@@ -81,6 +81,8 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 	if cache != nil {
 		// Cache persistence is best-effort; analysis results remain valid without it.
 		_ = cache.store(pass, l, l.issues)
+
+		maybePruneCaches(opts.cacheDir)
 	}
 
 	return l.issues, nil

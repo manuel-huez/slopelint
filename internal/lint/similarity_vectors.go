@@ -179,20 +179,7 @@ func similarityVectorInputs(
 		chunked := len(chunks) > 1
 
 		for index, content := range chunks {
-			cacheContent := content
-			if chunked {
-				cacheContent = similarityChunkCachePrefix + content
-			}
-
-			if kind == similarityDescriptionVector {
-				cacheContent = similarityDescriptionVectorPrefix + cacheContent
-			}
-
-			fingerprint := similarityModelDigest + "\x00" + strconv.Itoa(
-				similarityVectorInputSchema,
-			) + "\x00" + cacheContent
-			sum := sha256.Sum256([]byte(fingerprint))
-			key := hex.EncodeToString(sum[:])
+			key := similarityVectorCacheKey(content, kind, chunked)
 
 			input := byKey[key]
 			if input == nil {
@@ -226,6 +213,28 @@ func similarityVectorInputs(
 	}
 
 	return blockInputs, inputs
+}
+
+func similarityVectorCacheKey(
+	content string,
+	kind similarityVectorKind,
+	chunked bool,
+) string {
+	cacheContent := content
+	if chunked {
+		cacheContent = similarityChunkCachePrefix + content
+	}
+
+	if kind == similarityDescriptionVector {
+		cacheContent = similarityDescriptionVectorPrefix + cacheContent
+	}
+
+	fingerprint := similarityModelDigest + "\x00" + strconv.Itoa(
+		similarityVectorInputSchema,
+	) + "\x00" + cacheContent
+	sum := sha256.Sum256([]byte(fingerprint))
+
+	return hex.EncodeToString(sum[:])
 }
 
 func loadCachedSimilarityVectors(

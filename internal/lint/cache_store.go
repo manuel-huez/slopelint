@@ -39,6 +39,8 @@ func loadAnalysisCacheEntry(path string) (*analysisCacheEntry, bool) {
 		return nil, false
 	}
 
+	refreshCacheEntry(path)
+
 	return &entry, true
 }
 

@@ -229,6 +229,14 @@ basenames, so an ordinary source rename reuses analysis. Semantic block records
 also follow same-content renames; path and test/package role remain metadata for
 correct finding locations and locality. Source-addressed scan snapshots let
 parallel worktrees keep different branch states without overwriting each other.
+Successful cold or changed runs also maintain the shared cache. Retained scan
+snapshots protect vectors and descriptions still used by any recent worktree;
+compact reference manifests keep that sweep independent of snapshot size.
+Unreferenced blobs are removed after a one-hour concurrent-write grace period.
+Analysis entries and abandoned snapshots expire after 30 days without use, old
+cache schemas are removed, and non-model cache data is capped at 512 MiB. The
+pinned embedding model is kept outside that cap. Exact hot cache hits do not run
+the sweep.
 
 Every finding includes a stable `sim-...` pair ID. After review, accept specific
 intentional pairs and rerun the same lint command:

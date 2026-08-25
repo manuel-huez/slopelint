@@ -9,6 +9,8 @@ import (
 )
 
 func TestAnalyzerCrossPackageFacts(t *testing.T) {
+	t.Setenv("SLOPELINT_CACHE", "off")
+
 	vettool := filepath.Join(t.TempDir(), "slopelint")
 	build := exec.Command("go", "build", "-o", vettool, "./cmd/slopelint")
 

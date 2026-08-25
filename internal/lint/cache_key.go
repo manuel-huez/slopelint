@@ -16,16 +16,12 @@ import (
 )
 
 func analysisCacheRoot(dir string) (string, error) {
-	if dir == "" {
-		userCacheDir, err := os.UserCacheDir()
-		if err != nil {
-			return "", err
-		}
-
-		dir = filepath.Join(userCacheDir, "slopelint")
+	root, err := slopelintCacheRoot(dir)
+	if err != nil {
+		return "", err
 	}
 
-	return filepath.Join(dir, fmt.Sprintf("analysis-v%d", analysisCacheSchema)), nil
+	return filepath.Join(root, fmt.Sprintf("analysis-v%d", analysisCacheSchema)), nil
 }
 
 func analysisCacheKey(

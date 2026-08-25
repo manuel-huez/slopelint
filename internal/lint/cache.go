@@ -17,6 +17,19 @@ const repoAnalysisCacheHitName = "repo"
 
 var errAnalysisCacheDisabled = errors.New("analysis cache disabled")
 
+func slopelintCacheRoot(dir string) (string, error) {
+	if dir != "" {
+		return dir, nil
+	}
+
+	userCacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(userCacheDir, "slopelint"), nil
+}
+
 type analysisCache struct {
 	path       string
 	sourceRoot string

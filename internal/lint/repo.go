@@ -54,6 +54,10 @@ func LintRepository(
 		similarity,
 	); cacheErr == nil {
 		_ = freshCache.store(issues)
+
+		if similarity == nil || !similarity.CI {
+			maybePruneCaches(opts.cacheDir)
+		}
 	}
 
 	return issues, nil

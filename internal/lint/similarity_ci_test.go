@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +64,55 @@ func TestLintRepositoryCIStaleStampFailsBeforeGoList(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), similarityStampName+" is stale") {
 		t.Fatalf("stale-stamp error = %v", err)
+	}
+}
+
+func TestLintRepositoryCIValidStampSkipsGoList(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
+	initTestGitRepository(t, tmp)
+
+	stamp := newSimilarityStamp("source", 1, nil, false, "")
+	if err := storeSimilarityStamp(tmp, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", gitOnlyPath(t))
+
+	issues, err := LintRepository(
+		[]string{allPackagesPattern},
+		tmp,
+		Options{CacheEnabled: true, cacheDir: t.TempDir()},
+		&SimilarityOptions{CI: true, CacheEnabled: true},
+	)
+	if err != nil {
+		t.Fatalf("valid CI stamp: %v", err)
+	}
+
+	if len(issues) != 0 {
+		t.Fatalf("valid CI issues = %v", issues)
+	}
+}
+
+func TestLintRepositoryCIRejectsStampWithoutRepositoryDigest(t *testing.T) {
+	tmp := newTestModule(t)
+	stamp := newSimilarityStamp("source", 1, nil, false, "")
+
+	data, err := json.Marshal(stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, filepath.Join(tmp, similarityStampName), string(data))
+
+	_, err = LintRepository(
+		[]string{allPackagesPattern},
+		tmp,
+		Options{CacheEnabled: true, cacheDir: t.TempDir()},
+		&SimilarityOptions{CI: true, CacheEnabled: true},
+	)
+	if err == nil || !strings.Contains(err.Error(), "lacks a repository digest") {
+		t.Fatalf("missing-repository-digest error = %v", err)
 	}
 }
 

@@ -17,8 +17,13 @@ func LintRepository(
 	opts Options,
 	similarity *SimilarityOptions,
 ) ([]Issue, error) {
-	if err := preflightSimilarityCI(dir, similarity); err != nil {
+	ciComplete, err := preflightSimilarityCI(dir, similarity)
+	if err != nil {
 		return nil, err
+	}
+
+	if ciComplete {
+		return nil, nil
 	}
 
 	cache, cacheErr := newRepoAnalysisCache(patterns, dir, opts, similarity)
@@ -89,39 +94,48 @@ func persistRepoAnalysisResult(
 	}
 }
 
-func preflightSimilarityCI(dir string, opts *SimilarityOptions) error {
+func preflightSimilarityCI(dir string, opts *SimilarityOptions) (bool, error) {
 	if opts == nil || !opts.CI {
-		return nil
+		return false, nil
 	}
 
-	// Missing and obsolete attestations need no Git or Go work. Source freshness
-	// still needs resolved package files and is checked by CheckSimilarCode.
+	// CI owns attestation only. One Git digest validates policy and source before
+	// any Go command, structural analysis, model load, or cache dependency.
 	root, err := findGoModuleRoot(dir)
 	if err != nil {
-		return err
+		return true, err
 	}
 
 	stamp, err := loadSimilarityStamp(root)
 	if err != nil {
-		return err
+		return true, err
 	}
 
 	exists := stamp.Schema != 0
-	if exists && stamp.policyMatches() {
-		if stamp.RepositoryDigest != "" {
-			digest, digestErr := similarityRepositoryDigest(root)
-			if digestErr == nil && digest != stamp.RepositoryDigest {
-				return fmt.Errorf(
-					"%s is stale; run slopelint locally and commit the updated stamp",
-					similarityStampName,
-				)
-			}
+	if !exists || !stamp.policyMatches() || stamp.RepositoryDigest == "" {
+		if exists && stamp.policyMatches() {
+			return true, fmt.Errorf(
+				"%s lacks a repository digest; run slopelint locally",
+				similarityStampName,
+			)
 		}
 
-		return nil
+		return true, verifySimilarityStamp(stamp, exists, stamp.SourceDigest)
 	}
 
-	return verifySimilarityStamp(stamp, exists, stamp.SourceDigest)
+	digest, err := similarityRepositoryDigest(root)
+	if err != nil {
+		return true, fmt.Errorf("verify %s repository digest: %w", similarityStampName, err)
+	}
+
+	if digest != stamp.RepositoryDigest {
+		return true, fmt.Errorf(
+			"%s is stale; run slopelint locally and commit the updated stamp",
+			similarityStampName,
+		)
+	}
+
+	return true, nil
 }
 
 func similarityPackagesForTargets(

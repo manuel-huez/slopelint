@@ -251,10 +251,11 @@ code gets a new pair ID and needs review again.
 
 When `CI`, Cloudflare Workers Builds' `WORKERS_CI`, or Cloudflare Pages'
 `CF_PAGES` is truthy, the same standalone command never starts Codex, downloads a
-model, or loads inference weights. It hashes loaded source and fails if the
-committed stamp is missing, stale, or uses a different detector/model/description
-policy. The stamp uses a source digest instead of a Git commit hash because
-committing the stamp changes the commit hash.
+model, loads inference weights, runs structural analysis, or invokes Go. It checks
+the committed stamp's policy and Git repository digest, then exits. Missing,
+stale, or obsolete stamps fail before other lint work. Local mode owns all code
+analysis and writes the reviewed attestation. The digest excludes the stamp, so
+committing it does not invalidate itself.
 
 Model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
 similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`

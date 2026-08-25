@@ -1,14 +1,14 @@
 {
   "schema": 10,
-  "source_digest": "2fdc6ebf8315361630bd9f083f451e781285c50ad3673d7f84ca9d17bfc717e2",
-  "repository_digest": "657e64bcd93b009c602cbc39f56d3158a1222f2b46c78f5fd5252ceb9f51b988",
+  "source_digest": "51e8f7192857c2851b827ba6428aaceacef3e5bfe394a6182b2d89c17e06d4d9",
+  "repository_digest": "da0fe64238649d7466fa76813afb10197848d2de92e247d9d4da027f860bf3db",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-5.6-luna",
   "description_effort": "low",
-  "description_digest": "2daa9417b3d2810d27d1f7e52a37a98156d3da1ff29380a30e3a9a92bea33d69",
-  "checked_blocks": 1626,
+  "description_digest": "8a807c7618b4c843a3fdcc704dc3d714d45d72af99513ce4973acac80d2cda16",
+  "checked_blocks": 1628,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",

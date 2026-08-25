@@ -91,8 +91,6 @@ func repoAnalysisCacheKey(
 		return "", "", err
 	}
 
-	goPath, _ := exec.LookPath("go")
-
 	sourceDigest, err := repoAnalysisSourceDigest(
 		absoluteDir,
 		patterns,
@@ -105,25 +103,21 @@ func repoAnalysisCacheKey(
 
 	fingerprint := struct {
 		Schema      int                                `json:"schema"`
-		Repository  string                             `json:"repository"`
 		Dir         string                             `json:"dir"`
 		Patterns    []string                           `json:"patterns"`
 		MaxStates   int                                `json:"max_states"`
 		ClosedWorld bool                               `json:"closed_world"`
-		Go          analysisCacheExecutable            `json:"go"`
 		GoRuntime   string                             `json:"go_runtime"`
 		GoEnv       string                             `json:"go_env"`
 		Source      string                             `json:"source"`
 		Similarity  *repoAnalysisSimilarityFingerprint `json:"similarity,omitempty"`
 	}{
 		Schema:      analysisCacheSchema,
-		Repository:  location.identity,
 		Dir:         location.relativeDir,
 		Patterns:    append([]string(nil), patterns...),
 		MaxStates:   maxStates,
 		ClosedWorld: opts.ClosedWorld,
-		Go:          analysisCacheExecutableForPath(goPath),
-		GoRuntime:   runtime.GOOS + "/" + runtime.GOARCH,
+		GoRuntime:   runtime.Version() + "/" + runtime.GOOS + "/" + runtime.GOARCH,
 		GoEnv:       goEnvironment,
 		Source:      sourceDigest,
 		Similarity:  repoAnalysisSimilarityKey(similarity),

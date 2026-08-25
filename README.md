@@ -222,6 +222,13 @@ the edited package and importers affected by a type API or used-summary change
 run again. Semantic block extraction parses changed files only, retains matches
 between unchanged blocks, and compares changed blocks only with locality-eligible
 candidates.
+Linked Git worktrees share exact-result, package, vector, description, and scan
+caches through the repository's common Git directory. Cached diagnostics rebase
+to the active checkout. Package analysis keys use compiled content rather than
+basenames, so an ordinary source rename reuses analysis. Semantic block records
+also follow same-content renames; path and test/package role remain metadata for
+correct finding locations and locality. Source-addressed scan snapshots let
+parallel worktrees keep different branch states without overwriting each other.
 
 Every finding includes a stable `sim-...` pair ID. After review, accept specific
 intentional pairs and rerun the same lint command:
@@ -294,7 +301,7 @@ Useful env vars:
 All repos share one global content-addressed cache root. Content hashes and
 repo-scoped scan keys prevent collisions:
 
-- `os.UserCacheDir()/slopelint/analysis-v5`
+- `os.UserCacheDir()/slopelint/analysis-v6`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 - `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`

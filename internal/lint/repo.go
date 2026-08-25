@@ -18,7 +18,11 @@ func LintRepository(
 	cache, cacheErr := newRepoAnalysisCache(patterns, dir, opts, similarity)
 	if cacheErr == nil {
 		if entry, ok := cache.load(); ok {
-			if issues, valid := replayRepoAnalysisCache(entry, opts.CacheHitHook); valid {
+			if issues, valid := replayRepoAnalysisCache(
+				entry,
+				opts.CacheHitHook,
+				cache.sourceRoot,
+			); valid {
 				return issues, nil
 			}
 		}
@@ -166,7 +170,9 @@ func lintRepoPackage(
 	typeDigests map[string]string,
 	repoDeadCode bool,
 ) repoPackageLintResult {
-	cache, _ := newStandaloneAnalysisCache(pkg, opts, typeDigests)
+	cache, _ := analysisCacheForPackage(pkg, opts, "packages", func() (string, error) {
+		return standaloneAnalysisCacheKey(pkg, opts, typeDigests)
+	})
 	if cached, ok := cachedRepoPackageLintResult(
 		cache,
 		pkg,
@@ -240,7 +246,7 @@ func cachedRepoPackageLintResult(
 		entry,
 		summaries,
 		opts.CacheHitHook,
-		pkg.ImportPath,
+		pkg,
 	)
 	if !ok {
 		return repoPackageLintResult{}, false

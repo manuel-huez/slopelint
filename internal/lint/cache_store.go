@@ -1,6 +1,8 @@
 package lint
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"go/token"
@@ -49,7 +51,7 @@ func (cache *analysisCache) store(
 		return nil
 	}
 
-	entry, err := buildAnalysisCacheEntry(pass, l, issues)
+	entry, err := buildAnalysisCacheEntry(pass, l, issues, cache.sourceRoot)
 	if err != nil {
 		return err
 	}
@@ -66,7 +68,12 @@ func (cache *analysisCache) storeStandalone(
 		return nil
 	}
 
-	entry, err := buildStandaloneAnalysisCacheEntry(l, issues, dependencies)
+	entry, err := buildStandaloneAnalysisCacheEntry(
+		l,
+		issues,
+		dependencies,
+		cache.sourceRoot,
+	)
 	if err != nil {
 		return err
 	}
@@ -79,7 +86,7 @@ func (cache *repoAnalysisCache) store(issues []Issue) error {
 		return nil
 	}
 
-	entry, err := buildRepoAnalysisCacheEntry(issues)
+	entry, err := buildRepoAnalysisCacheEntry(issues, cache.sourceRoot)
 	if err != nil {
 		return err
 	}
@@ -129,6 +136,7 @@ func buildAnalysisCacheEntry(
 	pass *analysis.Pass,
 	l *linter,
 	issues []Issue,
+	sourceRoot string,
 ) (analysisCacheEntry, error) {
 	entry := analysisCacheEntry{
 		Issues:  make([]analysisCacheIssue, 0, len(issues)),
@@ -137,6 +145,7 @@ func buildAnalysisCacheEntry(
 
 	cachedIssues, err := buildAnalysisCacheIssues(
 		issues,
+		sourceRoot,
 		func(issue Issue) (token.Position, error) {
 			return pass.Fset.Position(issue.Pos), nil
 		},
@@ -150,13 +159,17 @@ func buildAnalysisCacheEntry(
 	return entry, nil
 }
 
-func buildRepoAnalysisCacheEntry(issues []Issue) (analysisCacheEntry, error) {
+func buildRepoAnalysisCacheEntry(
+	issues []Issue,
+	sourceRoot string,
+) (analysisCacheEntry, error) {
 	entry := analysisCacheEntry{
 		Issues: make([]analysisCacheIssue, 0, len(issues)),
 	}
 
 	cachedIssues, err := buildAnalysisCacheIssues(
 		issues,
+		sourceRoot,
 		func(issue Issue) (token.Position, error) {
 			return issuePosition(issue), nil
 		},
@@ -174,6 +187,7 @@ func buildStandaloneAnalysisCacheEntry(
 	l *linter,
 	issues []Issue,
 	dependencies []analysisCacheImportedFact,
+	sourceRoot string,
 ) (analysisCacheEntry, error) {
 	entry := analysisCacheEntry{
 		Exports:      cachedExportsForLinter(l),
@@ -182,6 +196,7 @@ func buildStandaloneAnalysisCacheEntry(
 
 	cachedIssues, err := buildAnalysisCacheIssues(
 		issues,
+		sourceRoot,
 		func(issue Issue) (token.Position, error) {
 			return issuePosition(issue), nil
 		},
@@ -197,9 +212,11 @@ func buildStandaloneAnalysisCacheEntry(
 
 func buildAnalysisCacheIssues(
 	issues []Issue,
+	sourceRoot string,
 	position func(Issue) (token.Position, error),
 ) ([]analysisCacheIssue, error) {
 	out := make([]analysisCacheIssue, 0, len(issues))
+	fileIDs := make(map[string]string)
 
 	for _, issue := range issues {
 		pos, err := position(issue)
@@ -213,8 +230,26 @@ func buildAnalysisCacheIssues(
 			)
 		}
 
+		relativePath, err := filepath.Rel(sourceRoot, pos.Filename)
+		if err != nil || !filepath.IsLocal(relativePath) {
+			return nil, errAnalysisCacheDisabled
+		}
+
+		fileID := fileIDs[pos.Filename]
+		if fileID == "" {
+			content, readErr := os.ReadFile(pos.Filename)
+			if readErr != nil {
+				return nil, readErr
+			}
+
+			digest := sha256.Sum256(content)
+			fileID = hex.EncodeToString(digest[:])
+			fileIDs[pos.Filename] = fileID
+		}
+
 		out = append(out, analysisCacheIssue{
-			Filename: pos.Filename,
+			Filename: filepath.ToSlash(relativePath),
+			FileID:   fileID,
 			Offset:   pos.Offset,
 			Line:     pos.Line,
 			Column:   pos.Column,

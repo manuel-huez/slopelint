@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,7 +13,10 @@ import (
 	"strings"
 )
 
-const similarityScanCacheSchema = 4
+const (
+	similarityScanCacheSchema    = 5
+	similarityScanCacheSnapshots = 16
+)
 
 type similarityScanCache struct {
 	Schema            int                       `json:"schema"`
@@ -135,8 +139,34 @@ func loadSimilarityScanCache(
 	root string,
 	moduleRoot string,
 	descriptions bool,
+	sourceDigest string,
 ) (similarityScanCache, bool) {
-	data, err := os.ReadFile(similarityScanCachePath(root, moduleRoot, descriptions))
+	exactPath := similarityScanCachePath(
+		root,
+		moduleRoot,
+		descriptions,
+		sourceDigest,
+	)
+	if cache, ok := readSimilarityScanCache(exactPath); ok {
+		return cache, true
+	}
+
+	snapshots := similarityScanCacheSnapshotsInDir(filepath.Dir(exactPath))
+	for _, snapshot := range slices.Backward(snapshots) {
+		if snapshot.path == exactPath {
+			continue
+		}
+
+		if cache, ok := readSimilarityScanCache(snapshot.path); ok {
+			return cache, true
+		}
+	}
+
+	return similarityScanCache{}, false
+}
+
+func readSimilarityScanCache(path string) (similarityScanCache, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return similarityScanCache{}, false
 	}
@@ -368,7 +398,19 @@ func storeSimilarityScanCache(
 		return err
 	}
 
-	return writeFileAtomically(similarityScanCachePath(root, moduleRoot, descriptions), data)
+	path := similarityScanCachePath(
+		root,
+		moduleRoot,
+		descriptions,
+		sourceDigest,
+	)
+	if err := writeFileAtomically(path, data); err != nil {
+		return err
+	}
+
+	pruneSimilarityScanCacheSnapshots(filepath.Dir(path))
+
+	return nil
 }
 
 func (cache similarityScanCache) replayFindings(moduleRoot string) ([]similarityFinding, bool) {
@@ -598,12 +640,18 @@ func (cache similarityScanCache) restoreBlockMetadata(blocks []*similarityBlock)
 
 func (cache similarityScanCache) blocksForFile(
 	root string,
-	relativePath string,
+	cachedPath string,
+	currentPath string,
 ) []*similarityBlock {
 	blocks := make([]*similarityBlock, 0)
+	packageDir := filepath.ToSlash(filepath.Dir(currentPath))
+
+	if packageDir == "." {
+		packageDir = ""
+	}
 
 	for _, cached := range cache.Blocks {
-		if cached.RelativePath != relativePath {
+		if cached.RelativePath != cachedPath {
 			continue
 		}
 
@@ -613,20 +661,20 @@ func (cache similarityScanCache) blocksForFile(
 		}
 
 		blocks = append(blocks, &similarityBlock{
-			Identity:     cached.Identity,
+			Identity:     currentPath + "::" + cached.Symbol,
 			Symbol:       cached.Symbol,
-			PackageDir:   cached.PackageDir,
-			PackageParts: similarityPathParts(cached.PackageDir),
-			RelativePath: cached.RelativePath,
+			PackageDir:   packageDir,
+			PackageParts: similarityPathParts(packageDir),
+			RelativePath: currentPath,
 			Content:      cached.Content,
 			ContentHash:  cached.ContentHash,
 			Position: token.Position{
-				Filename: filepath.Join(root, filepath.FromSlash(cached.RelativePath)),
+				Filename: filepath.Join(root, filepath.FromSlash(currentPath)),
 				Offset:   cached.Offset,
 				Line:     cached.Line,
 				Column:   cached.Column,
 			},
-			IsTest:                 cached.IsTest,
+			IsTest:                 strings.HasSuffix(currentPath, "_test.go"),
 			Structural:             structural,
 			VectorCount:            cached.VectorCount,
 			Description:            cached.Description,
@@ -647,10 +695,21 @@ func similarityBlockHashes(blocks []similarityCachedBlock) map[string]string {
 	return hashes
 }
 
-func similarityScanCachePath(root, moduleRoot string, descriptions bool) string {
-	absolute, err := filepath.Abs(moduleRoot)
+func similarityScanCachePath(
+	root string,
+	moduleRoot string,
+	descriptions bool,
+	sourceDigest string,
+) string {
+	location, err := repositoryCacheLocationForDir(moduleRoot)
 	if err != nil {
-		absolute = moduleRoot
+		absolute, absoluteErr := filepath.Abs(moduleRoot)
+		if absoluteErr != nil {
+			absolute = moduleRoot
+		}
+
+		location.identity = absolute
+		location.relativeDir = "."
 	}
 
 	descriptionMode := "off"
@@ -658,8 +717,57 @@ func similarityScanCachePath(root, moduleRoot string, descriptions bool) string 
 		descriptionMode = "on"
 	}
 
-	sum := sha256.Sum256([]byte(absolute + "\x00descriptions=" + descriptionMode))
+	sum := sha256.Sum256([]byte(
+		location.identity + "\x00" + location.relativeDir +
+			"\x00descriptions=" + descriptionMode,
+	))
 	key := hex.EncodeToString(sum[:])
 
-	return filepath.Join(root, "repos", key[:2], key[2:]+".json")
+	return filepath.Join(root, "repos", key[:2], key[2:], sourceDigest+".json")
+}
+
+func pruneSimilarityScanCacheSnapshots(dir string) {
+	snapshots := similarityScanCacheSnapshotsInDir(dir)
+	for _, snapshot := range snapshots[:max(0, len(snapshots)-similarityScanCacheSnapshots)] {
+		_ = os.Remove(snapshot.path)
+	}
+}
+
+type similarityScanCacheSnapshot struct {
+	path    string
+	modTime int64
+}
+
+func similarityScanCacheSnapshotsInDir(dir string) []similarityScanCacheSnapshot {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	snapshots := make([]similarityScanCacheSnapshot, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+
+		snapshots = append(snapshots, similarityScanCacheSnapshot{
+			path:    filepath.Join(dir, entry.Name()),
+			modTime: info.ModTime().UnixNano(),
+		})
+	}
+
+	slices.SortFunc(snapshots, func(left, right similarityScanCacheSnapshot) int {
+		if order := cmp.Compare(left.modTime, right.modTime); order != 0 {
+			return order
+		}
+
+		return strings.Compare(left.path, right.path)
+	})
+
+	return snapshots
 }

@@ -1,13 +1,13 @@
 {
   "schema": 10,
-  "source_digest": "56d749c3b5855630af5e5ac17123f2d3bdff2718597d69addb62ef1034140959",
+  "source_digest": "012a5663e69bb8145747594d72458ab422567b86f94800479f4dab0ed0747ab0",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 2,
   "description_model": "gpt-5.6-luna",
   "description_effort": "medium",
-  "description_digest": "80b9f7daf51bd7f6a3309f32b30cfeb1d9cd634f12b7ceb0c19678c99aaa4455",
-  "checked_blocks": 1557,
+  "description_digest": "d534027f54d375ca172b02809f1c9f8cf946166321ca50a06658b5828b648113",
+  "checked_blocks": 1568,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",

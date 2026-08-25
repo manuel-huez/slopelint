@@ -16,6 +16,20 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+const analysisCacheDiagnosticSource = `package sample
+
+func f(s string) {
+	if s == "" { return }
+	if s == "" { println("bad") }
+}
+`
+
+func writeAnalysisCacheDiagnosticFile(t *testing.T, path string) {
+	t.Helper()
+
+	writeFile(t, path, analysisCacheDiagnosticSource)
+}
+
 func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
 	t.Parallel()
 
@@ -24,21 +38,15 @@ func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v5") {
-		t.Fatalf("analysis cache root = %q, want schema 5 suffix", root)
+	if !strings.HasSuffix(root, "analysis-v6") {
+		t.Fatalf("analysis cache root = %q, want schema 6 suffix", root)
 	}
 }
 
 func TestRunAnalysisCachesUnchangedPackage(t *testing.T) {
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func f(s string) {
-	if s == "" { return }
-	if s == "" { println("bad") }
-}
-`)
+	writeAnalysisCacheDiagnosticFile(t, filepath.Join(tmp, "sample.go"))
 
 	pkgs := loadPackagesForTest(t, tmp)
 	pkg := mustPackage(t, pkgs, "example.com/sample")
@@ -90,13 +98,7 @@ func f(s string) {
 func TestLintRepositoryCachesStandaloneResult(t *testing.T) {
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func f(s string) {
-	if s == "" { return }
-	if s == "" { println("bad") }
-}
-`)
+	writeAnalysisCacheDiagnosticFile(t, filepath.Join(tmp, "sample.go"))
 
 	issues1, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
 		MaxStates:    32,
@@ -126,7 +128,7 @@ func f(s string) {
 		t.Fatalf("cached repo lint: %v", err)
 	}
 
-	if len(hits) != 1 || hits[0] != "repo" {
+	if len(hits) != 1 || hits[0] != repoAnalysisCacheHitName {
 		t.Fatalf("expected standalone repo cache hit, got %v", hits)
 	}
 
@@ -136,6 +138,88 @@ func f(s string) {
 
 	if len(issues2) == 0 || !strings.Contains(FormatIssuePosition(issues2[0]), "sample.go:") {
 		t.Fatalf("cached issue lost source position: %#v", issues2)
+	}
+}
+
+func TestLintRepositoryCacheSharesLinkedWorktree(t *testing.T) {
+	primary := newTestModule(t)
+	cacheDir := t.TempDir()
+	writeAnalysisCacheDiagnosticFile(t, filepath.Join(primary, "sample.go"))
+	initTestGitRepository(t, primary)
+
+	first, err := LintRepository(
+		[]string{allPackagesPattern},
+		primary,
+		Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("primary lint: %v", err)
+	}
+
+	linked := addTestGitWorktree(t, primary)
+
+	var hits []string
+
+	second, err := LintRepository(
+		[]string{allPackagesPattern},
+		linked,
+		Options{
+			MaxStates:    32,
+			CacheEnabled: true,
+			cacheDir:     cacheDir,
+			CacheHitHook: func(name string) { hits = append(hits, name) },
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("linked lint: %v", err)
+	}
+
+	if !slices.Equal(hits, []string{repoAnalysisCacheHitName}) {
+		t.Fatalf("linked worktree cache hits = %v, want repo", hits)
+	}
+
+	if joinMessages(second) != joinMessages(first) {
+		t.Fatalf("linked worktree diagnostics changed")
+	}
+
+	linkedPrefix := linked + string(filepath.Separator)
+	if got := FormatIssuePosition(second[0]); !strings.HasPrefix(got, linkedPrefix) {
+		t.Fatalf("linked diagnostic path = %q, want prefix %q", got, linked)
+	}
+}
+
+func TestStandalonePackageCacheSurvivesSourceRename(t *testing.T) {
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
+	original := filepath.Join(tmp, "original.go")
+	renamed := filepath.Join(tmp, "renamed.go")
+
+	writeAnalysisCacheDiagnosticFile(t, original)
+
+	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
+
+	first := lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+	if err := os.Rename(original, renamed); err != nil {
+		t.Fatalf("rename source: %v", err)
+	}
+
+	var hits []string
+
+	opts.CacheHitHook = func(importPath string) { hits = append(hits, importPath) }
+	second := lintLoadedPackages(loadPackagesForTest(t, tmp), opts)
+
+	if !slices.Equal(hits, []string{"example.com/sample"}) {
+		t.Fatalf("renamed package cache hits = %v", hits)
+	}
+
+	if joinMessages(second) != joinMessages(first) {
+		t.Fatalf("renamed source diagnostics changed")
+	}
+
+	if got := FormatIssuePosition(second[0]); !strings.HasPrefix(got, renamed+":") {
+		t.Fatalf("renamed diagnostic path = %q, want %q", got, renamed)
 	}
 }
 
@@ -167,7 +251,7 @@ func Name(item dep.Item) string { return item.Name }
 		t.Fatalf("cached repo lint: %v", err)
 	}
 
-	if len(hits) != 1 || hits[0] != "repo" {
+	if len(hits) != 1 || hits[0] != repoAnalysisCacheHitName {
 		t.Fatalf("unchanged dependency cache hits = %v, want repo", hits)
 	}
 
@@ -432,6 +516,29 @@ func initTestGitRepository(t *testing.T, dir string) string {
 	}
 
 	return strings.TrimSpace(string(output))
+}
+
+func addTestGitWorktree(t *testing.T, primary string) string {
+	t.Helper()
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	add := exec.Command("git", "worktree", "add", "--detach", linked, "HEAD")
+
+	add.Dir = primary
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("add linked worktree: %v: %s", err, output)
+	}
+
+	t.Cleanup(func() {
+		remove := exec.Command("git", "worktree", "remove", "--force", linked)
+
+		remove.Dir = primary
+		if output, err := remove.CombinedOutput(); err != nil {
+			t.Errorf("remove linked worktree: %v: %s", err, output)
+		}
+	})
+
+	return linked
 }
 
 func commitTestGitRepository(t *testing.T, dir, path, message string) {

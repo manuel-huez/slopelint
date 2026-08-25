@@ -167,7 +167,12 @@ func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, e
 			return nil, cacheErr
 		}
 
-		cache, ok := loadSimilarityScanCache(cacheRoot, root, descriptionRuntime.enabled)
+		cache, ok := loadSimilarityScanCache(
+			cacheRoot,
+			root,
+			descriptionRuntime.enabled,
+			sourceDigest,
+		)
 		if ok && cache.covers(sourceDigest, descriptionRuntime.enabled) {
 			findings, valid := cache.replayFindings(root)
 			if valid {
@@ -213,7 +218,12 @@ func analyzeChangedSimilarCode(
 
 	var previous similarityScanCache
 	if opts.CacheEnabled {
-		previous, _ = loadSimilarityScanCache(cacheRoot, root, descriptionRuntime.enabled)
+		previous, _ = loadSimilarityScanCache(
+			cacheRoot,
+			root,
+			descriptionRuntime.enabled,
+			sourceDigest,
+		)
 	}
 
 	files, blocks, err := collectSimilarityBlocks(pkgs, root, previous)
@@ -669,57 +679,6 @@ func reviewSimilarityFindings(
 	}
 
 	return acceptances, issues, nil
-}
-
-type similarityBlockSourceFile struct {
-	pkg          *LoadedPackage
-	fset         *token.FileSet
-	file         *ast.File
-	absolutePath string
-	relativePath string
-	contentHash  string
-}
-
-func collectSimilarityBlocks(
-	pkgs []*LoadedPackage,
-	root string,
-	previous similarityScanCache,
-) ([]similarityCachedFile, []*similarityBlock, error) {
-	files, err := similaritySourceFiles(pkgs, root)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	previousFiles := make(map[string]string, len(previous.Files))
-	for _, file := range previous.Files {
-		previousFiles[file.RelativePath] = file.ContentHash
-	}
-
-	cachedFiles := make([]similarityCachedFile, 0, len(files))
-	blocks := make([]*similarityBlock, 0, len(previous.Blocks))
-
-	for _, file := range files {
-		cachedFiles = append(cachedFiles, similarityCachedFile{
-			RelativePath: file.relativePath,
-			ContentHash:  file.contentHash,
-		})
-
-		if previousFiles[file.relativePath] == file.contentHash {
-			blocks = append(blocks, previous.blocksForFile(root, file.relativePath)...)
-			continue
-		}
-
-		fileBlocks, err := collectSimilaritySourceFileBlocks(file, root)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		blocks = append(blocks, fileBlocks...)
-	}
-
-	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Identity < blocks[j].Identity })
-
-	return cachedFiles, blocks, nil
 }
 
 func similaritySourceFiles(

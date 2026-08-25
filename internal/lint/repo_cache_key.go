@@ -50,9 +50,9 @@ func repoAnalysisCacheKey(
 	dir string,
 	opts Options,
 	similarity *SimilarityOptions,
-) (string, error) {
+) (string, string, error) {
 	if similarity != nil && (similarity.embedder != nil || similarity.describer != nil) {
-		return "", errAnalysisCacheDisabled
+		return "", "", errAnalysisCacheDisabled
 	}
 
 	maxStates := opts.MaxStates
@@ -66,23 +66,32 @@ func repoAnalysisCacheKey(
 
 	absoluteDir, err := filepath.Abs(dir)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	goEnvironment, goWork, err := repoAnalysisGoEnvironment(absoluteDir)
+	location, err := repositoryCacheLocationForDir(absoluteDir)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+
+	goEnvironment, goWork, err := repoAnalysisGoEnvironment(
+		absoluteDir,
+		location.sourceRoot,
+	)
+	if err != nil {
+		return "", "", err
 	}
 
 	goPath, _ := exec.LookPath("go")
 
 	sourceDigest, err := repoAnalysisSourceDigest(absoluteDir, patterns, goWork)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	fingerprint := struct {
 		Schema      int                                `json:"schema"`
+		Repository  string                             `json:"repository"`
 		Dir         string                             `json:"dir"`
 		Patterns    []string                           `json:"patterns"`
 		MaxStates   int                                `json:"max_states"`
@@ -94,7 +103,8 @@ func repoAnalysisCacheKey(
 		Similarity  *repoAnalysisSimilarityFingerprint `json:"similarity,omitempty"`
 	}{
 		Schema:      analysisCacheSchema,
-		Dir:         absoluteDir,
+		Repository:  location.identity,
+		Dir:         location.relativeDir,
 		Patterns:    append([]string(nil), patterns...),
 		MaxStates:   maxStates,
 		ClosedWorld: opts.ClosedWorld,
@@ -105,7 +115,48 @@ func repoAnalysisCacheKey(
 		Similarity:  repoAnalysisSimilarityKey(similarity),
 	}
 
-	return analysisCacheFingerprintKey(fingerprint)
+	key, err := analysisCacheFingerprintKey(fingerprint)
+
+	return key, location.sourceRoot, err
+}
+
+type repositoryCacheLocation struct {
+	sourceRoot  string
+	identity    string
+	relativeDir string
+}
+
+func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) {
+	absoluteDir, err := filepath.Abs(dir)
+	if err != nil {
+		return repositoryCacheLocation{}, err
+	}
+
+	sourceRoot, _, commonDir, gitErr := repoAnalysisGitInfo(absoluteDir)
+
+	var identity string
+
+	if gitErr == nil {
+		identity = commonDir
+	} else {
+		sourceRoot, err = findGoModuleRoot(absoluteDir)
+		if err != nil {
+			return repositoryCacheLocation{}, err
+		}
+
+		identity = sourceRoot
+	}
+
+	relativeDir, err := filepath.Rel(sourceRoot, absoluteDir)
+	if err != nil || !filepath.IsLocal(relativeDir) {
+		return repositoryCacheLocation{}, errAnalysisCacheDisabled
+	}
+
+	return repositoryCacheLocation{
+		sourceRoot:  filepath.Clean(sourceRoot),
+		identity:    filepath.Clean(identity),
+		relativeDir: filepath.ToSlash(relativeDir),
+	}, nil
 }
 
 type repoAnalysisSimilarityFingerprint struct {
@@ -154,7 +205,7 @@ func repoAnalysisSimilarityKey(
 	return fingerprint
 }
 
-func repoAnalysisGoEnvironment(dir string) (string, string, error) {
+func repoAnalysisGoEnvironment(dir, sourceRoot string) (string, string, error) {
 	names := []string{
 		"AR",
 		"CC",
@@ -187,14 +238,24 @@ func repoAnalysisGoEnvironment(dir string) (string, string, error) {
 		return "", "", err
 	}
 
-	var work struct {
-		GoWork string `json:"GOWORK"`
-	}
-	if err := json.Unmarshal(output, &work); err != nil {
+	var environment map[string]string
+	if err := json.Unmarshal(output, &environment); err != nil {
 		return "", "", err
 	}
 
-	return string(output), work.GoWork, nil
+	// Git worktrees relocate checkout-owned paths without changing build semantics.
+	// Normalize those paths so identical linked worktrees share exact-result cache keys.
+	goWork := environment["GOWORK"]
+	for name, value := range environment {
+		environment[name] = strings.ReplaceAll(value, sourceRoot, "$WORKTREE")
+	}
+
+	normalized, err := json.Marshal(environment)
+	if err != nil {
+		return "", "", err
+	}
+
+	return string(normalized), goWork, nil
 }
 
 func repoAnalysisSourceDigest(
@@ -206,7 +267,7 @@ func repoAnalysisSourceDigest(
 		return "", errAnalysisCacheDisabled
 	}
 
-	root, objectFormat, err := repoAnalysisGitRoot(dir)
+	root, objectFormat, _, err := repoAnalysisGitInfo(dir)
 	if err == nil {
 		submodulesSupported, submoduleErr := repoAnalysisSubmodulesSupported(root)
 		if submoduleErr != nil {
@@ -257,23 +318,42 @@ func repoAnalysisLocalPatterns(patterns []string) bool {
 	return true
 }
 
-func repoAnalysisGitRoot(dir string) (string, string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel", "--show-object-format")
+func repoAnalysisGitInfo(dir string) (string, string, string, error) {
+	const gitInfoFieldCount = 3
+
+	cmd := exec.Command(
+		"git",
+		"rev-parse",
+		"--show-toplevel",
+		"--show-object-format",
+		"--git-common-dir",
+	)
 	cmd.Dir = dir
 
 	output, err := cmd.Output()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
-	output = bytes.TrimSuffix(output, []byte{'\n'})
-
-	separator := bytes.LastIndexByte(output, '\n')
-	if separator <= 0 || separator == len(output)-1 {
-		return "", "", errors.New("git did not return repository root and object format")
+	fields := bytes.Split(bytes.TrimSpace(output), []byte{'\n'})
+	if len(fields) != gitInfoFieldCount {
+		return "", "", "", errors.New(
+			"git did not return repository root, object format, and common directory",
+		)
 	}
 
-	return filepath.Clean(string(output[:separator])), string(output[separator+1:]), nil
+	root := filepath.Clean(string(fields[0]))
+	commonDir := filepath.Clean(string(fields[2]))
+
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(root, commonDir)
+	}
+
+	if resolved, resolveErr := filepath.EvalSymlinks(commonDir); resolveErr == nil {
+		commonDir = resolved
+	}
+
+	return root, string(fields[1]), commonDir, nil
 }
 
 func repoAnalysisGitDigest(root, objectFormat string) (string, error) {

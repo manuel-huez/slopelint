@@ -99,6 +99,11 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
+	sourceDigest, err := similaritySourceDigest(pkgs, tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
@@ -116,7 +121,9 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(similarityScanCachePath(cacheRoot, tmp, false)); err != nil {
+	if _, err := os.Stat(
+		similarityScanCachePath(cacheRoot, tmp, false, sourceDigest),
+	); err != nil {
 		t.Fatalf("finding scan cache: %v", err)
 	}
 
@@ -214,6 +221,11 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
+	sourceDigest, err := similaritySourceDigest(pkgs, tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
 		cacheDir:            cacheDir,
 		AcceptedPairIDs:     []string{similarityAcceptAllID},
@@ -242,7 +254,9 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(similarityScanCachePath(cacheRoot, tmp, false)); !os.IsNotExist(err) {
+	if _, err := os.Stat(
+		similarityScanCachePath(cacheRoot, tmp, false, sourceDigest),
+	); !os.IsNotExist(err) {
 		t.Fatalf("cache-disabled scan result exists: %v", err)
 	}
 }

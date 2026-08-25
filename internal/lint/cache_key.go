@@ -234,14 +234,11 @@ func analysisCacheFiles(pass *analysis.Pass) ([]analysisCacheFile, error) {
 		}
 
 		sum := sha256.Sum256(content)
-		files = append(files, analysisCacheFile{
-			Filename: name,
-			SHA256:   hex.EncodeToString(sum[:]),
-		})
+		files = append(files, analysisCacheFile{SHA256: hex.EncodeToString(sum[:])})
 	}
 
 	sort.Slice(files, func(i, j int) bool {
-		return files[i].Filename < files[j].Filename
+		return files[i].SHA256 < files[j].SHA256
 	})
 
 	return files, nil

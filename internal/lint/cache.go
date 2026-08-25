@@ -5,24 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/tools/go/analysis"
 )
 
 // Bump whenever analyzer semantics or persisted cache/replay invariants change.
 // Standalone cache keys intentionally do not follow unrelated binary releases.
-const analysisCacheSchema = 5
+const analysisCacheSchema = 6
 
 const cacheDirPerm = 0o755
+
+const repoAnalysisCacheHitName = "repo"
 
 var errAnalysisCacheDisabled = errors.New("analysis cache disabled")
 
 type analysisCache struct {
-	path string
+	path       string
+	sourceRoot string
 }
 
 type repoAnalysisCache struct {
-	path string
+	path       string
+	sourceRoot string
 }
 
 type analysisCacheEntry struct {
@@ -33,6 +35,7 @@ type analysisCacheEntry struct {
 
 type analysisCacheIssue struct {
 	Filename string `json:"filename"`
+	FileID   string `json:"file_id"`
 	Offset   int    `json:"offset"`
 	Line     int    `json:"line"`
 	Column   int    `json:"column"`
@@ -61,8 +64,7 @@ type analysisCacheExecutable struct {
 }
 
 type analysisCacheFile struct {
-	Filename string `json:"filename"`
-	SHA256   string `json:"sha256"`
+	SHA256 string `json:"sha256"`
 }
 
 type analysisCacheImportedFact struct {
@@ -71,10 +73,11 @@ type analysisCacheImportedFact struct {
 	Fact    callSummaryFact `json:"fact"`
 }
 
-func newAnalysisCache(
-	pass *analysis.Pass,
+func analysisCacheForPackage(
 	pkg *LoadedPackage,
 	opts Options,
+	namespace string,
+	keyForPackage func() (string, error),
 ) (*analysisCache, error) {
 	if !opts.CacheEnabled {
 		return nil, errAnalysisCacheDisabled
@@ -85,37 +88,14 @@ func newAnalysisCache(
 		return nil, err
 	}
 
-	key, err := analysisCacheKey(pass, pkg, opts)
+	key, err := keyForPackage()
 	if err != nil {
 		return nil, err
 	}
 
 	return &analysisCache{
-		path: filepath.Join(root, key[:2], key[2:]+".json"),
-	}, nil
-}
-
-func newStandaloneAnalysisCache(
-	pkg *LoadedPackage,
-	opts Options,
-	typeDigests map[string]string,
-) (*analysisCache, error) {
-	if !opts.CacheEnabled {
-		return nil, errAnalysisCacheDisabled
-	}
-
-	root, err := analysisCacheRoot(opts.cacheDir)
-	if err != nil {
-		return nil, err
-	}
-
-	key, err := standaloneAnalysisCacheKey(pkg, opts, typeDigests)
-	if err != nil {
-		return nil, err
-	}
-
-	return &analysisCache{
-		path: filepath.Join(root, "packages", key[:2], key[2:]+".json"),
+		path:       filepath.Join(root, namespace, key[:2], key[2:]+".json"),
+		sourceRoot: pkg.Dir,
 	}, nil
 }
 
@@ -134,13 +114,14 @@ func newRepoAnalysisCache(
 		return nil, err
 	}
 
-	key, err := repoAnalysisCacheKey(patterns, dir, opts, similarity)
+	key, sourceRoot, err := repoAnalysisCacheKey(patterns, dir, opts, similarity)
 	if err != nil {
 		return nil, err
 	}
 
 	return &repoAnalysisCache{
-		path: filepath.Join(root, "repo", key[:2], key[2:]+".json"),
+		path:       filepath.Join(root, "repo", key[:2], key[2:]+".json"),
+		sourceRoot: sourceRoot,
 	}, nil
 }
 

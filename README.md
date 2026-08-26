@@ -264,58 +264,13 @@ stale, or obsolete stamps fail before Go starts. Local mode owns semantic analys
 and writes the reviewed attestation. The digest excludes the stamp, so committing
 it does not invalidate itself.
 
-Initial model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
-similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`
-resident memory. MiniLM reached `0.977` AUC and `0.778` F1 at `102 MiB`;
-EmbeddingGemma reached `0.993` AUC and `0.778` F1 at `787 MiB`. That small
-raw-code calibration favored Jina, but did not validate behavior signatures or
-held-out contract boundaries. The stamp pins the exact GGUF file digest. Tuned in-process llama-go inference processed
-the 25-vector benchmark at `9.09 vectors/s` and the 125-vector run at
-`8.48 vectors/s`; Ollama reached `8.15` and `7.55 vectors/s`. Native peak RSS was
-about `479 MiB`.
-
-The [2026-08-26 model comparison](internal/lint/testdata/similarity_models/README.md)
-separates raw code and frozen signatures, calibrates on known pairs, and evaluates
-new held-out pairs. Its runner and public synthetic fixtures replace temporary
-model-selection probes. Private application fixtures remain local.
-
-Repo calibration uses a precision-first operating point instead of the
-benchmark's maximum-F1 threshold. Nearby production blocks require at least
-`0.970` cosine similarity in one file, `0.975` in one package, or `0.980` across
-immediate sibling or parent-child packages. Deeper package branches are not
-compared. Test blocks add `0.025`. Luna prompt calibration covered renamed equivalent functions,
-earliest/latest opposites, equivalent tests with different structure, opposite
-blank-value contracts, unknown private helpers, pointer-mutation ambiguity, and
-prompt injection inside code. Prompt v4 adds explicit Go byte/rune, nil/empty,
-ordering, and boundary rules. Paired low-versus-medium production and test probes retained the inspected
-semantic distinctions, so low remains the default. This bounded check is not a
-guarantee of equivalent output: wording varies, and embedding similarity can
-still miss duplicates or flag different behavior. Behavior signatures require `0.950` similarity in
-one file and `0.960` in one package or an immediate sibling or parent-child
-package; tests add `0.015`. Structural similarity remains diagnostic context and
-gates neither semantic channel.
-
-Cold-start recheck (2026-08-26, CPU-only, `GOMAXPROCS=2`, isolated signature and
-vector caches, already downloaded model): a 48-block pipeline probe fell from
-64.9 s to 48.5 s with four requests and streamed embedding. Sampled process-tree
-peak RSS rose from 682 to 920 MiB, including Codex children. Provider latency
-varies; this single comparison is not a throughput guarantee. Eight-block
-requests did not beat the 16-block default consistently. Native sequence counts
-4/8/16 took median 13.48/12.92/14.41 s across two embedding-only runs, at peak
-439/506/632 MiB. Four sequences remain the memory/speed tradeoff; token limits,
-cache formats, models, and similarity thresholds are unchanged.
-
-The reasoning check used 29 labeled pairs (11 equivalent, 18 different), including
-short functions below normal lint eligibility plus longer guard/filter, partial
-mutation, error wrapping, and sink assertion cases. At current signature-channel
-thresholds, low detected 4 equivalent pairs and flagged 2 different pairs;
-medium detected 1 and flagged 2. These adversarial probes are not a repository
-accuracy estimate. Both efforts preserved the checked distinctions in their
-bundled text, but both overgeneralized a sink write-count assertion into a
-per-row write claim. Medium also omitted partial mutation on failure in one
-boundary summary. Higher effort did not consistently improve quality, so the
-optimization retains low and does not invalidate existing descriptions. Review
-semantic findings against source; neither effort makes them proof of equivalence.
+Source-code thresholds are `0.970` in one file, `0.975` in one package, and
+`0.980` across immediate sibling or parent-child packages; tests add `0.025`.
+Description thresholds are `0.950` in one file and `0.960` in one package or
+immediate sibling or parent-child packages; tests add `0.015`. Deeper package
+branches are not compared. Structural similarity provides diagnostic context
+and gates neither semantic channel. Review findings against source; similarity
+is not proof of equivalent behavior.
 
 Useful `slopelint` flags:
 
@@ -361,6 +316,9 @@ go test ./...
 `check-code-health.sh` runs `go vet`, `slopelint` on this repo, `go test`, and
 `golangci-lint run`. Local slopelint runs perform cached semantic similarity
 analysis. CI runs validate the committed stamp without model inference.
+
+For local model comparisons, see the
+[benchmark run instructions](internal/lint/testdata/similarity_models/README.md).
 
 ## Current Limits
 

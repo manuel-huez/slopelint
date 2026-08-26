@@ -30,7 +30,7 @@ func writeAnalysisCacheDiagnosticFile(t *testing.T, path string) {
 	writeFile(t, path, analysisCacheDiagnosticSource)
 }
 
-func TestAnalysisCacheSchemaIncludesValidationWorkRule(t *testing.T) {
+func TestAnalysisCacheSchemaIncludesTestSupportRole(t *testing.T) {
 	t.Parallel()
 
 	root, err := analysisCacheRoot(t.TempDir())
@@ -38,8 +38,8 @@ func TestAnalysisCacheSchemaIncludesValidationWorkRule(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v10") {
-		t.Fatalf("analysis cache root = %q, want schema 10 suffix", root)
+	if !strings.HasSuffix(root, "analysis-v11") {
+		t.Fatalf("analysis cache root = %q, want schema 11 suffix", root)
 	}
 }
 

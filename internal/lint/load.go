@@ -30,10 +30,19 @@ type packageMeta struct {
 	CgoFiles        []string `json:"CgoFiles"`
 	CompiledGoFiles []string `json:"CompiledGoFiles"`
 	Imports         []string `json:"Imports"`
+	TestImports     []string `json:"TestImports"`
+	XTestImports    []string `json:"XTestImports"`
 	Match           []string `json:"Match"`
-	Error           *struct {
+	Module          *struct {
+		Path string `json:"Path"`
+		Dir  string `json:"Dir"`
+		Main bool   `json:"Main"`
+	} `json:"Module"`
+	Error *struct {
 		Err string `json:"Err"`
 	} `json:"Error"`
+
+	testOnly bool
 }
 
 func resolvePackageMetadata(
@@ -67,6 +76,7 @@ func resolvePackageMetadata(
 	sort.Slice(targets, func(i, j int) bool {
 		return targets[i].targetImportPath() < targets[j].targetImportPath()
 	})
+	classifyTestOnlyPackages(targets, byImportPath, patterns, dir)
 
 	return targets, byImportPath, nil
 }
@@ -80,7 +90,7 @@ func goList(patterns []string, dir string) ([]*packageMeta, error) {
 			"-test",
 			"-export",
 			"-compiled",
-			"-json=Dir,ImportPath,Name,ForTest,Export,BuildID,GoFiles,CgoFiles,CompiledGoFiles,Imports,Match,Error",
+			"-json=Dir,ImportPath,Name,ForTest,Export,BuildID,GoFiles,CgoFiles,CompiledGoFiles,Imports,TestImports,XTestImports,Match,Module,Error",
 		},
 		patterns...,
 	)
@@ -325,6 +335,7 @@ func loadOne(meta *packageMeta, loadContext *packageLoadContext) (*LoadedPackage
 		Name:       meta.Name,
 		Dir:        meta.Dir,
 		repoFiles:  repoFiles,
+		testOnly:   meta.testOnly,
 		FSet:       fset,
 		Files:      files,
 		TypesPkg:   typesPkg,

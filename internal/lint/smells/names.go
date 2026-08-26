@@ -1,11 +1,33 @@
 package smells
 
 import (
+	"go/ast"
 	"go/types"
+	"path/filepath"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
+
+func (l *Runner) checkTestSupportFilenames() {
+	for _, file := range l.pkg.TestSupportFiles {
+		if ast.IsGenerated(file) {
+			continue
+		}
+
+		name := strings.TrimSuffix(filepath.Base(l.fileName(file)), ".go")
+		// A delimited marker also permits Go's trailing OS and architecture suffixes.
+		if strings.Contains("_"+name+"_", "_test_support_") {
+			continue
+		}
+
+		l.report(
+			file.Package,
+			"test_support_filename",
+			"shared test-only source must use a test_support filename marker (for example helpers_test_support.go); keep .go so other packages' tests can import it",
+		)
+	}
+}
 
 func splitIdentifierWords(name string) []string {
 	var words []string

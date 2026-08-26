@@ -9,7 +9,7 @@ import (
 
 // Bump whenever analyzer semantics or persisted cache/replay invariants change.
 // Standalone cache keys intentionally do not follow unrelated binary releases.
-const analysisCacheSchema = 10
+const analysisCacheSchema = 11
 
 const analysisCacheTypeDigestRefreshLimit = 8
 
@@ -82,6 +82,7 @@ type analysisCacheExecutable struct {
 
 type analysisCacheFile struct {
 	SHA256 string `json:"sha256"`
+	Name   string `json:"name,omitempty"`
 }
 
 type analysisCacheImportedFact struct {

@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -162,6 +163,29 @@ func joinMessages(issues []Issue) string {
 	return strings.Join(parts, "\n")
 }
 
+func issueRelativePaths(t *testing.T, dir string, issues []Issue, kind string) []string {
+	t.Helper()
+
+	var paths []string
+
+	for _, issue := range issues {
+		if issue.Kind != kind {
+			continue
+		}
+
+		path, err := filepath.Rel(dir, issuePosition(issue).Filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		paths = append(paths, filepath.ToSlash(path))
+	}
+
+	slices.Sort(paths)
+
+	return paths
+}
+
 func hasIssueKind(issues []Issue, kind string) bool {
 	for _, issue := range issues {
 		if issue.Kind == kind {
@@ -223,6 +247,7 @@ func lintLoadedPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 
 		files, err := analysisCacheSourceFiles(pkg.repoFiles, pkg.Dir)
 		inputs = append(inputs, repoPackageInput{
+			testOnly:   pkg.testOnly,
 			importPath: pkg.ImportPath,
 			name:       pkg.Name,
 			dir:        pkg.Dir,

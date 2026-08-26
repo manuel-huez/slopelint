@@ -316,7 +316,7 @@ Useful env vars:
 All repos share one global content-addressed cache root. Content hashes and
 repo-scoped scan keys prevent collisions:
 
-- `os.UserCacheDir()/slopelint/analysis-v10`
+- `os.UserCacheDir()/slopelint/analysis-v11`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 - `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`
@@ -404,8 +404,26 @@ Machine-readable diagnostic categories emitted today:
 - `bool_mode_param`
 - `optional_result_triple`
 - `prod_must_panic`
+- `test_support_filename`
 - `sentinel_error_break`
 - `invalid_contract`
+
+Production-only checks exclude internal test-support packages when a module-root
+`./...` scan proves they are reachable only through test imports, including
+transitive helpers. Public packages, unused packages, partial scans, and the
+single-package analyzer retain conservative production classification. Structural
+checks still run on test-support code. Package cache keys include this role, so
+adding a production importer invalidates affected findings without clearing
+semantic descriptions or vectors.
+
+Handwritten `.go` files in these shared test-support packages must use an
+underscore-delimited `test_support` marker: for example,
+`instrument_symbol_test_support.go` or `capture_test_support_linux.go`.
+Helpers used only inside one package belong in `_test.go`; shared helpers must
+remain ordinary `.go` files so other packages' tests can import them. Filenames
+never establish test-only status or disable production checks. Generated files
+are excluded from this naming check. Naming changes invalidate only the affected
+test-support package's structural cache; ordinary source renames retain reuse.
 
 ## Contracts
 

@@ -155,6 +155,7 @@ func similarityPackagesForTargets(
 }
 
 type repoPackageInput struct {
+	testOnly   bool
 	importPath string
 	name       string
 	dir        string
@@ -203,6 +204,7 @@ func repoPackageInputsForTargets(
 
 		files, err := analysisCacheSourceFiles(paths, target.Dir)
 		inputs[index] = repoPackageInput{
+			testOnly:   target.testOnly,
 			importPath: target.targetImportPath(),
 			name:       target.Name,
 			dir:        target.Dir,
@@ -392,6 +394,7 @@ func lintRepoPackage(
 
 		return standaloneAnalysisCacheKey(
 			input.importPath,
+			input.testOnly,
 			input.imports,
 			input.files,
 			opts,

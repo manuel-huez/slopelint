@@ -26,15 +26,16 @@ type Finding struct {
 
 // Package carries parsed package data shared by all smell checks.
 type Package struct {
-	Files           []*ast.File
-	ProductionFiles []*ast.File
-	TestFiles       []*ast.File
-	ProductionDecls []ast.Decl
-	ProductionFuncs []*ast.FuncDecl
-	ProductionTypes []*ast.TypeSpec
-	FSet            *token.FileSet
-	TypesPkg        *types.Package
-	TypesInfo       *types.Info
+	Files            []*ast.File
+	ProductionFiles  []*ast.File
+	TestFiles        []*ast.File
+	TestSupportFiles []*ast.File
+	ProductionDecls  []ast.Decl
+	ProductionFuncs  []*ast.FuncDecl
+	ProductionTypes  []*ast.TypeSpec
+	FSet             *token.FileSet
+	TypesPkg         *types.Package
+	TypesInfo        *types.Info
 }
 
 type Runner struct {
@@ -60,6 +61,7 @@ func RunDefault(pkg *Package) []Finding {
 	r.checkUnnamedLargeTableTests()
 	r.checkRepeatedTestFixtures()
 	r.checkConstValueTests()
+	r.checkTestSupportFilenames()
 
 	return r.findings
 }

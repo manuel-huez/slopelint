@@ -16,15 +16,16 @@ func (l *linter) scanPackageSmells() {
 
 func (l *linter) smellsPackage() *smellcheck.Package {
 	return &smellcheck.Package{
-		Files:           l.index.files,
-		ProductionFiles: l.index.productionFiles,
-		TestFiles:       l.index.testFiles,
-		ProductionDecls: l.index.productionDecls,
-		ProductionFuncs: l.index.productionFuncs,
-		ProductionTypes: l.index.productionTypes,
-		FSet:            l.pkg.FSet,
-		TypesPkg:        l.pkg.TypesPkg,
-		TypesInfo:       l.pkg.TypesInfo,
+		Files:            l.index.files,
+		ProductionFiles:  l.index.productionFiles,
+		TestFiles:        l.index.testFiles,
+		TestSupportFiles: l.index.testSupportFiles,
+		ProductionDecls:  l.index.productionDecls,
+		ProductionFuncs:  l.index.productionFuncs,
+		ProductionTypes:  l.index.productionTypes,
+		FSet:             l.pkg.FSet,
+		TypesPkg:         l.pkg.TypesPkg,
+		TypesInfo:        l.pkg.TypesInfo,
 	}
 }
 

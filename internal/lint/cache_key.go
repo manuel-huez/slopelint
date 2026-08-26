@@ -55,6 +55,7 @@ func analysisCacheKey(
 type standaloneAnalysisCacheFingerprint struct {
 	Schema       int                    `json:"schema"`
 	Package      string                 `json:"package"`
+	TestOnly     bool                   `json:"test_only"`
 	MaxStates    int                    `json:"max_states"`
 	SkipDeadCode bool                   `json:"skip_dead_code"`
 	GoRuntime    string                 `json:"go_runtime"`
@@ -69,6 +70,7 @@ type analysisCacheTypeAPI struct {
 
 func standaloneAnalysisCacheKey(
 	importPath string,
+	testOnly bool,
 	importPaths []string,
 	files []analysisCacheSourceFile,
 	opts Options,
@@ -82,9 +84,17 @@ func standaloneAnalysisCacheKey(
 	cacheFiles := make([]analysisCacheFile, len(files))
 	for index, file := range files {
 		cacheFiles[index] = analysisCacheFile{SHA256: file.SHA256}
+		// Only test-support naming diagnostics depend on ordinary source filenames.
+		if testOnly {
+			cacheFiles[index].Name = file.RelativePath
+		}
 	}
 
 	sort.Slice(cacheFiles, func(i, j int) bool {
+		if cacheFiles[i].SHA256 == cacheFiles[j].SHA256 {
+			return cacheFiles[i].Name < cacheFiles[j].Name
+		}
+
 		return cacheFiles[i].SHA256 < cacheFiles[j].SHA256
 	})
 
@@ -101,6 +111,7 @@ func standaloneAnalysisCacheKey(
 	return analysisCacheFingerprintKey(standaloneAnalysisCacheFingerprint{
 		Schema:       analysisCacheSchema,
 		Package:      importPath,
+		TestOnly:     testOnly,
 		MaxStates:    maxStates,
 		SkipDeadCode: opts.skipDeadCode,
 		GoRuntime:    runtime.Version() + "/" + runtime.GOOS + "/" + runtime.GOARCH,

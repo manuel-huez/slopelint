@@ -311,7 +311,7 @@ Useful env vars:
 All repos share one global content-addressed cache root. Content hashes and
 repo-scoped scan keys prevent collisions:
 
-- `os.UserCacheDir()/slopelint/analysis-v8`
+- `os.UserCacheDir()/slopelint/analysis-v9`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 - `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`

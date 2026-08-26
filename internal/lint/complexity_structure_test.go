@@ -131,6 +131,69 @@ var errBad error
 	}
 }
 
+func TestInputGuardPreparation(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup string
+		want  bool
+	}{
+		{name: "local predicate", setup: `if !valid(value.name) { return errBad }`},
+		{name: "validation result", setup: `name, err := identity(value.name); if err != nil { return err }; _ = name`},
+		{name: "cleanup", setup: `defer value.body.Close()`},
+		{name: "conditional cleanup", setup: `if value.body != nil { defer func() { _ = value.body.Close() }() }`},
+		{name: "work", setup: `println(value.name)`, want: true},
+		{name: "eager defer argument", setup: `defer cleanup(read(value.name))`, want: true},
+		{name: "cleanup with work", setup: `if value.body != nil { println(value.name); defer value.body.Close() }`, want: true},
+		{name: "network result", setup: `response, err := http.Get(value.name); if err != nil { return err }; defer response.Body.Close()`, want: true},
+		{name: "predicate with work argument", setup: `if !valid(read(value.name)) { return errBad }`, want: true},
+		{name: "helper with work", setup: `name := read(value.name); _ = name`, want: true},
+		{name: "predicate with mutation", setup: `if change(value.name) { return errBad }`, want: true},
+		{name: "recursive predicate", setup: `if recurse(value.name) { return errBad }`, want: true},
+		{name: "basic format", setup: `name := format(value.name); _ = name`},
+		{name: "format with method", setup: `name := describe(value.name); _ = name`, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+)
+
+type req struct { name, kind string; size int; body io.ReadCloser }
+var errBad error
+var calls int
+var _ = http.Get
+func valid(value string) bool { return value != "" }
+func identity(value string) (string, error) { return value, nil }
+func read(value string) string { println(value); return value }
+func cleanup(string) {}
+func change(value string) bool { calls++; return value != "" }
+func recurse(value string) bool { return recurse(value) }
+func format(value string) string { return fmt.Sprintf("%s", value) }
+type loud string
+func (value loud) String() string { calls++; return string(value) }
+func describe(value string) string { return fmt.Sprintf("%s", loud(value)) }
+
+func f(value req) error {
+`+test.setup+`
+	if value.name == "" { return errBad }
+	if value.kind == "" { return errBad }
+	if value.size == 0 { return errBad }
+	return nil
+}
+`)
+
+			issues := lintInDir(t, tmp)
+			if got := hasIssueKind(issues, "guard_complexity"); got != test.want {
+				t.Fatalf("guard finding = %v, want %v:\n%s", got, test.want, joinMessages(issues))
+			}
+		})
+	}
+}
+
 func TestSkipsInterleavedErrorGuards(t *testing.T) {
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample

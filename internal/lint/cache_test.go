@@ -38,7 +38,7 @@ func TestAnalysisCacheSchemaIncludesConstValueTestRule(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v8") {
+	if !strings.HasSuffix(root, "analysis-v9") {
 		t.Fatalf("analysis cache root = %q, want schema 8 suffix", root)
 	}
 }

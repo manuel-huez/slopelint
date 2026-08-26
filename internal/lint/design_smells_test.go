@@ -762,6 +762,35 @@ func run() bool {
 	}
 }
 
+func TestSkipsStoredResultWrappers(t *testing.T) {
+	for _, storage := range []string{
+		"chan parseResult", "map[string]parseResult", "[]parseResult",
+		"[2]*parseResult", "struct { outcome parseResult }", "chan *aliasResult",
+	} {
+		t.Run(storage, func(t *testing.T) {
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+type parseResult struct {
+	value string
+	err error
+}
+
+func parse() parseResult { return parseResult{value: "x"} }
+type aliasResult = parseResult
+`)
+			writeFile(t, filepath.Join(tmp, "storage.go"),
+				"package sample\ntype storage "+storage+"\n")
+
+			issues := lintInDir(t, tmp)
+			if hasIssueKind(issues, "result_wrapper") {
+				t.Fatalf("stored result cannot become multiple return values:\n%s",
+					joinMessages(issues))
+			}
+		})
+	}
+}
+
 func TestDetectsRepeatedTestFixtureContent(t *testing.T) {
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample

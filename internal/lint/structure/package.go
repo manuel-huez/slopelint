@@ -35,10 +35,11 @@ type Package struct {
 }
 
 type Runner struct {
-	pkg         *Package
-	findings    []Finding
-	reported    map[string]struct{}
-	renderCache map[ast.Node]string
+	pkg                 *Package
+	findings            []Finding
+	reported            map[string]struct{}
+	renderCache         map[ast.Node]string
+	validationPureFuncs map[*types.Func]bool
 }
 
 type blockContext struct {

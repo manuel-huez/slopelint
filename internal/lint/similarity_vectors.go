@@ -13,6 +13,74 @@ import (
 	"unicode/utf8"
 )
 
+func populateSimilarityScanVectors(
+	scanBlocks []*similarityBlock,
+	descriptionBlocks []*similarityBlock,
+	allBlocks []*similarityBlock,
+	descriptionRuntime similarityDescriptionRuntime,
+	cacheRoot string,
+	opts SimilarityOptions,
+) (vectors similarityVectorMatrices, descriptionDigest string, err error) {
+	embeddings := newSimilarityEmbeddingRuntime(opts.embedder, cacheRoot, opts.CacheEnabled)
+	defer func() { err = errors.Join(err, embeddings.close()) }()
+
+	if !descriptionRuntime.enabled {
+		vectors.Source, err = embeddings.populate(scanBlocks, similaritySourceVector)
+		return vectors, "", err
+	}
+
+	changed := make(map[*similarityBlock]struct{}, len(descriptionBlocks))
+	for _, block := range descriptionBlocks {
+		changed[block] = struct{}{}
+	}
+
+	var restored []*similarityBlock
+
+	for _, block := range scanBlocks {
+		if _, ok := changed[block]; !ok {
+			restored = append(restored, block)
+		}
+	}
+
+	// Queue at most one delivery per changed block plus restored metadata. These
+	// pointers already belong to the scan; source inference must not stall Codex.
+	ready := make(chan []*similarityBlock, len(descriptionBlocks)+1)
+	descriptionRuntime.ready = func(blocks []*similarityBlock) { ready <- blocks }
+
+	var descriptionErr error
+
+	go func() {
+		defer close(ready)
+
+		if len(restored) > 0 {
+			ready <- restored
+		}
+
+		_, descriptionErr = populateSimilarityDescriptions(
+			descriptionBlocks, descriptionRuntime, cacheRoot, opts.CacheEnabled,
+		)
+		if descriptionErr == nil {
+			descriptionDigest, descriptionErr = similarityDescriptionsDigest(allBlocks)
+		}
+	}()
+
+	vectors.Source, err = embeddings.populate(scanBlocks, similaritySourceVector)
+	if err != nil {
+		// Drain even on failure so producers can finish persisting valid records.
+		for range ready {
+		}
+	} else {
+		vectors.Description, err = embeddings.populateDescriptions(scanBlocks, ready)
+	}
+
+	err = errors.Join(err, descriptionErr)
+	if err != nil {
+		return similarityVectorMatrices{}, "", err
+	}
+
+	return vectors, descriptionDigest, nil
+}
+
 func similarityEmbeddingInputs(content string) []string {
 	if len(content) <= similarityEmbeddingChunkBytes {
 		return []string{content}
@@ -74,7 +142,56 @@ func (runtime *similarityEmbeddingRuntime) populate(
 	blocks []*similarityBlock,
 	kind similarityVectorKind,
 ) (similarityVectorMatrix, error) {
-	blockInputs, inputs := similarityVectorInputs(blocks, kind)
+	blockInputs, inputs := similarityVectorInputs(blocks, kind, nil)
+	if err := runtime.populateInputs(inputs); err != nil {
+		return similarityVectorMatrix{}, err
+	}
+
+	return packSimilarityVectors(blocks, blockInputs, kind)
+}
+
+func (runtime *similarityEmbeddingRuntime) populateDescriptions(
+	blocks []*similarityBlock,
+	ready <-chan []*similarityBlock,
+) (similarityVectorMatrix, error) {
+	byKey := make(map[string]*similarityVectorInput)
+	byBlock := make(map[*similarityBlock][]*similarityVectorInput, len(blocks))
+
+	var err error
+	for batch := range ready {
+		if err != nil {
+			continue
+		}
+
+		blockInputs, inputs := similarityVectorInputs(batch, similarityDescriptionVector, byKey)
+		err = runtime.populateInputs(inputs)
+
+		for index, block := range batch {
+			byBlock[block] = blockInputs[index]
+		}
+	}
+
+	if err != nil {
+		return similarityVectorMatrix{}, err
+	}
+
+	// Deduplicate across deliveries, then pack once in scan order. Completion
+	// order must not change vector indices or re-embed shared signatures.
+	blockInputs := make([][]*similarityVectorInput, len(blocks))
+	for index, block := range blocks {
+		blockInputs[index] = byBlock[block]
+		if len(blockInputs[index]) == 0 {
+			return similarityVectorMatrix{}, fmt.Errorf(
+				"description missing for %s",
+				block.Identity,
+			)
+		}
+	}
+
+	return packSimilarityVectors(blocks, blockInputs, similarityDescriptionVector)
+}
+
+func (runtime *similarityEmbeddingRuntime) populateInputs(inputs []*similarityVectorInput) error {
 	missing := loadCachedSimilarityVectors(inputs, runtime.cacheRoot, runtime.cache)
 
 	if len(missing) > 0 {
@@ -89,7 +206,7 @@ func (runtime *similarityEmbeddingRuntime) populate(
 		})
 
 		if err := runtime.ensureEngine(); err != nil {
-			return similarityVectorMatrix{}, err
+			return err
 		}
 
 		for start := 0; start < len(missing); {
@@ -112,14 +229,14 @@ func (runtime *similarityEmbeddingRuntime) populate(
 				runtime.cacheRoot,
 				runtime.cache,
 			); err != nil {
-				return similarityVectorMatrix{}, err
+				return err
 			}
 
 			start = end
 		}
 	}
 
-	return packSimilarityVectors(blocks, blockInputs, kind)
+	return nil
 }
 
 func (runtime *similarityEmbeddingRuntime) ensureEngine() error {
@@ -157,8 +274,14 @@ func (runtime *similarityEmbeddingRuntime) close() error {
 func similarityVectorInputs(
 	blocks []*similarityBlock,
 	kind similarityVectorKind,
+	byKey map[string]*similarityVectorInput,
 ) ([][]*similarityVectorInput, []*similarityVectorInput) {
-	byKey := make(map[string]*similarityVectorInput, len(blocks))
+	if byKey == nil {
+		byKey = make(map[string]*similarityVectorInput, len(blocks))
+	}
+
+	var inputs []*similarityVectorInput
+
 	blockInputs := make([][]*similarityVectorInput, len(blocks))
 
 	for blockIndex, block := range blocks {
@@ -194,23 +317,14 @@ func similarityVectorInputs(
 					),
 				}
 				byKey[key] = input
+				inputs = append(inputs, input)
 			}
 
 			blockInputs[blockIndex] = append(blockInputs[blockIndex], input)
 		}
 	}
 
-	keys := make([]string, 0, len(byKey))
-	for key := range byKey {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	inputs := make([]*similarityVectorInput, 0, len(keys))
-	for _, key := range keys {
-		inputs = append(inputs, byKey[key])
-	}
+	sort.Slice(inputs, func(i, j int) bool { return inputs[i].CacheKey < inputs[j].CacheKey })
 
 	return blockInputs, inputs
 }

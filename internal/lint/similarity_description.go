@@ -43,6 +43,7 @@ const (
 
 type similarityDescriptionRuntime struct {
 	describer similarityDescriber
+	ready     func([]*similarityBlock)
 	enabled   bool
 }
 
@@ -111,6 +112,7 @@ type similarityDescriptionCollector struct {
 	cacheEnabled bool
 	accepted     int
 	total        int
+	ready        func([]*similarityBlock)
 }
 
 type similarityDescriptionListRule struct {
@@ -167,12 +169,16 @@ func populateSimilarityDescriptions(
 
 	inputs, keys := indexSimilarityDescriptionInputs(blocks, similarityDescriptionSignatures)
 
-	missing := loadCachedSimilarityDescriptions(inputs, keys, cacheRoot, cacheEnabled)
+	missing, cached := loadCachedSimilarityDescriptions(inputs, keys, cacheRoot, cacheEnabled)
+	if runtime.ready != nil && len(cached) > 0 {
+		runtime.ready(cached)
+	}
+
 	if len(missing) > 0 {
 		if err := generateSimilarityDescriptions(
 			missing,
 			inputs,
-			runtime.describer,
+			runtime,
 			cacheRoot,
 			cacheEnabled,
 		); err != nil {
@@ -195,7 +201,7 @@ func populateSimilarityDetails(
 
 	inputs, keys := indexSimilarityDescriptionInputs(blocks, similarityDescriptionDetails)
 
-	missing := loadCachedSimilarityDescriptions(inputs, keys, cacheRoot, cacheEnabled)
+	missing, _ := loadCachedSimilarityDescriptions(inputs, keys, cacheRoot, cacheEnabled)
 	if len(missing) == 0 {
 		return nil
 	}
@@ -203,7 +209,7 @@ func populateSimilarityDetails(
 	return generateSimilarityDescriptions(
 		missing,
 		inputs,
-		runtime.describer,
+		runtime,
 		cacheRoot,
 		cacheEnabled,
 	)
@@ -296,8 +302,10 @@ func loadCachedSimilarityDescriptions(
 	keys []string,
 	cacheRoot string,
 	cacheEnabled bool,
-) []similarityDescriptionRequest {
+) ([]similarityDescriptionRequest, []*similarityBlock) {
 	missing := make([]similarityDescriptionRequest, 0)
+
+	var cached []*similarityBlock
 
 	for _, key := range keys {
 		input := inputs[key]
@@ -309,6 +317,8 @@ func loadCachedSimilarityDescriptions(
 				input.recordKind,
 			); ok {
 				applySimilarityDescription(input.blocks, description)
+				cached = append(cached, input.blocks...)
+
 				continue
 			}
 		}
@@ -322,17 +332,17 @@ func loadCachedSimilarityDescriptions(
 		})
 	}
 
-	return missing
+	return missing, cached
 }
 
 func generateSimilarityDescriptions(
 	missing []similarityDescriptionRequest,
 	inputs map[string]*similarityDescriptionInput,
-	describer similarityDescriber,
+	runtime similarityDescriptionRuntime,
 	cacheRoot string,
 	cacheEnabled bool,
 ) error {
-	if describer == nil {
+	if runtime.describer == nil {
 		return errors.New("codex description engine is unavailable")
 	}
 
@@ -362,8 +372,9 @@ func generateSimilarityDescriptions(
 		cacheRoot:    cacheRoot,
 		cacheEnabled: cacheEnabled,
 		total:        len(missing),
+		ready:        runtime.ready,
 	}
-	if err := describer.describe(missing, collector.accept); err != nil {
+	if err := runtime.describer.describe(missing, collector.accept); err != nil {
 		return err
 	}
 
@@ -389,11 +400,18 @@ func (collector *similarityDescriptionCollector) accept(
 		return err
 	}
 
+	var ready []*similarityBlock
+
 	for _, description := range validated {
 		request := collector.requested[description.ID]
 		collector.seen[description.ID] = struct{}{}
 		description.ID = ""
-		applySimilarityDescription(collector.inputs[request.ID].blocks, description)
+		blocks := collector.inputs[request.ID].blocks
+		applySimilarityDescription(blocks, description)
+
+		if !request.Detail {
+			ready = append(ready, blocks...)
+		}
 
 		if !collector.cacheEnabled {
 			continue
@@ -406,6 +424,10 @@ func (collector *similarityDescriptionCollector) accept(
 		); err != nil {
 			return fmt.Errorf("cache description for %s: %w", request.Location, err)
 		}
+	}
+
+	if collector.ready != nil && len(ready) > 0 {
+		collector.ready(ready)
 	}
 
 	collector.accepted += len(validated)

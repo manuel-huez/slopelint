@@ -211,11 +211,12 @@ threshold. Neither channel filters, promotes, fuses with, or weakens the other.
 
 Code in missing blocks is sent through the configured Codex service. Set
 `SLOPELINT_CODEX_DESCRIPTIONS=off` when source must stay local. Description requests
-use at most one Codex process per available Go CPU, capped at eight. A request
-holds at most 16 blocks and targets 64 KB; one larger function stays intact
-instead of being truncated. Each valid batch is cached immediately and reports progress, so
-retries request only missing IDs. Cached descriptions and vectors make later
-runs local. The complete finding set is also cached. An unchanged Git worktree
+use at most four Codex processes, independent of the Go CPU budget. Requests
+balance source sizes, hold at most 16 blocks, and target 64 KB; one larger function
+stays intact instead of being truncated. Each valid response subset is cached
+before retrying missing IDs. One local embedding context consumes completed
+signatures while remaining requests run; it never runs concurrent native calls.
+Cached descriptions and vectors make later runs local. The complete finding set is also cached. An unchanged Git worktree
 uses a source-scoped Git fingerprint and replays before package loading or model
 startup. Changed or untracked Go inputs fall through to package-level replay:
 unchanged package diagnostics and exported behavior summaries stay cached, while
@@ -281,12 +282,35 @@ compared. Test blocks add `0.025`. Luna prompt calibration covered renamed equiv
 earliest/latest opposites, equivalent tests with different structure, opposite
 blank-value contracts, unknown private helpers, pointer-mutation ambiguity, and
 prompt injection inside code. Prompt v4 adds explicit Go byte/rune, nil/empty,
-ordering, and boundary rules. A low-versus-medium production-and-test replay
-retained checked semantics while cutting local CPU and peak RSS, so low is the
-default. Behavior signatures require `0.950` similarity in
+ordering, and boundary rules. Paired low-versus-medium production and test probes retained the inspected
+semantic distinctions, so low remains the default. This bounded check is not a
+guarantee of equivalent output: wording varies, and embedding similarity can
+still miss duplicates or flag different behavior. Behavior signatures require `0.950` similarity in
 one file and `0.960` in one package or an immediate sibling or parent-child
 package; tests add `0.015`. Structural similarity remains diagnostic context and
 gates neither semantic channel.
+
+Cold-start recheck (2026-08-26, CPU-only, `GOMAXPROCS=2`, isolated signature and
+vector caches, already downloaded model): a 48-block pipeline probe fell from
+64.9 s to 48.5 s with four requests and streamed embedding. Sampled process-tree
+peak RSS rose from 682 to 920 MiB, including Codex children. Provider latency
+varies; this single comparison is not a throughput guarantee. Eight-block
+requests did not beat the 16-block default consistently. Native sequence counts
+4/8/16 took median 13.48/12.92/14.41 s across two embedding-only runs, at peak
+439/506/632 MiB. Four sequences remain the memory/speed tradeoff; token limits,
+cache formats, models, and similarity thresholds are unchanged.
+
+The reasoning check used 29 labeled pairs (11 equivalent, 18 different), including
+short functions below normal lint eligibility plus longer guard/filter, partial
+mutation, error wrapping, and sink assertion cases. At current signature-channel
+thresholds, low detected 4 equivalent pairs and flagged 2 different pairs;
+medium detected 1 and flagged 2. These adversarial probes are not a repository
+accuracy estimate. Both efforts preserved the checked distinctions in their
+bundled text, but both overgeneralized a sink write-count assertion into a
+per-row write claim. Medium also omitted partial mutation on failure in one
+boundary summary. Higher effort did not consistently improve quality, so the
+optimization retains low and does not invalidate existing descriptions. Review
+semantic findings against source; neither effort makes them proof of equivalence.
 
 Useful `slopelint` flags:
 

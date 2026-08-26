@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -435,53 +434,6 @@ func restoreUnchangedSimilarityScan(
 	return result, nil
 }
 
-func populateSimilarityScanVectors(
-	scanBlocks []*similarityBlock,
-	descriptionBlocks []*similarityBlock,
-	allBlocks []*similarityBlock,
-	descriptionRuntime similarityDescriptionRuntime,
-	cacheRoot string,
-	opts SimilarityOptions,
-) (vectors similarityVectorMatrices, descriptionDigest string, err error) {
-	embeddings := newSimilarityEmbeddingRuntime(opts.embedder, cacheRoot, opts.CacheEnabled)
-	defer func() { err = errors.Join(err, embeddings.close()) }()
-
-	// Source inference and remote behavior description are independent channels.
-	// Overlap them so a cold baseline uses local CPU while Codex waits remotely.
-	descriptionDone := make(chan struct{})
-
-	var descriptionErr error
-
-	go func() {
-		descriptionDigest, descriptionErr = populateIncrementalSimilarityDescriptions(
-			descriptionBlocks,
-			allBlocks,
-			descriptionRuntime,
-			cacheRoot,
-			opts.CacheEnabled,
-		)
-
-		close(descriptionDone)
-	}()
-
-	vectors.Source, err = embeddings.populate(scanBlocks, similaritySourceVector)
-
-	<-descriptionDone
-
-	if err = errors.Join(err, descriptionErr); err != nil {
-		return similarityVectorMatrices{}, "", err
-	}
-
-	if descriptionRuntime.enabled {
-		vectors.Description, err = embeddings.populate(
-			scanBlocks,
-			similarityDescriptionVector,
-		)
-	}
-
-	return vectors, descriptionDigest, err
-}
-
 func previousSimilarityScan(
 	blocks []*similarityBlock,
 	previous similarityScanCache,
@@ -500,29 +452,6 @@ func previousSimilarityScan(
 	previous.restoreBlockMetadata(blocks)
 
 	return previous, changed, len(changed) == 0
-}
-
-func populateIncrementalSimilarityDescriptions(
-	changed []*similarityBlock,
-	all []*similarityBlock,
-	runtime similarityDescriptionRuntime,
-	cacheRoot string,
-	cacheEnabled bool,
-) (string, error) {
-	if !runtime.enabled {
-		return "", nil
-	}
-
-	if _, err := populateSimilarityDescriptions(
-		changed,
-		runtime,
-		cacheRoot,
-		cacheEnabled,
-	); err != nil {
-		return "", err
-	}
-
-	return similarityDescriptionsDigest(all)
 }
 
 func changedSimilarityBlocks(

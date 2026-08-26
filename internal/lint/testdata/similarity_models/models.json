@@ -4,31 +4,834 @@
     "sha256": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
     "url": "https://registry.ollama.ai/v2/unclemusclez/jina-embeddings-v2-base-code/blobs/sha256:33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
     "size": 322997312,
-    "prefix": "",
-    "max_tokens": 2048
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "llama.cpp",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4
   },
   {
     "name": "minilm",
     "url": "https://registry.ollama.ai/v2/library/all-minilm/blobs/sha256:797b70c4edf85907fe0a49eb85811256f65fa0f7bf52166b147fd16be2be4662",
     "sha256": "797b70c4edf85907fe0a49eb85811256f65fa0f7bf52166b147fd16be2be4662",
     "size": 45949216,
-    "prefix": "",
-    "max_tokens": 512
+    "max_tokens": 512,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "llama.cpp",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "coderank",
+    "repo": "handwoven8588/CodeRankEmbed-GGUF",
+    "revision": "14be4104a35a5f4e32e6e225955ccf271fb5b956",
+    "file": "CodeRankEmbed-f16.gguf",
+    "url": "https://huggingface.co/handwoven8588/CodeRankEmbed-GGUF/resolve/14be4104a35a5f4e32e6e225955ccf271fb5b956/CodeRankEmbed-f16.gguf",
+    "sha256": "8017b5bca09c111b5264cd686274b361aa54213a10cdf307eced3a3a0940444c",
+    "size": 274181632,
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "llama.cpp",
+    "pooling": "cls",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "codesage-small",
+    "repo": "codesage/codesage-small-v2",
+    "revision": "4844c2f24b25e181aa43ca058cc73dd2622565c1",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "56c469dba9e31869bb7dfceb9b3d76ac06549d1ba869509d8eb4e8aeb31d62d1",
+        "size": 201
+      },
+      {
+        "file": "added_tokens.json",
+        "sha256": "be51626fc17a571a8bc541b4928ab176f6758143edfe088f23e24e85419cac3c",
+        "size": 40
+      },
+      {
+        "file": "config.json",
+        "sha256": "6f7a8471e75554651f14bf1937106538ab4e56e7f0f92bf161c3089cb2915c89",
+        "size": 863
+      },
+      {
+        "file": "config_codesage.py",
+        "sha256": "4f052f7b2f58dfdba733dcfcee2b30922d38cd28b7cc87fead82714a51e844c0",
+        "size": 2124
+      },
+      {
+        "file": "merges.txt",
+        "sha256": "74b0a4bc1a97ebc1d227f69231b18574374ba052fb945b0fa0aa91d3c32504a2",
+        "size": 441848
+      },
+      {
+        "file": "modeling_codesage.py",
+        "sha256": "394729b0da3a568482ac3729d9765bc32e9d28c28853bbddea73392af04b7b31",
+        "size": 16227
+      },
+      {
+        "file": "modules.json",
+        "sha256": "73348a3d8f8ae4cc5f851dc6b98be3ea819390b814e83656d5eebbadf75fe43e",
+        "size": 385
+      },
+      {
+        "file": "pytorch_model.bin",
+        "sha256": "c6ed7fe6ee8a40b7830482c91421733f4c66c6e128adfc87dd9cee1a41936c14",
+        "size": 256041857
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "883e03a457df81d352c233ff7d86df2449a869c5784ecadbab38d312f8682972",
+        "size": 54
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "a348084b22d8c09d9a5793923c615d25ffc6212ec6a28b668105dfafe31a9dd3",
+        "size": 582
+      },
+      {
+        "file": "tokenization_codesage.py",
+        "sha256": "7888eeade965b67f64609f2d556ab2726fc27eaf81754e5528b1b74411beeba4",
+        "size": 10667
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "2c567569afbed978f7ead0a45481edaf4a5f3115d34eed5598addb39b00d8c8b",
+        "size": 2057758
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "fda5827d6a5562e32174a7a61465607e6b0efe726c2aa53bc6db667ca0109f44",
+        "size": 798
+      },
+      {
+        "file": "vocab.json",
+        "sha256": "20175afb9f164fad4829aca2279f8df7eeff1e2e3f671378aaa287a740aff09f",
+        "size": 776993
+      }
+    ],
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "openvino-fp32",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "codesage-base",
+    "repo": "codesage/codesage-base-v2",
+    "revision": "92eac4f44c8674638f039f1b0d8280f2539cb4c7",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "56c469dba9e31869bb7dfceb9b3d76ac06549d1ba869509d8eb4e8aeb31d62d1",
+        "size": 201
+      },
+      {
+        "file": "added_tokens.json",
+        "sha256": "be51626fc17a571a8bc541b4928ab176f6758143edfe088f23e24e85419cac3c",
+        "size": 40
+      },
+      {
+        "file": "config.json",
+        "sha256": "f9f0772a1b9ebb09ed23aa21b87369c51329382d3b77e3a459893cf18e40e7f8",
+        "size": 863
+      },
+      {
+        "file": "config_codesage.py",
+        "sha256": "0e3bf1fa9ce5db97a82b07e04a3dd29b5446d750a5aad0316aae9b3e84da4499",
+        "size": 2124
+      },
+      {
+        "file": "merges.txt",
+        "sha256": "74b0a4bc1a97ebc1d227f69231b18574374ba052fb945b0fa0aa91d3c32504a2",
+        "size": 441848
+      },
+      {
+        "file": "modeling_codesage.py",
+        "sha256": "394729b0da3a568482ac3729d9765bc32e9d28c28853bbddea73392af04b7b31",
+        "size": 16227
+      },
+      {
+        "file": "modules.json",
+        "sha256": "73348a3d8f8ae4cc5f851dc6b98be3ea819390b814e83656d5eebbadf75fe43e",
+        "size": 385
+      },
+      {
+        "file": "pytorch_model.bin",
+        "sha256": "4a3ec46f2ba2027c541e159b4f1598ddbc4043ad41ac2b1f704adc69b96bcbfe",
+        "size": 709569721
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "883e03a457df81d352c233ff7d86df2449a869c5784ecadbab38d312f8682972",
+        "size": 54
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "a348084b22d8c09d9a5793923c615d25ffc6212ec6a28b668105dfafe31a9dd3",
+        "size": 582
+      },
+      {
+        "file": "tokenization_codesage.py",
+        "sha256": "7888eeade965b67f64609f2d556ab2726fc27eaf81754e5528b1b74411beeba4",
+        "size": 10667
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "2c567569afbed978f7ead0a45481edaf4a5f3115d34eed5598addb39b00d8c8b",
+        "size": 2057758
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "fda5827d6a5562e32174a7a61465607e6b0efe726c2aa53bc6db667ca0109f44",
+        "size": 798
+      },
+      {
+        "file": "vocab.json",
+        "sha256": "20175afb9f164fad4829aca2279f8df7eeff1e2e3f671378aaa287a740aff09f",
+        "size": 776993
+      }
+    ],
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "openvino-fp32",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "codesage-small-torch-fp32",
+    "repo": "codesage/codesage-small-v2",
+    "revision": "4844c2f24b25e181aa43ca058cc73dd2622565c1",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "56c469dba9e31869bb7dfceb9b3d76ac06549d1ba869509d8eb4e8aeb31d62d1",
+        "size": 201
+      },
+      {
+        "file": "added_tokens.json",
+        "sha256": "be51626fc17a571a8bc541b4928ab176f6758143edfe088f23e24e85419cac3c",
+        "size": 40
+      },
+      {
+        "file": "config.json",
+        "sha256": "6f7a8471e75554651f14bf1937106538ab4e56e7f0f92bf161c3089cb2915c89",
+        "size": 863
+      },
+      {
+        "file": "config_codesage.py",
+        "sha256": "4f052f7b2f58dfdba733dcfcee2b30922d38cd28b7cc87fead82714a51e844c0",
+        "size": 2124
+      },
+      {
+        "file": "merges.txt",
+        "sha256": "74b0a4bc1a97ebc1d227f69231b18574374ba052fb945b0fa0aa91d3c32504a2",
+        "size": 441848
+      },
+      {
+        "file": "modeling_codesage.py",
+        "sha256": "394729b0da3a568482ac3729d9765bc32e9d28c28853bbddea73392af04b7b31",
+        "size": 16227
+      },
+      {
+        "file": "modules.json",
+        "sha256": "73348a3d8f8ae4cc5f851dc6b98be3ea819390b814e83656d5eebbadf75fe43e",
+        "size": 385
+      },
+      {
+        "file": "pytorch_model.bin",
+        "sha256": "c6ed7fe6ee8a40b7830482c91421733f4c66c6e128adfc87dd9cee1a41936c14",
+        "size": 256041857
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "883e03a457df81d352c233ff7d86df2449a869c5784ecadbab38d312f8682972",
+        "size": 54
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "a348084b22d8c09d9a5793923c615d25ffc6212ec6a28b668105dfafe31a9dd3",
+        "size": 582
+      },
+      {
+        "file": "tokenization_codesage.py",
+        "sha256": "7888eeade965b67f64609f2d556ab2726fc27eaf81754e5528b1b74411beeba4",
+        "size": 10667
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "2c567569afbed978f7ead0a45481edaf4a5f3115d34eed5598addb39b00d8c8b",
+        "size": 2057758
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "fda5827d6a5562e32174a7a61465607e6b0efe726c2aa53bc6db667ca0109f44",
+        "size": 798
+      },
+      {
+        "file": "vocab.json",
+        "sha256": "20175afb9f164fad4829aca2279f8df7eeff1e2e3f671378aaa287a740aff09f",
+        "size": 776993
+      }
+    ],
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "torch-fp32",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4,
+    "model_name": "codesage-small"
+  },
+  {
+    "name": "codesage-small-onnx-fp32",
+    "repo": "codesage/codesage-small-v2",
+    "revision": "4844c2f24b25e181aa43ca058cc73dd2622565c1",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "56c469dba9e31869bb7dfceb9b3d76ac06549d1ba869509d8eb4e8aeb31d62d1",
+        "size": 201
+      },
+      {
+        "file": "added_tokens.json",
+        "sha256": "be51626fc17a571a8bc541b4928ab176f6758143edfe088f23e24e85419cac3c",
+        "size": 40
+      },
+      {
+        "file": "config.json",
+        "sha256": "6f7a8471e75554651f14bf1937106538ab4e56e7f0f92bf161c3089cb2915c89",
+        "size": 863
+      },
+      {
+        "file": "config_codesage.py",
+        "sha256": "4f052f7b2f58dfdba733dcfcee2b30922d38cd28b7cc87fead82714a51e844c0",
+        "size": 2124
+      },
+      {
+        "file": "merges.txt",
+        "sha256": "74b0a4bc1a97ebc1d227f69231b18574374ba052fb945b0fa0aa91d3c32504a2",
+        "size": 441848
+      },
+      {
+        "file": "modeling_codesage.py",
+        "sha256": "394729b0da3a568482ac3729d9765bc32e9d28c28853bbddea73392af04b7b31",
+        "size": 16227
+      },
+      {
+        "file": "modules.json",
+        "sha256": "73348a3d8f8ae4cc5f851dc6b98be3ea819390b814e83656d5eebbadf75fe43e",
+        "size": 385
+      },
+      {
+        "file": "pytorch_model.bin",
+        "sha256": "c6ed7fe6ee8a40b7830482c91421733f4c66c6e128adfc87dd9cee1a41936c14",
+        "size": 256041857
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "883e03a457df81d352c233ff7d86df2449a869c5784ecadbab38d312f8682972",
+        "size": 54
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "a348084b22d8c09d9a5793923c615d25ffc6212ec6a28b668105dfafe31a9dd3",
+        "size": 582
+      },
+      {
+        "file": "tokenization_codesage.py",
+        "sha256": "7888eeade965b67f64609f2d556ab2726fc27eaf81754e5528b1b74411beeba4",
+        "size": 10667
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "2c567569afbed978f7ead0a45481edaf4a5f3115d34eed5598addb39b00d8c8b",
+        "size": 2057758
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "fda5827d6a5562e32174a7a61465607e6b0efe726c2aa53bc6db667ca0109f44",
+        "size": 798
+      },
+      {
+        "file": "vocab.json",
+        "sha256": "20175afb9f164fad4829aca2279f8df7eeff1e2e3f671378aaa287a740aff09f",
+        "size": 776993
+      }
+    ],
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "onnx-fp32",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4,
+    "model_name": "codesage-small"
+  },
+  {
+    "name": "codesage-small-onnx-int8",
+    "repo": "codesage/codesage-small-v2",
+    "revision": "4844c2f24b25e181aa43ca058cc73dd2622565c1",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "56c469dba9e31869bb7dfceb9b3d76ac06549d1ba869509d8eb4e8aeb31d62d1",
+        "size": 201
+      },
+      {
+        "file": "added_tokens.json",
+        "sha256": "be51626fc17a571a8bc541b4928ab176f6758143edfe088f23e24e85419cac3c",
+        "size": 40
+      },
+      {
+        "file": "config.json",
+        "sha256": "6f7a8471e75554651f14bf1937106538ab4e56e7f0f92bf161c3089cb2915c89",
+        "size": 863
+      },
+      {
+        "file": "config_codesage.py",
+        "sha256": "4f052f7b2f58dfdba733dcfcee2b30922d38cd28b7cc87fead82714a51e844c0",
+        "size": 2124
+      },
+      {
+        "file": "merges.txt",
+        "sha256": "74b0a4bc1a97ebc1d227f69231b18574374ba052fb945b0fa0aa91d3c32504a2",
+        "size": 441848
+      },
+      {
+        "file": "modeling_codesage.py",
+        "sha256": "394729b0da3a568482ac3729d9765bc32e9d28c28853bbddea73392af04b7b31",
+        "size": 16227
+      },
+      {
+        "file": "modules.json",
+        "sha256": "73348a3d8f8ae4cc5f851dc6b98be3ea819390b814e83656d5eebbadf75fe43e",
+        "size": 385
+      },
+      {
+        "file": "pytorch_model.bin",
+        "sha256": "c6ed7fe6ee8a40b7830482c91421733f4c66c6e128adfc87dd9cee1a41936c14",
+        "size": 256041857
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "883e03a457df81d352c233ff7d86df2449a869c5784ecadbab38d312f8682972",
+        "size": 54
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "a348084b22d8c09d9a5793923c615d25ffc6212ec6a28b668105dfafe31a9dd3",
+        "size": 582
+      },
+      {
+        "file": "tokenization_codesage.py",
+        "sha256": "7888eeade965b67f64609f2d556ab2726fc27eaf81754e5528b1b74411beeba4",
+        "size": 10667
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "2c567569afbed978f7ead0a45481edaf4a5f3115d34eed5598addb39b00d8c8b",
+        "size": 2057758
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "fda5827d6a5562e32174a7a61465607e6b0efe726c2aa53bc6db667ca0109f44",
+        "size": 798
+      },
+      {
+        "file": "vocab.json",
+        "sha256": "20175afb9f164fad4829aca2279f8df7eeff1e2e3f671378aaa287a740aff09f",
+        "size": 776993
+      }
+    ],
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "onnx-int8",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4,
+    "model_name": "codesage-small"
+  },
+  {
+    "name": "codesage-small-openvino-int8",
+    "repo": "codesage/codesage-small-v2",
+    "revision": "4844c2f24b25e181aa43ca058cc73dd2622565c1",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "56c469dba9e31869bb7dfceb9b3d76ac06549d1ba869509d8eb4e8aeb31d62d1",
+        "size": 201
+      },
+      {
+        "file": "added_tokens.json",
+        "sha256": "be51626fc17a571a8bc541b4928ab176f6758143edfe088f23e24e85419cac3c",
+        "size": 40
+      },
+      {
+        "file": "config.json",
+        "sha256": "6f7a8471e75554651f14bf1937106538ab4e56e7f0f92bf161c3089cb2915c89",
+        "size": 863
+      },
+      {
+        "file": "config_codesage.py",
+        "sha256": "4f052f7b2f58dfdba733dcfcee2b30922d38cd28b7cc87fead82714a51e844c0",
+        "size": 2124
+      },
+      {
+        "file": "merges.txt",
+        "sha256": "74b0a4bc1a97ebc1d227f69231b18574374ba052fb945b0fa0aa91d3c32504a2",
+        "size": 441848
+      },
+      {
+        "file": "modeling_codesage.py",
+        "sha256": "394729b0da3a568482ac3729d9765bc32e9d28c28853bbddea73392af04b7b31",
+        "size": 16227
+      },
+      {
+        "file": "modules.json",
+        "sha256": "73348a3d8f8ae4cc5f851dc6b98be3ea819390b814e83656d5eebbadf75fe43e",
+        "size": 385
+      },
+      {
+        "file": "pytorch_model.bin",
+        "sha256": "c6ed7fe6ee8a40b7830482c91421733f4c66c6e128adfc87dd9cee1a41936c14",
+        "size": 256041857
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "883e03a457df81d352c233ff7d86df2449a869c5784ecadbab38d312f8682972",
+        "size": 54
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "a348084b22d8c09d9a5793923c615d25ffc6212ec6a28b668105dfafe31a9dd3",
+        "size": 582
+      },
+      {
+        "file": "tokenization_codesage.py",
+        "sha256": "7888eeade965b67f64609f2d556ab2726fc27eaf81754e5528b1b74411beeba4",
+        "size": 10667
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "2c567569afbed978f7ead0a45481edaf4a5f3115d34eed5598addb39b00d8c8b",
+        "size": 2057758
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "fda5827d6a5562e32174a7a61465607e6b0efe726c2aa53bc6db667ca0109f44",
+        "size": 798
+      },
+      {
+        "file": "vocab.json",
+        "sha256": "20175afb9f164fad4829aca2279f8df7eeff1e2e3f671378aaa287a740aff09f",
+        "size": 776993
+      }
+    ],
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "openvino-int8",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4,
+    "model_name": "codesage-small"
+  },
+  {
+    "name": "coderank-openvino-fp32",
+    "model_name": "coderank",
+    "runtime": "openvino-fp32",
+    "repo": "nomic-ai/CodeRankEmbed",
+    "revision": "3c4b60807d71f79b43f3c4363786d9493691f8b1",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "d02ebf56344d20f773449b15d0c10ee9a86a9178f3b3c9bfecb8b87d4350ce38",
+        "size": 296
+      },
+      {
+        "file": "config.json",
+        "sha256": "5ff856a41d0f53ef2d74520627d464bd75c2efd8f26f381bd528654895c29b6c",
+        "size": 1525
+      },
+      {
+        "file": "config_sentence_transformers.json",
+        "sha256": "06bc4c2dc7098e98669beb67cf21dc1373e44a77c7eecdf70aad6585d87190cf",
+        "size": 245
+      },
+      {
+        "file": "configuration_hf_nomic_bert.py",
+        "sha256": "8632792e922e62ab1a6feaab15baf406e223c0547a21de23ab4f520b2b36d674",
+        "size": 1955
+      },
+      {
+        "file": "model.safetensors",
+        "sha256": "827529bcd58aef0d9082e66eeff7e7d53a02f62bd005f841a26b3d3e2fb17ebe",
+        "size": 546938168
+      },
+      {
+        "file": "modeling_hf_nomic_bert.py",
+        "sha256": "502ccfb9c2d5dac976109ac2f04dc3125d8540329e5d4af92bc587d6dc65edcd",
+        "size": 52571
+      },
+      {
+        "file": "modules.json",
+        "sha256": "8f4b264b80206c830bebbdcae377e137925650a433b689343a63bdc9b3145460",
+        "size": 229
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "d8ecbf1eb946d17aec64c83e6614e5ec1b19b62498cf72a4ed4ec882c86af07e",
+        "size": 140
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a",
+        "size": 695
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "91f1def9b9391fdabe028cd3f3fcc4efd34e5d1f08c3bf2de513ebb5911a1854",
+        "size": 711649
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "7809f768ee3614618b3f1b91dcbfab4f6a9d4b79fb1ad5d17feb65a7c1bb5b7a",
+        "size": 1417
+      },
+      {
+        "file": "vocab.txt",
+        "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3",
+        "size": 231508
+      }
+    ],
+    "source_prefix": "",
+    "description_prefix": "",
+    "max_tokens": 2048,
+    "pooling": "cls",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "coderank-onnx-int8",
+    "model_name": "coderank",
+    "runtime": "onnx-int8",
+    "repo": "nomic-ai/CodeRankEmbed",
+    "revision": "3c4b60807d71f79b43f3c4363786d9493691f8b1",
+    "files": [
+      {
+        "file": "1_Pooling/config.json",
+        "sha256": "d02ebf56344d20f773449b15d0c10ee9a86a9178f3b3c9bfecb8b87d4350ce38",
+        "size": 296
+      },
+      {
+        "file": "config.json",
+        "sha256": "5ff856a41d0f53ef2d74520627d464bd75c2efd8f26f381bd528654895c29b6c",
+        "size": 1525
+      },
+      {
+        "file": "config_sentence_transformers.json",
+        "sha256": "06bc4c2dc7098e98669beb67cf21dc1373e44a77c7eecdf70aad6585d87190cf",
+        "size": 245
+      },
+      {
+        "file": "configuration_hf_nomic_bert.py",
+        "sha256": "8632792e922e62ab1a6feaab15baf406e223c0547a21de23ab4f520b2b36d674",
+        "size": 1955
+      },
+      {
+        "file": "model.safetensors",
+        "sha256": "827529bcd58aef0d9082e66eeff7e7d53a02f62bd005f841a26b3d3e2fb17ebe",
+        "size": 546938168
+      },
+      {
+        "file": "modeling_hf_nomic_bert.py",
+        "sha256": "502ccfb9c2d5dac976109ac2f04dc3125d8540329e5d4af92bc587d6dc65edcd",
+        "size": 52571
+      },
+      {
+        "file": "modules.json",
+        "sha256": "8f4b264b80206c830bebbdcae377e137925650a433b689343a63bdc9b3145460",
+        "size": 229
+      },
+      {
+        "file": "sentence_bert_config.json",
+        "sha256": "d8ecbf1eb946d17aec64c83e6614e5ec1b19b62498cf72a4ed4ec882c86af07e",
+        "size": 140
+      },
+      {
+        "file": "special_tokens_map.json",
+        "sha256": "5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a",
+        "size": 695
+      },
+      {
+        "file": "tokenizer.json",
+        "sha256": "91f1def9b9391fdabe028cd3f3fcc4efd34e5d1f08c3bf2de513ebb5911a1854",
+        "size": 711649
+      },
+      {
+        "file": "tokenizer_config.json",
+        "sha256": "7809f768ee3614618b3f1b91dcbfab4f6a9d4b79fb1ad5d17feb65a7c1bb5b7a",
+        "size": 1417
+      },
+      {
+        "file": "vocab.txt",
+        "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3",
+        "size": 231508
+      }
+    ],
+    "source_prefix": "",
+    "description_prefix": "",
+    "max_tokens": 2048,
+    "pooling": "cls",
+    "threads": 2,
+    "batch": 4
   },
   {
     "name": "gemma",
-    "url": "https://registry.ollama.ai/v2/library/embeddinggemma/blobs/sha256:0800cbac9c2064dde519420e75e512a83cb360de3ad5df176185dc69652fc515",
-    "sha256": "0800cbac9c2064dde519420e75e512a83cb360de3ad5df176185dc69652fc515",
-    "size": 621867104,
-    "prefix": "task: sentence similarity | query: ",
-    "max_tokens": 2048
+    "url": "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/0f741b5a6585bd53aeb15cd1372c56f2a0f65e12/embeddinggemma-300M-Q8_0.gguf",
+    "sha256": "b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63",
+    "size": 333590944,
+    "max_tokens": 2048,
+    "source_prefix": "task: sentence similarity | query: ",
+    "description_prefix": "task: sentence similarity | query: ",
+    "runtime": "llama.cpp",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4,
+    "repo": "ggml-org/embeddinggemma-300M-GGUF",
+    "revision": "0f741b5a6585bd53aeb15cd1372c56f2a0f65e12",
+    "file": "embeddinggemma-300M-Q8_0.gguf"
+  },
+  {
+    "name": "jina-code-0.5b",
+    "repo": "jinaai/jina-code-embeddings-0.5b-GGUF",
+    "revision": "941797c2653f7f0425a06a860d5035f77a685731",
+    "file": "jina-code-embeddings-0.5b-Q8_0.gguf",
+    "url": "https://huggingface.co/jinaai/jina-code-embeddings-0.5b-GGUF/resolve/941797c2653f7f0425a06a860d5035f77a685731/jina-code-embeddings-0.5b-Q8_0.gguf",
+    "sha256": "2f8aa3f34f1fae493ff9f6f7894ca7ba390b0d9a58fa0b4e65709a041beb0dc5",
+    "size": 531065120,
+    "max_tokens": 2048,
+    "source_prefix": "Candidate code snippet:\n",
+    "description_prefix": "Candidate comment:\n",
+    "pooling": "last",
+    "runtime": "llama.cpp",
+    "threads": 2,
+    "batch": 4
   },
   {
     "name": "qwen",
     "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf",
     "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
     "size": 639150592,
-    "prefix": "Instruct: Identify code or descriptions with the same observable behavior, including outputs, side effects, errors, and boundaries.\nQuery:",
-    "max_tokens": 2048
+    "max_tokens": 2048,
+    "source_prefix": "Instruct: Identify code or descriptions with the same observable behavior, including outputs, side effects, errors, and boundaries.\nQuery:",
+    "description_prefix": "Instruct: Identify code or descriptions with the same observable behavior, including outputs, side effects, errors, and boundaries.\nQuery:",
+    "runtime": "llama.cpp",
+    "pooling": "last",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "jina-native",
+    "sha256": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
+    "url": "https://registry.ollama.ai/v2/unclemusclez/jina-embeddings-v2-base-code/blobs/sha256:33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
+    "size": 322997312,
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "native",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "coderank-native",
+    "repo": "handwoven8588/CodeRankEmbed-GGUF",
+    "revision": "14be4104a35a5f4e32e6e225955ccf271fb5b956",
+    "file": "CodeRankEmbed-f16.gguf",
+    "url": "https://huggingface.co/handwoven8588/CodeRankEmbed-GGUF/resolve/14be4104a35a5f4e32e6e225955ccf271fb5b956/CodeRankEmbed-f16.gguf",
+    "sha256": "8017b5bca09c111b5264cd686274b361aa54213a10cdf307eced3a3a0940444c",
+    "size": 274181632,
+    "max_tokens": 2048,
+    "source_prefix": "",
+    "description_prefix": "",
+    "runtime": "native",
+    "pooling": "cls",
+    "threads": 2,
+    "batch": 4
+  },
+  {
+    "name": "jina-code-0.5b-openvino-fp32",
+    "repo": "jinaai/jina-code-embeddings-0.5b",
+    "revision": "4db235132dafbe56a8b9c5f59b59795ecf58a4a7",
+    "max_tokens": 2048,
+    "source_prefix": "Candidate code snippet:\n",
+    "description_prefix": "Candidate comment:\n",
+    "pooling": "last",
+    "runtime": "openvino-fp32",
+    "threads": 2,
+    "batch": 4,
+    "files": [
+      {
+        "file": "config.json",
+        "sha256": "9ae2cc0f76583dc60a377f31661375b089d215f77583848181cda32bec9848a0",
+        "size": 1501
+      },
+      {
+        "file": "config_sentence_transformers.json",
+        "sha256": "bcb2a4ddfa892851f071f868a2d4863c31180a1199626bf072ff7b1b9f6c22b7",
+        "size": 877
+      },
+      {
+        "file": "merges.txt",
+        "sha256": "85407d96ccd088398c5df07b7c764ed04dcc084b0e746f70016c16968be5e490",
+        "size": 1671852
+      },
+      {
+        "file": "model.safetensors",
+        "sha256": "e4be672e203959409ac76ded4387f324d17539f3456cab628bd66bd5d0439675",
+        "size": 988096088
+      },
+      {
+        "file": "modules.json",
+        "sha256": "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf",
+        "size": 349
+      },
+      {
+        "file": "vocab.json",
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+        "size": 2776833
+      }
+    ],
+    "model_name": "jina-code-embeddings-0.5b"
+  },
+  {
+    "name": "gemma-qat-q4",
+    "url": "https://huggingface.co/ggml-org/embeddinggemma-300M-qat-q4_0-GGUF/resolve/8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73/embeddinggemma-300M-qat-Q4_0.gguf",
+    "sha256": "50d28e22432a148f6f8a86eab3700f92add5d1f54baf7790675a2a4dadbccf26",
+    "size": 277852192,
+    "max_tokens": 2048,
+    "source_prefix": "task: sentence similarity | query: ",
+    "description_prefix": "task: sentence similarity | query: ",
+    "runtime": "llama.cpp",
+    "pooling": "mean",
+    "threads": 2,
+    "batch": 4,
+    "repo": "ggml-org/embeddinggemma-300M-qat-q4_0-GGUF",
+    "revision": "8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73",
+    "file": "embeddinggemma-300M-qat-Q4_0.gguf"
   }
 ]

@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"os"
 	"os/exec"
 	"syscall"
@@ -19,26 +20,31 @@ import (
 )
 
 const (
-	modelBenchmarkSource      = "source"
-	modelBenchmarkDescription = "description"
+	modelBenchmarkSource        = "source"
+	modelBenchmarkDescription   = "description"
+	modelBenchmarkNormTolerance = 1e-5
 )
 
 type modelBenchmarkPair struct {
-	Name             string `json:"name"`
-	Left             string `json:"left"`
-	Right            string `json:"right"`
-	LeftDescription  string `json:"left_description"`
-	RightDescription string `json:"right_description"`
-	Test             bool   `json:"test"`
-	Tier             int    `json:"tier"`
+	Name                string `json:"name"`
+	Left                string `json:"left"`
+	Right               string `json:"right"`
+	LeftDescription     string `json:"left_description"`
+	RightDescription    string `json:"right_description"`
+	LeftNormalizedHash  string `json:"left_normalized_sha256"`
+	RightNormalizedHash string `json:"right_normalized_sha256"`
+	Test                bool   `json:"test"`
+	Tier                int    `json:"tier"`
 }
 
 type modelBenchmarkConfig struct {
-	Corpus    string `json:"corpus"`
-	Output    string `json:"output"`
-	ModelPath string `json:"model_path"`
-	Prefix    string `json:"prefix"`
-	MaxTokens int    `json:"max_tokens"`
+	Corpus            string `json:"corpus"`
+	Output            string `json:"output"`
+	ModelPath         string `json:"model_path"`
+	Vectors           string `json:"vectors"`
+	SourcePrefix      string `json:"source_prefix"`
+	DescriptionPrefix string `json:"description_prefix"`
+	MaxTokens         int    `json:"max_tokens"`
 }
 
 // TestSimilarityModelBenchmark is opt-in: ordinary tests never download models
@@ -61,23 +67,24 @@ func TestSimilarityModelBenchmark(t *testing.T) {
 
 	pairs, blocks, tokenCounts, corpusDigest := modelBenchmarkBlocks(t, config.Corpus)
 	result := map[string]any{"tokens": tokenCounts, "corpus_sha256": corpusDigest}
-	start := time.Now()
 
-	if config.ModelPath == "" {
-		modelBenchmarkDescriptions(t, blocks)
-
-		result["signature_seconds"] = time.Since(start).Seconds()
-		result["records"] = blocks
-	} else {
+	switch {
+	case config.Vectors != "":
+		result = modelBenchmarkImportedVectors(t, config, pairs, blocks, corpusDigest)
+	case config.ModelPath == "":
+		modelBenchmarkExport(t, pairs, blocks, result)
+	default:
 		modelBenchmarkScore(t, config, pairs, blocks, result)
 	}
 
-	var usage syscall.Rusage
-	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
-		t.Fatal(err)
-	}
+	if config.Vectors == "" {
+		var usage syscall.Rusage
+		if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+			t.Fatal(err)
+		}
 
-	result["peak_rss_kib"] = usage.Maxrss
+		result["peak_rss_kib"] = usage.Maxrss
+	}
 
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -87,6 +94,50 @@ func TestSimilarityModelBenchmark(t *testing.T) {
 	if err := os.WriteFile(config.Output, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func modelBenchmarkExport(
+	t *testing.T,
+	pairs []modelBenchmarkPair,
+	blocks []*similarityBlock,
+	result map[string]any,
+) {
+	t.Helper()
+
+	start := time.Now()
+
+	modelBenchmarkDescriptions(t, blocks)
+
+	result["signature_seconds"] = time.Since(start).Seconds()
+	result["records"] = blocks
+	// Reference runtimes consume the owner's chunks and thresholds, not copies
+	// of production normalization or scoring-policy constants.
+	for label, kind := range map[string]similarityVectorKind{
+		modelBenchmarkSource:      similaritySourceVector,
+		modelBenchmarkDescription: similarityDescriptionVector,
+	} {
+		byBlock, _ := similarityVectorInputs(blocks, kind, nil)
+		chunks := make([][]string, len(blocks))
+
+		for index, inputs := range byBlock {
+			for _, input := range inputs {
+				chunks[index] = append(chunks[index], input.Content)
+			}
+		}
+
+		result[label+"_chunks"] = chunks
+	}
+
+	thresholds := make([]map[string]any, 0, len(pairs))
+	for _, pair := range pairs {
+		thresholds = append(thresholds, map[string]any{
+			"name":        pair.Name,
+			"source":      similarityEmbeddingThreshold(pair.Tier, pair.Test),
+			"description": similarityDescriptionThreshold(pair.Tier, pair.Test),
+		})
+	}
+
+	result["thresholds"] = thresholds
 }
 
 func modelBenchmarkDescriptions(t *testing.T, blocks []*similarityBlock) {
@@ -153,6 +204,16 @@ func modelBenchmarkBlocks(
 			}
 
 			hash := sha256.Sum256([]byte(content))
+			contentHash := hex.EncodeToString(hash[:])
+
+			expectedHash := pair.LeftNormalizedHash
+			if side != 0 {
+				expectedHash = pair.RightNormalizedHash
+			}
+
+			if contentHash != expectedHash {
+				t.Fatalf("normalized source changed for %s side %d", pair.Name, side)
+			}
 
 			description := pair.LeftDescription
 			if side != 0 {
@@ -161,7 +222,7 @@ func modelBenchmarkBlocks(
 
 			blocks = append(blocks, &similarityBlock{
 				Identity: pair.Name + string(rune('a'+side)), Content: content,
-				ContentHash: hex.EncodeToString(hash[:]), IsTest: pair.Test,
+				ContentHash: contentHash, IsTest: pair.Test,
 				Description: description,
 			})
 			tokenCounts = append(tokenCounts, len(tokens))
@@ -235,6 +296,14 @@ func modelBenchmarkScore(
 		result,
 	)
 
+	result["scores"] = modelBenchmarkPairScores(pairs, blocks, source, descriptions)
+}
+
+func modelBenchmarkPairScores(
+	pairs []modelBenchmarkPair,
+	blocks []*similarityBlock,
+	source, descriptions similarityVectorMatrix,
+) []map[string]any {
 	scores := make([]map[string]any, 0, len(pairs))
 	for i, pair := range pairs {
 		left, right := blocks[2*i], blocks[2*i+1]
@@ -247,7 +316,82 @@ func modelBenchmarkScore(
 		})
 	}
 
-	result["scores"] = scores
+	return scores
+}
+
+func modelBenchmarkImportedVectors(
+	t *testing.T,
+	config modelBenchmarkConfig,
+	pairs []modelBenchmarkPair,
+	blocks []*similarityBlock,
+	digest string,
+) map[string]any {
+	t.Helper()
+
+	data, err := os.ReadFile(config.Vectors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+
+	if result["corpus_sha256"] != digest {
+		t.Fatal("vectors belong to another corpus")
+	}
+
+	var vectors struct {
+		Source      map[string][]float32 `json:"source_vectors"`
+		Description map[string][]float32 `json:"description_vectors"`
+	}
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+
+	var matrices []similarityVectorMatrix
+
+	for _, channel := range []struct {
+		Kind    similarityVectorKind
+		Prefix  string
+		Vectors map[string][]float32
+	}{
+		{similaritySourceVector, config.SourcePrefix, vectors.Source},
+		{similarityDescriptionVector, config.DescriptionPrefix, vectors.Description},
+	} {
+		byBlock, inputs := similarityVectorInputs(blocks, channel.Kind, nil)
+		for _, input := range inputs {
+			hash := sha256.Sum256([]byte(channel.Prefix + input.Content))
+
+			vector, ok := channel.Vectors[hex.EncodeToString(hash[:])]
+			if !ok {
+				t.Fatal("missing vector for exported input")
+			}
+
+			var norm float64
+			for _, value := range vector {
+				norm += float64(value) * float64(value)
+			}
+			// Engines normalize once. Validate without changing stored float32 values.
+			if math.IsNaN(norm) || math.Abs(norm-1) > modelBenchmarkNormTolerance {
+				t.Fatal("imported vector must be finite and normalized")
+			}
+
+			input.Vector = vector
+		}
+
+		matrix, err := packSimilarityVectors(blocks, byBlock, channel.Kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		matrices = append(matrices, matrix)
+	}
+
+	result["scores"] = modelBenchmarkPairScores(pairs, blocks, matrices[0], matrices[1])
+
+	return result
 }
 
 func modelBenchmarkVectors(
@@ -266,8 +410,13 @@ func modelBenchmarkVectors(
 	maxTokens := 0
 	inputLimit := min(config.MaxTokens, nativeEmbeddingContext/nativeEmbeddingParallel)
 
+	prefix := config.SourcePrefix
+	if kind == similarityDescriptionVector {
+		prefix = config.DescriptionPrefix
+	}
+
 	for _, input := range inputs {
-		input.Content = config.Prefix + input.Content
+		input.Content = prefix + input.Content
 
 		tokens, err := engine.context.Tokenize(input.Content)
 		if err != nil {

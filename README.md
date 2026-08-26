@@ -223,6 +223,11 @@ the edited package and importers affected by a type API or used-summary change
 run again. Semantic block extraction parses changed files only, retains matches
 between unchanged blocks, and compares changed blocks only with locality-eligible
 candidates.
+Within an edited file, bound local/parameter renames and private function
+declaration renames reuse prior descriptions when all other tokens match.
+API names, types, literals, literal keys, and control flow remain exact.
+Public function names and method names are not erased. Source vectors, pair IDs,
+and CI attestations still use exact source; no summary-cache reset is required.
 Linked Git worktrees share exact-result, package, vector, description, and scan
 caches through the repository's common Git directory. Cached diagnostics rebase
 to the active checkout. Package analysis keys use compiled content rather than
@@ -311,7 +316,7 @@ Useful env vars:
 All repos share one global content-addressed cache root. Content hashes and
 repo-scoped scan keys prevent collisions:
 
-- `os.UserCacheDir()/slopelint/analysis-v9`
+- `os.UserCacheDir()/slopelint/analysis-v10`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 - `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`

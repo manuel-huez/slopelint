@@ -9,7 +9,7 @@ import (
 
 // Bump whenever analyzer semantics or persisted cache/replay invariants change.
 // Standalone cache keys intentionally do not follow unrelated binary releases.
-const analysisCacheSchema = 9
+const analysisCacheSchema = 10
 
 const analysisCacheTypeDigestRefreshLimit = 8
 

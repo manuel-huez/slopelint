@@ -1,6 +1,8 @@
 package lint
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -310,6 +312,23 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "embedding batches without Codex", embedder.calls, 2)
+
+	renamed := strings.NewReplacer("first", "renamedFirst", "values", "inputs", "total", "sum").
+		Replace(similarityTestSource)
+	writeFile(t, filepath.Join(tmp, similarityTestFilename), renamed)
+
+	if _, err := CheckSimilarCode(
+		loadPackagesForTest(t, tmp),
+		SimilarityOptions{CI: true},
+	); err == nil {
+		t.Fatal("CI accepted stale source attestation after rename")
+	}
+
+	options.AcceptedPairIDs = nil
+	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), options)
+	requireSingleSimilarityIssue(t, issues, err)
+	requireSimilarityCount(t, "description requests after rename", describer.requests, 4)
+	requireSimilarityCount(t, "source embedding batches after rename", embedder.calls, 3)
 }
 
 func TestSimilarityDescriptionsCoverAllBlocksIndependentlyOfSource(t *testing.T) {
@@ -601,5 +620,158 @@ func TestSimilarityDescriptionStampPolicyTracksEnrichment(t *testing.T) {
 	enriched.DescriptionDigest = "short"
 	if enriched.policyMatches() {
 		t.Fatal("short description digest accepted")
+	}
+}
+
+func TestSimilarityRenameFingerprint(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, before, after string
+		equal               bool
+	}{
+		{"private and locals", `func first(x int) int { y := x + 1; return y }`, `func second(input int) int { output := input + 1; return output }`, true},
+		{"shadowed locals", `func f(x int) int { if x > 0 { x := x + 1; println(x) }; return x }`, `func f(input int) int { if input > 0 { inner := input + 1; println(inner) }; return input }`, true},
+		{"shadow changes binding", `func f(x int) int { if x > 0 { x := x + 1; println(x) }; return x }`, `func f(x int) int { if x > 0 { y := x + 1; println(x) }; return x }`, false},
+		{"API", `func f(x string) string { return strings.TrimSpace(x) }`, `func f(x string) string { return strings.ToUpper(x) }`, false},
+		{"literal", `func f(x int) int { return x + 1 }`, `func f(x int) int { return x + 2 }`, false},
+		{"flow", `func f(x int) int { return x + 1 }`, `func f(x int) int { return x - 1 }`, false},
+		{"callee", `func f(x int) int { return helper(x) }`, `func f(x int) int { return other(x) }`, false},
+		{"type", `func f(x First) { consume(x) }`, `func f(x Second) { consume(x) }`, false},
+		{"public function", `func First(x int) int { return x }`, `func Second(x int) int { return x }`, false},
+		{"method", `func (x T) first() int { return x.n }`, `func (x T) second() int { return x.n }`, false},
+		{"receiver", `func (x T) method() int { return x.n }`, `func (value T) method() int { return value.n }`, true},
+		{"literal key", `func f(x int) S { return S{x:x} }`, `func f(y int) S { return S{y:y} }`, false},
+		{"literal value", `func f(x int) S { return S{field:x} }`, `func f(y int) S { return S{field:y} }`, true},
+		{"closure", `func f(x int) func(int) int { return func(y int) int { return x + y } }`, `func f(input int) func(int) int { return func(other int) int { return input + other } }`, true},
+		{"entrypoint", `func first() { println(1) }`, `func init() { println(1) }`, false},
+		{"named result", `func f(x int) (out int) { out = x; return }`, `func f(in int) (result int) { result = in; return }`, true},
+		{"range", `func f(xs []int) int { out := 0; for _, x := range xs { out += x }; return out }`, `func f(values []int) int { sum := 0; for _, value := range values { sum += value }; return sum }`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := similarityRenameFingerprint(test.before)
+
+			after := similarityRenameFingerprint(test.after)
+			if before == "" || after == "" || (before == after) != test.equal {
+				t.Fatalf("rename fingerprints %q / %q, want equal=%t", before, after, test.equal)
+			}
+		})
+	}
+
+	if got := similarityRenameFingerprint("not Go code"); got != "" {
+		t.Fatalf("invalid source fingerprint = %q", got)
+	}
+}
+
+func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
+	t.Parallel()
+
+	makeBlock := func(content string) *similarityBlock {
+		hash := sha256.Sum256([]byte(content))
+
+		return &similarityBlock{
+			Identity: "sample.go::function", RelativePath: "sample.go",
+			Content: content, ContentHash: hex.EncodeToString(hash[:]),
+		}
+	}
+	before := makeBlock(`func first(x int) int { y := x + 1; return y }`)
+	runtime := similarityDescriptionRuntime{enabled: true, describer: new(similarityTestDescriber)}
+
+	root := t.TempDir()
+	if _, err := populateSimilarityDescriptions(
+		[]*similarityBlock{before},
+		runtime,
+		root,
+		true,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := populateSimilarityDetails(
+		[]*similarityBlock{before},
+		runtime,
+		root,
+		true,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	previous := similarityScanCache{
+		Schema:            similarityScanCacheSchema,
+		SimilaritySchema:  similaritySchema,
+		SourceDigest:      before.ContentHash,
+		DescriptionDigest: similarityModelDigest,
+		Model:             similarityModelName,
+		ModelDigest:       similarityModelDigest,
+		Descriptions:      true,
+		DescriptionSchema: similarityDescriptionPromptSchema,
+		DescriptionModel:  similarityDescriptionModel,
+		DescriptionEffort: similarityDescriptionEffort,
+		Blocks:            cacheSimilarityBlocks([]*similarityBlock{before}),
+	}
+
+	for _, test := range []struct {
+		name, content, path string
+		stale               bool
+		want                int
+	}{
+		{name: "rename", content: `func second(input int) int { output := input + 1; return output }`},
+		{name: "API change", content: `func second(input int) int { output := other(input); return output }`, want: 2},
+		{name: "literal change", content: `func second(input int) int { output := input + 2; return output }`, want: 2},
+		{name: "different file", content: `func third(input int) int { output := input + 1; return output }`, path: "other.go", want: 2},
+		{name: "stale policy", content: `func fourth(input int) int { output := input + 1; return output }`, stale: true, want: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			after := makeBlock(test.content)
+			if test.path != "" {
+				after.RelativePath = test.path
+			}
+
+			cache := previous
+			if test.stale {
+				cache.DescriptionSchema--
+			}
+
+			if err := reuseRenamedSimilarityDescriptions(
+				[]*similarityBlock{after},
+				cache,
+				root,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			describer := new(similarityTestDescriber)
+
+			runtime := similarityDescriptionRuntime{enabled: true, describer: describer}
+			if _, err := populateSimilarityDescriptions(
+				[]*similarityBlock{after},
+				runtime,
+				root,
+				true,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := populateSimilarityDetails(
+				[]*similarityBlock{after},
+				runtime,
+				root,
+				true,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if describer.requests != test.want {
+				t.Fatalf("requests = %d, want %d", describer.requests, test.want)
+			}
+
+			if after.ContentHash == before.ContentHash {
+				t.Fatal("exact source hash erased rename")
+			}
+
+			if len(previous.changedBlocks([]*similarityBlock{after})) != 1 {
+				t.Fatal("rename skipped source rescan")
+			}
+		})
 	}
 }

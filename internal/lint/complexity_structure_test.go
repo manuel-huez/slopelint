@@ -138,6 +138,14 @@ func TestInputGuardPreparation(t *testing.T) {
 		want  bool
 	}{
 		{name: "local predicate", setup: `if !valid(value.name) { return errBad }`},
+		{name: "imported predicate", setup: `if value.id.IsZero() { return errBad }`},
+		{name: "imported predicate then work", setup: `if value.id.IsZero() { return errBad }; println(value.name)`, want: true},
+		{name: "success return", setup: `if value.size < 0 { return nil }`},
+		{name: "local conditional setup", setup: `name := value.name; if value.kind != "" { name = value.kind }; _ = name`},
+		{name: "imported preparation", setup: `day, ok := keyDay(value.id); if !ok { return errBad }; _ = day`},
+		{name: "initializer validation", setup: `if err := validate(value.name); err != nil { return err }`},
+		{name: "initializer context", setup: `if err := value.ctx.Err(); err != nil { return err }`},
+		{name: "range validation", setup: `if err := validateNames(value.names); err != nil { return err }`},
 		{name: "validation result", setup: `name, err := identity(value.name); if err != nil { return err }; _ = name`},
 		{name: "cleanup", setup: `defer value.body.Close()`},
 		{name: "conditional cleanup", setup: `if value.body != nil { defer func() { _ = value.body.Close() }() }`},
@@ -148,21 +156,36 @@ func TestInputGuardPreparation(t *testing.T) {
 		{name: "predicate with work argument", setup: `if !valid(read(value.name)) { return errBad }`, want: true},
 		{name: "helper with work", setup: `name := read(value.name); _ = name`, want: true},
 		{name: "predicate with mutation", setup: `if change(value.name) { return errBad }`, want: true},
-		{name: "recursive predicate", setup: `if recurse(value.name) { return errBad }`, want: true},
+		{name: "recursive predicate", setup: `if recurse(value.name) { return errBad }`},
+		{name: "recursive work", setup: `if recurseWork(value.name) { return errBad }`, want: true},
+		{name: "initializer work", setup: `if err := validateRead(value.name); err != nil { return err }`, want: true},
+		{name: "range work", setup: `if err := readNames(value.names); err != nil { return err }`, want: true},
+		{name: "range global mutation", setup: `if rangeChange(value.names) { return errBad }`, want: true},
+		{name: "pointer mutation", setup: `if mutate(value) { return errBad }`, want: true},
+		{name: "direct pointer mutation", setup: `value.size = value.size + 1`, want: true},
+		{name: "direct global mutation", setup: `calls = value.size`, want: true},
+		{name: "called closure", setup: `if closure(value.name) { return errBad }`, want: true},
 		{name: "basic format", setup: `name := format(value.name); _ = name`},
 		{name: "format with method", setup: `name := describe(value.name); _ = name`, want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "scalar", "value.go"), `package scalar
+type ID int
+func (id ID) IsZero() bool { return id == 0 }
+func (id ID) Day() int { return int(id) }
+`)
 			writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"example.com/sample/scalar"
 )
 
-type req struct { name, kind string; size int; body io.ReadCloser }
+type req struct { name, kind string; size int; body io.ReadCloser; id scalar.ID; ctx context.Context; names []string }
 var errBad error
 var calls int
 var _ = http.Get
@@ -172,12 +195,22 @@ func read(value string) string { println(value); return value }
 func cleanup(string) {}
 func change(value string) bool { calls++; return value != "" }
 func recurse(value string) bool { return recurse(value) }
+func recurseWork(value string) bool { result := recurseOther(value); calls++; return result }
+func recurseOther(value string) bool { return recurseWork(value) }
+func keyDay(id scalar.ID) (int, bool) { if id.IsZero() { return 0, false }; return id.Day(), true }
+func validate(value string) error { if value == "" { return errBad }; return nil }
+func validateNames(values []string) error { for _, value := range values { if value == "" { return errBad } }; return nil }
+func validateRead(value string) error { println(value); return nil }
+func readNames(values []string) error { for _, value := range values { println(value) }; return nil }
+func rangeChange(values []string) bool { for calls = range values {}; return calls > 0 }
+func mutate(value *req) bool { value.size++; return value.size > 1 }
+func closure(value string) bool { return func() bool { calls++; return value != "" }() }
 func format(value string) string { return fmt.Sprintf("%s", value) }
 type loud string
 func (value loud) String() string { calls++; return string(value) }
 func describe(value string) string { return fmt.Sprintf("%s", loud(value)) }
 
-func f(value req) error {
+func f(value *req) error {
 `+test.setup+`
 	if value.name == "" { return errBad }
 	if value.kind == "" { return errBad }
@@ -191,6 +224,28 @@ func f(value req) error {
 				t.Fatalf("guard finding = %v, want %v:\n%s", got, test.want, joinMessages(issues))
 			}
 		})
+	}
+}
+
+func TestInputGuardsDoNotTrackUnknownCallResults(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+import "io"
+func write(writer io.Writer, payload []byte) error {
+	first, firstErr := writer.Write(payload)
+	println(first)
+	if firstErr != nil { return firstErr }
+	if first != len(payload) { return io.ErrShortWrite }
+	second, secondErr := writer.Write(payload)
+	if secondErr != nil { return secondErr }
+	if second != len(payload) { return io.ErrShortWrite }
+	return nil
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	if hasIssueKind(issues, "guard_complexity") {
+		t.Fatalf("output checks reported as input guards:\n%s", joinMessages(issues))
 	}
 }
 

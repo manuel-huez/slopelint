@@ -306,7 +306,7 @@ func (l *Runner) scatteredInputGuardReturns(
 			continue
 		}
 
-		seenWork = true
+		seenWork = seenWork || l.validationStatementEffect(stmt, body) == validationWork
 	}
 
 	if summary.total < scatteredGuardMinTotal || summary.late < scatteredGuardMinLate {
@@ -704,6 +704,20 @@ func (l *Runner) inputValidationPrepStmt(
 	assign, ok := stmt.(*ast.AssignStmt)
 	if !ok || len(assign.Rhs) == 0 {
 		return false
+	}
+
+	for _, lhs := range assign.Lhs {
+		ident, ok := l.unparen(lhs).(*ast.Ident)
+		if !ok {
+			return false
+		}
+
+		if obj := l.pkg.TypesInfo.ObjectOf(
+			ident,
+		); obj != nil &&
+			obj.Parent() == l.pkg.TypesPkg.Scope() {
+			return false
+		}
 	}
 
 	for _, rhs := range assign.Rhs {

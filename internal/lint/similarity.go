@@ -351,7 +351,17 @@ func similarityMatchesForBlocks(
 	descriptionBlocks := blocks
 	if previous.Schema != 0 {
 		scanBlocks = incrementalSimilarityScanBlocks(blocks, changed)
+
 		descriptionBlocks = changedSimilarityBlocks(blocks, changed)
+		if descriptionRuntime.enabled {
+			if err := reuseRenamedSimilarityDescriptions(
+				descriptionBlocks,
+				previous,
+				cacheRoot,
+			); err != nil {
+				return similarityScanResult{}, err
+			}
+		}
 	}
 
 	vectors, descriptionDigest, err := populateSimilarityScanVectors(

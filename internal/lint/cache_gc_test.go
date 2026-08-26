@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,9 +34,17 @@ func TestPruneCachesRemovesOnlyUnreachableOrExpiredData(t *testing.T) {
 	mature := now.Add(-2 * cacheConcurrentWriteGrace)
 	expired := now.Add(-2 * cacheUnusedRetention)
 
-	obsoleteAnalysis := filepath.Join(root, "analysis-v5", "old.json")
+	obsoleteAnalysis := filepath.Join(
+		root,
+		fmt.Sprintf("analysis-v%d", analysisCacheSchema-1),
+		"old.json",
+	)
 	obsoleteSimilarity := filepath.Join(root, "similarity-v0", "old.bin")
-	futureAnalysis := filepath.Join(root, "analysis-v7", "future.json")
+	futureAnalysis := filepath.Join(
+		root,
+		fmt.Sprintf("analysis-v%d", analysisCacheSchema+1),
+		"future.json",
+	)
 	futureSimilarity := filepath.Join(root, "similarity-v2", "future.bin")
 
 	writeFile(t, obsoleteAnalysis, "old")

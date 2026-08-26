@@ -13,6 +13,7 @@ const (
 	nilText                   = "nil"
 	panicText                 = "panic"
 	predicatePathSegmentPrefx = "#pred:"
+	testingImportPath         = "testing"
 	unknownPos                = "unknown position"
 )
 
@@ -58,6 +59,7 @@ func RunDefault(pkg *Package) []Finding {
 	r.checkOversizedOwnerFiles()
 	r.checkUnnamedLargeTableTests()
 	r.checkRepeatedTestFixtures()
+	r.checkConstValueTests()
 
 	return r.findings
 }

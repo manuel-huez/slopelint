@@ -53,6 +53,7 @@ Package-level smells:
 - large const, var, or type chunks without blank/comment grouping
 - const chunks mixing unrelated prefixes without grouping
 - large table tests without case names
+- tests that only compare const values with fixed expectations
 - duplicate validation ladders
 - single-use private helpers with tiny bodies
 - single-implementation private interfaces
@@ -310,7 +311,7 @@ Useful env vars:
 All repos share one global content-addressed cache root. Content hashes and
 repo-scoped scan keys prevent collisions:
 
-- `os.UserCacheDir()/slopelint/analysis-v7`
+- `os.UserCacheDir()/slopelint/analysis-v8`
 - `os.UserCacheDir()/slopelint/similarity-v1`
 - `os.UserCacheDir()/slopelint/similarity-v1/descriptions`
 - `os.UserCacheDir()/slopelint/models/<model-digest>.gguf`
@@ -378,6 +379,7 @@ Machine-readable diagnostic categories emitted today:
 - `type_grouping`
 - `mixed_const_prefixes`
 - `table_test_grouping`
+- `const_value_test`
 - `repeated_test_fixture`
 - `stale_complexity_suppression`
 - `test_fatal_panic`

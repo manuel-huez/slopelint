@@ -1,0 +1,34 @@
+[
+  {
+    "name": "jina",
+    "sha256": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
+    "url": "https://registry.ollama.ai/v2/unclemusclez/jina-embeddings-v2-base-code/blobs/sha256:33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
+    "size": 322997312,
+    "prefix": "",
+    "max_tokens": 2048
+  },
+  {
+    "name": "minilm",
+    "url": "https://registry.ollama.ai/v2/library/all-minilm/blobs/sha256:797b70c4edf85907fe0a49eb85811256f65fa0f7bf52166b147fd16be2be4662",
+    "sha256": "797b70c4edf85907fe0a49eb85811256f65fa0f7bf52166b147fd16be2be4662",
+    "size": 45949216,
+    "prefix": "",
+    "max_tokens": 512
+  },
+  {
+    "name": "gemma",
+    "url": "https://registry.ollama.ai/v2/library/embeddinggemma/blobs/sha256:0800cbac9c2064dde519420e75e512a83cb360de3ad5df176185dc69652fc515",
+    "sha256": "0800cbac9c2064dde519420e75e512a83cb360de3ad5df176185dc69652fc515",
+    "size": 621867104,
+    "prefix": "task: sentence similarity | query: ",
+    "max_tokens": 2048
+  },
+  {
+    "name": "qwen",
+    "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf",
+    "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+    "size": 639150592,
+    "prefix": "Instruct: Identify code or descriptions with the same observable behavior, including outputs, side effects, errors, and boundaries.\nQuery:",
+    "max_tokens": 2048
+  }
+]

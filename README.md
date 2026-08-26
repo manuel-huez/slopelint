@@ -264,15 +264,20 @@ stale, or obsolete stamps fail before Go starts. Local mode owns semantic analys
 and writes the reviewed attestation. The digest excludes the stamp, so committing
 it does not invalidate itself.
 
-Model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
+Initial model choice came from a CPU-only benchmark on 25 Go functions with 9 intended
 similar pairs. Jina reached `0.992` AUC and `0.842` best F1 at about `386 MiB`
 resident memory. MiniLM reached `0.977` AUC and `0.778` F1 at `102 MiB`;
-EmbeddingGemma reached `0.993` AUC and `0.778` F1 at `787 MiB`. Jina gave the
-best precision/recall balance without EmbeddingGemma's memory cost, so the stamp
-pins the exact GGUF file digest. Tuned in-process llama-go inference processed
+EmbeddingGemma reached `0.993` AUC and `0.778` F1 at `787 MiB`. That small
+raw-code calibration favored Jina, but did not validate behavior signatures or
+held-out contract boundaries. The stamp pins the exact GGUF file digest. Tuned in-process llama-go inference processed
 the 25-vector benchmark at `9.09 vectors/s` and the 125-vector run at
 `8.48 vectors/s`; Ollama reached `8.15` and `7.55 vectors/s`. Native peak RSS was
 about `479 MiB`.
+
+The [2026-08-26 model comparison](internal/lint/testdata/similarity_models/README.md)
+separates raw code and frozen signatures, calibrates on known pairs, and evaluates
+new held-out pairs. Its runner and public synthetic fixtures replace temporary
+model-selection probes. Private application fixtures remain local.
 
 Repo calibration uses a precision-first operating point instead of the
 benchmark's maximum-F1 threshold. Nearby production blocks require at least

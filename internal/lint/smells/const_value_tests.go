@@ -21,6 +21,8 @@ type constValueTestScan struct {
 	runner        *Runner
 	fn            *ast.FuncDecl
 	aliases       map[types.Object]fixedTestValue
+	staticWrites  map[types.Object]struct{}
+	staticValues  map[types.Object]fixedTestValue
 	staticReturns map[string]fixedTestValue
 	assertions    int
 	restatements  int
@@ -30,8 +32,10 @@ func (l *Runner) checkConstValueTests() {
 	packageScan := constValueTestScan{
 		runner:        l,
 		aliases:       make(map[types.Object]fixedTestValue),
+		staticValues:  make(map[types.Object]fixedTestValue),
 		staticReturns: make(map[string]fixedTestValue),
 	}
+	packageScan.collectStaticValues()
 	packageScan.collectStaticReturns()
 
 	for _, file := range l.pkg.TestFiles {
@@ -45,6 +49,8 @@ func (l *Runner) checkConstValueTests() {
 				runner:        l,
 				fn:            fn,
 				aliases:       make(map[types.Object]fixedTestValue),
+				staticWrites:  make(map[types.Object]struct{}),
+				staticValues:  packageScan.staticValues,
 				staticReturns: packageScan.staticReturns,
 			}
 			scan.collectFixedAliases()
@@ -58,12 +64,136 @@ func (l *Runner) checkConstValueTests() {
 				fn.Name.Pos(),
 				"const_value_test",
 				fmt.Sprintf(
-					`test %q only checks const values against fixed expectations; remove it or test behavior that consumes the const`,
+					`test %q only checks fixed package values against fixed expectations; remove it or test behavior that consumes the value`,
 					fn.Name.Name,
 				),
 			)
 		}
 	}
+}
+
+func (scan *constValueTestScan) collectStaticValues() {
+	candidates := make(map[types.Object]ast.Expr)
+
+	for _, decl := range scan.runner.pkg.ProductionDecls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+
+		for _, spec := range gen.Specs {
+			values, ok := spec.(*ast.ValueSpec)
+			if !ok || len(values.Names) != len(values.Values) {
+				continue
+			}
+
+			for index, name := range values.Names {
+				obj, ok := scan.runner.pkg.TypesInfo.Defs[name].(*types.Var)
+				if ok && fixedPackageValueType(obj.Type()) {
+					candidates[obj] = values.Values[index]
+				}
+			}
+		}
+	}
+
+	for _, file := range scan.runner.pkg.ProductionFiles {
+		ast.Inspect(file, func(node ast.Node) bool {
+			scan.invalidateWrittenStaticValue(node, candidates)
+
+			return true
+		})
+	}
+
+	scan.resolveStaticValues(candidates)
+}
+
+func (scan *constValueTestScan) resolveStaticValues(candidates map[types.Object]ast.Expr) {
+	for {
+		changed := false
+
+		for obj, expr := range candidates {
+			if _, exists := scan.staticValues[obj]; exists {
+				continue
+			}
+
+			value := scan.fixedValue(expr)
+			if !value.fixed {
+				continue
+			}
+
+			scan.staticValues[obj] = value
+			changed = true
+		}
+
+		if !changed {
+			return
+		}
+	}
+}
+
+func fixedPackageValueType(valueType types.Type) bool {
+	switch underlying := valueType.Underlying().(type) {
+	case *types.Basic:
+		return underlying.Info()&types.IsConstType != 0
+	case *types.Struct:
+		return true
+	default:
+		return false
+	}
+}
+
+func (scan *constValueTestScan) invalidateWrittenStaticValue(
+	node ast.Node,
+	candidates map[types.Object]ast.Expr,
+) {
+	var targets []ast.Expr
+
+	switch node := node.(type) {
+	case *ast.AssignStmt:
+		targets = node.Lhs
+	case *ast.IncDecStmt:
+		targets = []ast.Expr{node.X}
+	case *ast.RangeStmt:
+		targets = []ast.Expr{node.Key, node.Value}
+	case *ast.UnaryExpr:
+		if node.Op == token.AND {
+			targets = []ast.Expr{node.X}
+		}
+	case *ast.CallExpr:
+		targets = scan.pointerReceiverTargets(node)
+	}
+
+	for _, target := range targets {
+		ident := assignedRootIdent(target)
+		if ident == nil {
+			continue
+		}
+
+		delete(candidates, scan.runner.pkg.TypesInfo.ObjectOf(ident))
+	}
+}
+
+func (scan *constValueTestScan) pointerReceiverTargets(call *ast.CallExpr) []ast.Expr {
+	selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+
+	selection := scan.runner.pkg.TypesInfo.Selections[selector]
+	if selection == nil {
+		return nil
+	}
+
+	signature, ok := selection.Obj().Type().(*types.Signature)
+	if !ok || signature.Recv() == nil {
+		return nil
+	}
+
+	if _, pointerReceiver := signature.Recv().Type().(*types.Pointer); pointerReceiver {
+		return []ast.Expr{selector.X}
+	}
+
+	return nil
 }
 
 func (scan *constValueTestScan) collectStaticReturns() {
@@ -218,23 +348,8 @@ func (scan *constValueTestScan) recordPointerReceiverWrite(
 	candidates map[types.Object]ast.Expr,
 	writes map[types.Object]int,
 ) {
-	selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok {
-		return
-	}
-
-	selection := scan.runner.pkg.TypesInfo.Selections[selector]
-	if selection == nil {
-		return
-	}
-
-	signature, ok := selection.Obj().Type().(*types.Signature)
-	if !ok || signature.Recv() == nil {
-		return
-	}
-
-	if _, pointerReceiver := signature.Recv().Type().(*types.Pointer); pointerReceiver {
-		scan.recordAliasWrite(selector.X, nil, candidates, writes)
+	for _, target := range scan.pointerReceiverTargets(call) {
+		scan.recordAliasWrite(target, nil, candidates, writes)
 	}
 }
 
@@ -274,6 +389,10 @@ func (scan *constValueTestScan) recordAliasWrite(
 	}
 
 	obj := scan.runner.pkg.TypesInfo.ObjectOf(ident)
+	if _, fixed := scan.staticValues[obj]; fixed {
+		scan.staticWrites[obj] = struct{}{}
+	}
+
 	if obj == nil || obj.Pos() < scan.fn.Pos() || obj.Pos() > scan.fn.End() {
 		return
 	}
@@ -432,6 +551,14 @@ func (scan *constValueTestScan) fixedIdentValue(ident *ast.Ident) fixedTestValue
 		return value
 	}
 
+	if _, written := scan.staticWrites[obj]; written {
+		return fixedTestValue{}
+	}
+
+	if value, ok := scan.staticValues[obj]; ok {
+		return value
+	}
+
 	switch obj.(type) {
 	case *types.Const, *types.Nil:
 		return fixedTestValue{fixed: true}
@@ -526,6 +653,10 @@ func (scan *constValueTestScan) fixedCallValue(call *ast.CallExpr) fixedTestValu
 		if value, ok := scan.staticReturns[funcObjectKey(fn)]; ok {
 			return value
 		}
+
+		if fixedStringPredicate(fn) {
+			return scan.fixedCallArgs(call.Args)
+		}
 	}
 
 	name := callName(call.Fun)
@@ -545,6 +676,19 @@ func (scan *constValueTestScan) fixedCallValue(call *ast.CallExpr) fixedTestValu
 		return scan.fixedCallArgs(call.Args)
 	default:
 		return fixedTestValue{}
+	}
+}
+
+func fixedStringPredicate(fn *types.Func) bool {
+	if fn.Pkg() == nil || fn.Pkg().Path() != stringsImportPath {
+		return false
+	}
+
+	switch fn.Name() {
+	case "Contains", "ContainsAny", "ContainsRune", "HasPrefix", "HasSuffix":
+		return true
+	default:
+		return false
 	}
 }
 

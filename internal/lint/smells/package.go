@@ -13,6 +13,7 @@ const (
 	nilText                   = "nil"
 	panicText                 = "panic"
 	predicatePathSegmentPrefx = "#pred:"
+	stringsImportPath         = "strings"
 	testingImportPath         = "testing"
 	unknownPos                = "unknown position"
 )

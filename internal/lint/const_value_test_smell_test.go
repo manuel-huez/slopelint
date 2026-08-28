@@ -25,21 +25,37 @@ func Equal(t *testing.T, expected, actual any) bool { return true }
 `)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
+import "fmt"
+
 const defaultLimit = 10
+const defaultTitle = "alpha"
 var runtimeLimit = 10
+var defaultBanner = "alpha,beta"
+var mutableBanner = "alpha,beta"
 
 type Policy struct {
 	Limit    int
 	Disabled bool
 }
 
+var defaultPolicy = Policy{Limit: defaultLimit}
+var mutablePolicy = Policy{Limit: defaultLimit}
+
 func DefaultLimit() int { return defaultLimit }
 
-func DefaultPolicy() Policy { return Policy{Limit: defaultLimit} }
+func DefaultPolicy() Policy { return defaultPolicy }
+
+func MutablePolicy() Policy { return mutablePolicy }
 
 func (policy *Policy) Enable() { policy.Disabled = true }
 
 func Panic() { panic("boom") }
+
+func SetMutableBanner(value string) { mutableBanner = value }
+
+func MutatePolicy() { mutablePolicy.Enable() }
+
+func BannerFor(value string) string { return fmt.Sprintf("banner:%s", value) }
 
 func ClampLimit(value int) int {
 	if value > defaultLimit {
@@ -52,6 +68,7 @@ func ClampLimit(value int) int {
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,6 +107,18 @@ func TestDefaultPolicyConst(t *testing.T) {
 	}
 }
 
+func TestDefaultTitleContainsFixedValue(t *testing.T) {
+	if !strings.Contains(defaultTitle, "alp") {
+		t.Fatal("defaultTitle must contain alp")
+	}
+}
+
+func TestDefaultBannerContainsFixedValue(t *testing.T) {
+	if !strings.Contains(defaultBanner, "alpha") {
+		t.Fatal("defaultBanner must contain alpha")
+	}
+}
+
 func TestClampLimitBehavior(t *testing.T) {
 	if got := ClampLimit(defaultLimit + 1); got != defaultLimit {
 		t.Fatalf("ClampLimit() = %d, want %d", got, defaultLimit)
@@ -119,6 +148,38 @@ func TestRuntimeLimit(t *testing.T) {
 		t.Fatalf("runtimeLimit = %d, want %d", runtimeLimit, defaultLimit)
 	}
 }
+
+func TestMutableBanner(t *testing.T) {
+	if !strings.Contains(mutableBanner, "alpha") {
+		t.Fatal("mutableBanner must contain alpha")
+	}
+}
+
+func TestBannerBehavior(t *testing.T) {
+	if !strings.Contains(BannerFor("live"), "live") {
+		t.Fatal("BannerFor() must include its input")
+	}
+}
+
+func TestStaticBannerMutation(t *testing.T) {
+	defaultBanner = "live"
+	if !strings.Contains(defaultBanner, "live") {
+		t.Fatal("defaultBanner mutation missing")
+	}
+}
+
+func TestStaticPolicyMutation(t *testing.T) {
+	defaultPolicy.Enable()
+	if !defaultPolicy.Disabled {
+		t.Fatal("defaultPolicy mutation missing")
+	}
+}
+
+func TestMutablePackagePolicy(t *testing.T) {
+	if MutablePolicy().Limit != defaultLimit {
+		t.Fatal("MutablePolicy() must use defaultLimit")
+	}
+}
 `)
 
 	issues := lintInDir(t, tmp)
@@ -133,12 +194,36 @@ func TestRuntimeLimit(t *testing.T) {
 		count++
 	}
 
-	if count != 5 ||
-		!strings.Contains(joined, `test "TestDefaultLimitConst" only checks const values`) ||
-		!strings.Contains(joined, `test "TestDefaultLimitAssertion" only checks const values`) ||
-		!strings.Contains(joined, `test "TestLiteralArithmetic" only checks const values`) ||
-		!strings.Contains(joined, `test "TestDefaultLimitAccessor" only checks const values`) ||
-		!strings.Contains(joined, `test "TestDefaultPolicyConst" only checks const values`) {
-		t.Fatalf("const_value_test findings = %d, want 5 findings; got:\n%s", count, joined)
+	if count != 8 ||
+		!strings.Contains(
+			joined,
+			`test "TestDefaultLimitConst" only checks fixed package values`,
+		) ||
+		!strings.Contains(
+			joined,
+			`test "TestDefaultLimitAssertion" only checks fixed package values`,
+		) ||
+		!strings.Contains(
+			joined,
+			`test "TestLiteralArithmetic" only checks fixed package values`,
+		) ||
+		!strings.Contains(
+			joined,
+			`test "TestDefaultLimitAccessor" only checks fixed package values`,
+		) ||
+		!strings.Contains(
+			joined,
+			`test "TestDefaultPolicyConst" only checks fixed package values`,
+		) ||
+		!strings.Contains(
+			joined,
+			`test "TestDefaultTitleContainsFixedValue" only checks fixed package values`,
+		) ||
+		!strings.Contains(
+			joined,
+			`test "TestDefaultBannerContainsFixedValue" only checks fixed package values`,
+		) ||
+		!strings.Contains(joined, `test "TestRuntimeLimit" only checks fixed package values`) {
+		t.Fatalf("const_value_test findings = %d, want 8 findings; got:\n%s", count, joined)
 	}
 }

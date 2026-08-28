@@ -38,8 +38,8 @@ func TestAnalysisCacheSchemaIncludesTestSupportRole(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v11") {
-		t.Fatalf("analysis cache root = %q, want schema 11 suffix", root)
+	if !strings.HasSuffix(root, "analysis-v12") {
+		t.Fatalf("analysis cache root = %q, want schema 12 suffix", root)
 	}
 }
 

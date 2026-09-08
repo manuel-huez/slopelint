@@ -320,6 +320,26 @@ analysis. CI runs validate the committed stamp without model inference.
 For local model comparisons, see the
 [benchmark run instructions](internal/lint/testdata/similarity_models/README.md).
 
+Verify claimed behavior-preserving rewrites with compiled counterexamples,
+including evaluation order, aliases, captured writes, and named types. Tests
+should check behavior; exact text or constants need an external contract.
+For read-only scans of another repository, use `SLOPELINT_SIMILARITY=off` to
+avoid writing its semantic stamp and compare its Git status before and after.
+
+## Release and install
+
+Releases use Go module tags. After the full health gate passes for the intended
+commit, create and push the requested tag, then verify the remote tag resolves
+to that commit. Install the exact tag with
+`go install github.com/manuel-huez/slopelint/cmd/slopelint@<tag>`; an untagged
+commit does not become `@latest`.
+
+Update every active installation. This development host uses both
+`~/.local/bin/slopelint` and `$(go env GOPATH)/bin/slopelint`; set `GOBIN` for each
+destination. Verify each binary with `go version -m`, compare their SHA-256
+hashes, and run the installed analyzer on this repository. If a proxy returns
+an older tag, retry exact-tag resolution with `GOPROXY=direct`.
+
 ## Current Limits
 
 - not a general style or architecture linter

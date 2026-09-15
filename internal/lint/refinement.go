@@ -15,7 +15,7 @@ func (l *linter) refineStates(states []state, expr ast.Expr, wantTrue bool) []st
 }
 
 func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 	if tri, _ := l.truth(st, expr); tri == triTrue {
 		if wantTrue {
 			return []state{st}

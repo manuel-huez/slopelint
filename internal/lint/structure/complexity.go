@@ -90,10 +90,6 @@ func (l *Runner) simplificationScoreForBlock(stmts []ast.Stmt, ctx blockContext)
 			score++
 		}
 
-		if _, ok := l.duplicateAdjacentRangeLoop(stmts, idx); ok {
-			score++
-		}
-
 		score += l.simplificationScoreForStmt(stmt)
 	}
 
@@ -336,7 +332,7 @@ func (l *Runner) inputReturnGuard(
 		return nil, false
 	}
 
-	if !l.inputValidationReferencesTrackedObject(ifStmt.Cond, validationTemps) {
+	if !l.nodeUsesAnyObject(ifStmt.Cond, validationTemps) {
 		return nil, false
 	}
 
@@ -412,7 +408,7 @@ func (l *Runner) inputValidationExpr(
 	expr ast.Expr,
 	validationTemps map[types.Object]struct{},
 ) bool {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
 	case *ast.Ident:
@@ -435,34 +431,6 @@ func (l *Runner) inputValidationExpr(
 
 		return ok && value.kind != 0
 	}
-}
-
-func (l *Runner) inputValidationReferencesTrackedObject(
-	expr ast.Expr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if expr == nil || len(validationTemps) == 0 {
-		return false
-	}
-
-	found := false
-
-	ast.Inspect(expr, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-
-		ident, ok := n.(*ast.Ident)
-		if !ok {
-			return true
-		}
-
-		_, found = validationTemps[l.pkg.TypesInfo.ObjectOf(ident)]
-
-		return !found
-	})
-
-	return found
 }
 
 func (l *Runner) inputValidationCall(
@@ -488,7 +456,7 @@ func (l *Runner) inputValidationLenCall(
 		return false
 	}
 
-	ident, ok := l.unparen(call.Fun).(*ast.Ident)
+	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok {
 		return false
 	}
@@ -509,7 +477,7 @@ func (l *Runner) inputValidationMethodCall(
 		return false
 	}
 
-	selector, ok := l.unparen(call.Fun).(*ast.SelectorExpr)
+	selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok || (selector.Sel.Name != "IsZero" && !strings.HasPrefix(selector.Sel.Name, "Is")) {
 		return false
 	}
@@ -609,7 +577,7 @@ func (l *Runner) validationPrepFailureExpr(
 	expr ast.Expr,
 	validationTemps map[types.Object]struct{},
 ) bool {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
 	case *ast.UnaryExpr:
@@ -631,12 +599,12 @@ func (l *Runner) validationPrepFailureBinary(
 	}
 
 	if l.validationPrepErrorIdent(expr.X, validationTemps) &&
-		l.isNilIdent(expr.Y) {
+		l.isNilExpr(expr.Y) {
 		return expr.Op == token.NEQ
 	}
 
 	if l.validationPrepErrorIdent(expr.Y, validationTemps) &&
-		l.isNilIdent(expr.X) {
+		l.isNilExpr(expr.X) {
 		return expr.Op == token.NEQ
 	}
 
@@ -683,7 +651,7 @@ func (l *Runner) validationPrepIdentType(
 	expr ast.Expr,
 	validationTemps map[types.Object]struct{},
 ) (types.Type, bool) {
-	ident, ok := l.unparen(expr).(*ast.Ident)
+	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok {
 		return nil, false
 	}
@@ -696,14 +664,8 @@ func (l *Runner) validationPrepIdentType(
 	return l.pkg.TypesInfo.TypeOf(ident), true
 }
 
-func (l *Runner) isNilIdent(expr ast.Expr) bool {
-	ident, ok := l.unparen(expr).(*ast.Ident)
-
-	return ok && ident.Name == nilText
-}
-
 func (l *Runner) isBoolLiteral(expr ast.Expr, want bool) bool {
-	ident, ok := l.unparen(expr).(*ast.Ident)
+	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok {
 		return false
 	}
@@ -729,7 +691,7 @@ func (l *Runner) inputValidationPrepStmt(
 			return false
 		}
 
-		if !l.inputValidationReferencesTrackedObject(rhs, validationTemps) {
+		if !l.nodeUsesAnyObject(rhs, validationTemps) {
 			return false
 		}
 	}
@@ -741,7 +703,7 @@ func (l *Runner) inputValidationPrepExpr(
 	expr ast.Expr,
 	validationTemps map[types.Object]struct{},
 ) bool {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	if l.inputValidationExpr(expr, validationTemps) {
 		return true
@@ -769,7 +731,7 @@ func (l *Runner) inputValidationPrepCall(
 		return false
 	}
 
-	switch fun := l.unparen(call.Fun).(type) {
+	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		return inputValidationPrepFuncName(fun.Name)
 	case *ast.SelectorExpr:
@@ -797,7 +759,7 @@ func (l *Runner) addValidationPrepObjects(
 	}
 
 	for _, lhs := range assign.Lhs {
-		ident, ok := l.unparen(lhs).(*ast.Ident)
+		ident, ok := ast.Unparen(lhs).(*ast.Ident)
 		if !ok || ident.Name == "_" {
 			continue
 		}

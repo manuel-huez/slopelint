@@ -210,7 +210,7 @@ func (l *Runner) renderReturnResults(ret *ast.ReturnStmt) string {
 }
 
 func (l *Runner) returnGuardConditionSafe(expr ast.Expr) bool {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
 	case *ast.Ident:
@@ -241,7 +241,7 @@ func (l *Runner) returnGuardBinaryConditionSafe(expr *ast.BinaryExpr) bool {
 }
 
 func (l *Runner) safeGuardOperand(expr ast.Expr) bool {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
 	case *ast.Ident:
@@ -281,13 +281,13 @@ func (l *Runner) safeLenCall(expr *ast.CallExpr) bool {
 		return false
 	}
 
-	_, ok := l.unparen(expr.Args[0]).(*ast.Ident)
+	_, ok := ast.Unparen(expr.Args[0]).(*ast.Ident)
 
 	return ok
 }
 
 func (l *Runner) safeConstantOperand(expr ast.Expr) bool {
-	tv, ok := l.pkg.TypesInfo.Types[l.unparen(expr)]
+	tv, ok := l.pkg.TypesInfo.Types[ast.Unparen(expr)]
 
 	return ok && tv.Value != nil && tv.Value.Kind() != constant.Unknown
 }
@@ -301,13 +301,13 @@ func (l *Runner) equalityGuardComparisonSafe(left ast.Expr, right ast.Expr) bool
 }
 
 func (l *Runner) isNilExpr(expr ast.Expr) bool {
-	id, ok := l.unparen(expr).(*ast.Ident)
+	id, ok := ast.Unparen(expr).(*ast.Ident)
 
 	return ok && id.Name == nilText
 }
 
 func (l *Runner) strictlyComparableExpr(expr ast.Expr) bool {
-	return typeStrictlyComparable(l.pkg.TypesInfo.TypeOf(l.unparen(expr)))
+	return typeStrictlyComparable(l.pkg.TypesInfo.TypeOf(ast.Unparen(expr)))
 }
 
 // Strict comparability avoids equality checks that can panic through interface values.

@@ -95,7 +95,7 @@ func (l *Runner) loopDefinedObjects(stmt ast.Stmt) []ast.Expr {
 }
 
 func (l *Runner) objectForLoopVar(expr ast.Expr) types.Object {
-	ident, ok := l.unparen(expr).(*ast.Ident)
+	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok || ident.Name == "_" {
 		return nil
 	}
@@ -104,7 +104,7 @@ func (l *Runner) objectForLoopVar(expr ast.Expr) types.Object {
 }
 
 func (l *Runner) objectForMutationRoot(expr ast.Expr) types.Object {
-	switch expr := l.unparen(expr).(type) {
+	switch expr := ast.Unparen(expr).(type) {
 	case *ast.Ident:
 		return l.objectForLoopVar(expr)
 	case *ast.IndexExpr:
@@ -667,7 +667,7 @@ func (l *Runner) callArgsMayMutate(call *ast.CallExpr) bool {
 }
 
 func (l *Runner) pureBuiltinCall(call *ast.CallExpr) bool {
-	ident, ok := l.unparen(call.Fun).(*ast.Ident)
+	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok {
 		return false
 	}
@@ -764,7 +764,7 @@ func (l *Runner) sameRenderedExpr(left ast.Expr, right ast.Expr) bool {
 		return false
 	}
 
-	return l.render(l.unparen(left)) == l.render(l.unparen(right))
+	return l.render(ast.Unparen(left)) == l.render(ast.Unparen(right))
 }
 
 func (l *Runner) inspectCurrentLoop(body *ast.BlockStmt, fn func(ast.Node) bool) {
@@ -798,7 +798,7 @@ func (l *Runner) callPackageFunc(call *ast.CallExpr) (string, string, bool) {
 }
 
 func (l *Runner) funcObject(expr ast.Expr) *types.Func {
-	switch expr := l.unparen(expr).(type) {
+	switch expr := ast.Unparen(expr).(type) {
 	case *ast.IndexExpr:
 		return l.funcObject(expr.X)
 	case *ast.IndexListExpr:

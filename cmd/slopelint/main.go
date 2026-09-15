@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -25,7 +26,7 @@ func main() {
 		return
 	}
 
-	os.Exit(runStandalone(os.Args[1:], os.Stderr))
+	os.Exit(runStandalone(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func analysisDriverRequested(args []string) bool {
@@ -38,7 +39,6 @@ func analysisDriverRequested(args []string) bool {
 		"diff":       {},
 		"fix":        {},
 		"flags":      {},
-		"json":       {},
 		"memprofile": {},
 		"source":     {},
 		"tags":       {},
@@ -73,7 +73,7 @@ func analysisDriverRequested(args []string) bool {
 	return false
 }
 
-func runStandalone(args []string, stderr io.Writer) int {
+func runStandalone(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("slopelint", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -84,6 +84,7 @@ func runStandalone(args []string, stderr io.Writer) int {
 	)
 	cacheEnabled := flags.Bool("cache", true, "reuse cached analysis for unchanged packages")
 	cacheDir := flags.String("cache-dir", "", "directory for persistent analysis cache")
+	jsonOutput := flags.Bool("json", false, "emit repository-aware JSON diagnostics")
 	closedWorld := flags.Bool(
 		"closed-world",
 		false,
@@ -121,6 +122,31 @@ func runStandalone(args []string, stderr io.Writer) int {
 		CacheDir:     lint.ResolveCacheDir(*cacheDir),
 		ClosedWorld:  *closedWorld,
 	})
+
+	return reportStandaloneIssues(stdout, stderr, issues, *jsonOutput)
+}
+
+func reportStandaloneIssues(stdout, stderr io.Writer, issues []lint.Issue, jsonOutput bool) int {
+	if jsonOutput {
+		if err := writeJSONIssues(stdout, issues); err != nil {
+			if _, writeErr := fmt.Fprintf(
+				stderr,
+				"slopelint: encode json: %v\n",
+				err,
+			); writeErr != nil {
+				return exitFailure
+			}
+
+			return exitFailure
+		}
+
+		if len(issues) > 0 {
+			return exitIssues
+		}
+
+		return 0
+	}
+
 	if len(issues) == 0 {
 		return 0
 	}
@@ -137,4 +163,28 @@ func runStandalone(args []string, stderr io.Writer) int {
 	}
 
 	return exitIssues
+}
+
+type standaloneJSONIssue struct {
+	Position string `json:"position"`
+	Kind     string `json:"kind"`
+	Message  string `json:"message"`
+}
+
+func writeJSONIssues(out io.Writer, issues []lint.Issue) error {
+	encoded := struct {
+		Issues []standaloneJSONIssue `json:"issues"`
+	}{
+		Issues: make([]standaloneJSONIssue, 0, len(issues)),
+	}
+
+	for _, issue := range issues {
+		encoded.Issues = append(encoded.Issues, standaloneJSONIssue{
+			Position: lint.FormatIssuePosition(issue),
+			Kind:     issue.Kind,
+			Message:  issue.Message,
+		})
+	}
+
+	return json.NewEncoder(out).Encode(encoded)
 }

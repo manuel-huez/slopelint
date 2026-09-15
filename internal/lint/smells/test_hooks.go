@@ -83,7 +83,7 @@ func (l *Runner) testAssignedFunctionVars(
 			}
 
 			for _, lhs := range assign.Lhs {
-				ident, ok := l.unparen(lhs).(*ast.Ident)
+				ident, ok := ast.Unparen(lhs).(*ast.Ident)
 				if !ok || ident == nil {
 					continue
 				}

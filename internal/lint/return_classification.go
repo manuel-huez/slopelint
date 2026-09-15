@@ -135,7 +135,7 @@ func (l *linter) classifyNilReturnStates(st state, expr ast.Expr) ([]classifiedR
 		return []classifiedReturn{{state: st, kind: returnNonNil}}, true
 	}
 
-	call, ok := l.unparen(expr).(*ast.CallExpr)
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if ok {
 		summary := l.summaryForCall(call)
 

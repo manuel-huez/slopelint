@@ -251,7 +251,7 @@ func (l *linter) contractEvidenceText(
 }
 
 func (l *linter) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
-	switch fun := l.unparen(call.Fun).(type) {
+	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		obj, ok := l.pkg.TypesInfo.ObjectOf(fun).(*types.Func)
 		if !ok || obj == nil {
@@ -281,7 +281,7 @@ func (l *linter) symbolForContractTarget(call *ast.CallExpr, target contractTarg
 	var baseExpr ast.Expr
 
 	if target.recv {
-		sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr)
+		sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 		if !ok {
 			return symbol{}, false
 		}

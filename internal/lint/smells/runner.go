@@ -90,20 +90,12 @@ func (l *Runner) render(node ast.Node) string {
 	return rendered
 }
 
-func (l *Runner) unparen(expr ast.Expr) ast.Expr {
-	for paren, ok := expr.(*ast.ParenExpr); ok; paren, ok = expr.(*ast.ParenExpr) {
-		expr = paren.X
-	}
-
-	return expr
-}
-
 func (l *Runner) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
 	if call == nil {
 		return nil, "", false
 	}
 
-	obj := l.funcObject(l.unparen(call.Fun))
+	obj := l.funcObject(ast.Unparen(call.Fun))
 	if obj == nil {
 		return nil, "", false
 	}
@@ -116,7 +108,7 @@ func (l *Runner) isBuiltinCall(call *ast.CallExpr, name string) bool {
 		return false
 	}
 
-	ident, ok := l.unparen(call.Fun).(*ast.Ident)
+	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok || ident.Name != name {
 		return false
 	}

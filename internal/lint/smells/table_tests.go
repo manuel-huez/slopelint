@@ -122,7 +122,7 @@ func (l *Runner) checkRepeatedTestFixtures() {
 }
 
 func (l *Runner) testFixtureWriteCall(call *ast.CallExpr) bool {
-	ident, ok := l.unparen(call.Fun).(*ast.Ident)
+	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok || ident.Name != "writeFile" {
 		return false
 	}

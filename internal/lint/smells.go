@@ -7,6 +7,10 @@ func (l *linter) scanDefaultSmells() {
 }
 
 func (l *linter) scanPackageSmells() {
+	if !l.skipBehaviorClones {
+		l.addSmellFindings(smellcheck.RunBehaviorPackage(l.smellsPackage()))
+	}
+
 	l.addSmellFindings(smellcheck.RunPackage(l.smellsPackage()))
 
 	if !l.skipDeadCode {

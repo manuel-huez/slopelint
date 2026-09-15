@@ -105,7 +105,7 @@ func (l *Runner) mutationTargetsObject(
 			return true
 		}
 
-		selector, ok := l.unparen(node.Fun).(*ast.SelectorExpr)
+		selector, ok := ast.Unparen(node.Fun).(*ast.SelectorExpr)
 		if !ok {
 			return false
 		}
@@ -180,7 +180,7 @@ func (l *Runner) tempAliasDecl(name *ast.Ident, rhs ast.Expr) (tempAliasDecl, bo
 		return tempAliasDecl{}, false
 	}
 
-	rhs = l.unparen(rhs)
+	rhs = ast.Unparen(rhs)
 	if !l.isCheapTempAliasExpr(rhs) {
 		return tempAliasDecl{}, false
 	}
@@ -189,7 +189,7 @@ func (l *Runner) tempAliasDecl(name *ast.Ident, rhs ast.Expr) (tempAliasDecl, bo
 }
 
 func (l *Runner) isCheapTempAliasExpr(expr ast.Expr) bool {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
 	case *ast.Ident:
@@ -387,49 +387,6 @@ func stripAliasNoise(words []string) []string {
 	}
 
 	return out
-}
-
-func normalizeRenderedIdentifier(text string, name string, replacement string) string {
-	if name == "" {
-		return text
-	}
-
-	var out strings.Builder
-
-	runes := []rune(text)
-
-	for idx := 0; idx < len(runes); {
-		ch := runes[idx]
-		if !isIdentifierStart(ch) {
-			out.WriteRune(ch)
-
-			idx++
-
-			continue
-		}
-
-		start := idx
-
-		idx++
-
-		for idx < len(runes) && (isIdentifierStart(runes[idx]) || unicode.IsDigit(runes[idx])) {
-			idx++
-		}
-
-		token := string(runes[start:idx])
-		if token == name {
-			out.WriteString(replacement)
-			continue
-		}
-
-		out.WriteString(token)
-	}
-
-	return out.String()
-}
-
-func isIdentifierStart(ch rune) bool {
-	return ch == '_' || unicode.IsLetter(ch)
 }
 
 func (l *Runner) objectUseSummary(node ast.Node, target types.Object) objectUseSummary {

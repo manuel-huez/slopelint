@@ -182,7 +182,7 @@ func (l *linter) invalidateForCallOneSeen(
 
 	out := st.clone()
 
-	if lit, ok := l.unparen(call.Fun).(*ast.FuncLit); ok {
+	if lit, ok := ast.Unparen(call.Fun).(*ast.FuncLit); ok {
 		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
 	} else if lit, ok := l.localFuncLitForExpr(call.Fun); ok {
 		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
@@ -203,7 +203,7 @@ func (l *linter) invalidateForCallOneSeen(
 }
 
 func (l *linter) invalidateCallReceiver(out *state, fun ast.Expr) {
-	sel, ok := l.unparen(fun).(*ast.SelectorExpr)
+	sel, ok := ast.Unparen(fun).(*ast.SelectorExpr)
 	if !ok {
 		return
 	}
@@ -231,7 +231,7 @@ func (l *linter) invalidateCallArguments(
 			continue
 		}
 
-		if address, ok := l.unparen(arg).(*ast.UnaryExpr); ok && address.Op == token.AND {
+		if address, ok := ast.Unparen(arg).(*ast.UnaryExpr); ok && address.Op == token.AND {
 			l.forEachExprRoot(address.X, func(root string) {
 				l.invalidatePrefix(&out, root)
 			})
@@ -253,7 +253,7 @@ func (l *linter) invalidateCallArguments(
 }
 
 func (l *linter) invalidateMutatingBuiltinArgs(out *state, call *ast.CallExpr) {
-	id, ok := l.unparen(call.Fun).(*ast.Ident)
+	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok {
 		return
 	}

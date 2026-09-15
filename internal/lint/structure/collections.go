@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"slices"
 )
 
 const builtinLenName = "len"
@@ -73,7 +72,7 @@ func (l *Runner) redundantRangeGuard(stmt ast.Stmt) (rangeGuardMatch, bool) {
 		return rangeGuardMatch{}, false
 	}
 
-	sourceExpr := l.unparen(loop.X)
+	sourceExpr := ast.Unparen(loop.X)
 	if !l.isCheapTempAliasExpr(sourceExpr) {
 		return rangeGuardMatch{}, false
 	}
@@ -128,7 +127,7 @@ func (l *Runner) emptyRangeReturnGuard(
 		return emptyRangeGuardMatch{}, false
 	}
 
-	sourceExpr := l.unparen(loop.X)
+	sourceExpr := ast.Unparen(loop.X)
 	if !l.isCheapTempAliasExpr(sourceExpr) {
 		return emptyRangeGuardMatch{}, false
 	}
@@ -211,7 +210,7 @@ func (l *Runner) appendAssignCall(assign *ast.AssignStmt) (*ast.CallExpr, bool) 
 		return nil, false
 	}
 
-	call, ok := l.unparen(assign.Rhs[0]).(*ast.CallExpr)
+	call, ok := ast.Unparen(assign.Rhs[0]).(*ast.CallExpr)
 	if !ok {
 		return nil, false
 	}
@@ -227,7 +226,7 @@ func (l *Runner) lenGuardSource(
 	expr ast.Expr,
 	proves func(token.Token, int64) bool,
 ) (string, bool) {
-	binary, ok := l.unparen(expr).(*ast.BinaryExpr)
+	binary, ok := ast.Unparen(expr).(*ast.BinaryExpr)
 	if !ok {
 		return "", false
 	}
@@ -244,7 +243,7 @@ func (l *Runner) lenGuardSource(
 }
 
 func (l *Runner) lenCompareOperand(lenExpr ast.Expr, limitExpr ast.Expr) (string, int64, bool) {
-	call, ok := l.unparen(lenExpr).(*ast.CallExpr)
+	call, ok := ast.Unparen(lenExpr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 1 || !l.isBuiltinCall(call, builtinLenName) {
 		return "", 0, false
 	}
@@ -259,7 +258,7 @@ func (l *Runner) lenCompareOperand(lenExpr ast.Expr, limitExpr ast.Expr) (string
 		return "", 0, false
 	}
 
-	source := l.unparen(call.Args[0])
+	source := ast.Unparen(call.Args[0])
 
 	return l.render(source), limit, true
 }
@@ -295,7 +294,7 @@ func lenCompareProvesEmpty(op token.Token, limit int64) bool {
 }
 
 func (l *Runner) isBuiltinCall(call *ast.CallExpr, name string) bool {
-	id, ok := l.unparen(call.Fun).(*ast.Ident)
+	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok || id.Name != name {
 		return false
 	}
@@ -315,7 +314,7 @@ func (l *Runner) collectionGuardSource(
 	lenCheck func(token.Token, int64) bool,
 	nilOp token.Token,
 ) (rangeGuard, bool) {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	if binary, ok := expr.(*ast.BinaryExpr); ok && binary.Op == mergeOp {
 		left, leftOK := l.collectionGuardSource(binary.X, mergeOp, lenCheck, nilOp)
@@ -350,7 +349,7 @@ func (l *Runner) collectionGuardSource(
 }
 
 func (l *Runner) nilComparisonGuardSource(expr ast.Expr, op token.Token) (string, bool) {
-	binary, ok := l.unparen(expr).(*ast.BinaryExpr)
+	binary, ok := ast.Unparen(expr).(*ast.BinaryExpr)
 	if !ok || binary.Op != op {
 		return "", false
 	}
@@ -372,7 +371,7 @@ func (l *Runner) nilCompareSource(sourceExpr ast.Expr, nilExpr ast.Expr) (string
 		return "", false
 	}
 
-	return l.render(l.unparen(sourceExpr)), true
+	return l.render(ast.Unparen(sourceExpr)), true
 }
 
 func (guard rangeGuard) label() string {
@@ -421,107 +420,4 @@ func (l *Runner) rangeNoopsWhenNil(expr ast.Expr) bool {
 	default:
 		return false
 	}
-}
-
-func (l *Runner) checkDuplicateAdjacentRangeLoop(stmts []ast.Stmt, idx int) {
-	current, ok := l.duplicateAdjacentRangeLoop(stmts, idx)
-	if !ok {
-		return
-	}
-
-	l.report(
-		current.pos,
-		"loop_ceremony",
-		"adjacent range loop repeats previous loop body; merge ranges or collapse shared input list",
-	)
-}
-
-func (l *Runner) duplicateAdjacentRangeLoop(stmts []ast.Stmt, idx int) (rangeLoopShape, bool) {
-	if idx == 0 {
-		return rangeLoopShape{}, false
-	}
-
-	current, ok := l.rangeLoopShape(stmts[idx])
-	if !ok {
-		return rangeLoopShape{}, false
-	}
-
-	prior, ok := l.rangeLoopShape(stmts[idx-1])
-	if !ok || current.key != prior.key || current.source != prior.source {
-		return rangeLoopShape{}, false
-	}
-
-	return current, true
-}
-
-func (l *Runner) rangeLoopShape(stmt ast.Stmt) (rangeLoopShape, bool) {
-	loop, ok := stmt.(*ast.RangeStmt)
-	if !ok || loop.Body == nil || l.hasAttachedComment(loop) {
-		return rangeLoopShape{}, false
-	}
-
-	if len(loop.Body.List) == 0 || len(loop.Body.List) > rangeLoopMaxStmts {
-		return rangeLoopShape{}, false
-	}
-
-	if slices.ContainsFunc(loop.Body.List, rangeLoopStmtHasComplexControl) {
-		return rangeLoopShape{}, false
-	}
-
-	keyName, keyObj := l.rangeLoopIdent(loop.Key)
-
-	valueName, valueObj := l.rangeLoopIdent(loop.Value)
-	if valueObj == nil || !nodeUsesObject(loop.Body, valueObj, l.pkg.TypesInfo) {
-		return rangeLoopShape{}, false
-	}
-
-	rendered := l.renderStmtList(loop.Body.List)
-
-	rendered = normalizeRenderedIdentifier(rendered, valueName, "$value")
-	if keyObj != nil {
-		rendered = normalizeRenderedIdentifier(rendered, keyName, "$key")
-	}
-
-	return rangeLoopShape{
-		key:    rendered,
-		source: l.render(l.unparen(loop.X)),
-		pos:    loop.For,
-	}, true
-}
-
-func (l *Runner) rangeLoopIdent(expr ast.Expr) (string, types.Object) {
-	id, ok := l.unparen(expr).(*ast.Ident)
-	if !ok || id.Name == "_" {
-		return "", nil
-	}
-
-	obj := l.pkg.TypesInfo.ObjectOf(id)
-	if obj == nil {
-		return "", nil
-	}
-
-	return id.Name, obj
-}
-
-func rangeLoopStmtHasComplexControl(stmt ast.Stmt) bool {
-	complex := false
-
-	ast.Inspect(stmt, func(n ast.Node) bool {
-		if complex {
-			return false
-		}
-
-		switch n.(type) {
-		case *ast.FuncLit:
-			return false
-		case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt,
-			*ast.SelectStmt, *ast.BranchStmt, *ast.ReturnStmt, *ast.GoStmt, *ast.DeferStmt:
-			complex = true
-			return false
-		}
-
-		return true
-	})
-
-	return complex
 }

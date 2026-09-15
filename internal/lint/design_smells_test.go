@@ -52,13 +52,13 @@ var errBad error
 
 	if !strings.Contains(
 		joined,
-		`validation ladder in "update" duplicates "create"; extract shared validation`,
+		`function "update" has same supported behavior as "create" (effects: reads); merge shared implementation`,
 	) {
-		t.Fatalf("expected duplicate validation finding, got:\n%s", joined)
+		t.Fatalf("expected behavior clone finding, got:\n%s", joined)
 	}
 
-	if !hasIssueKind(issues, "duplicate_validation") {
-		t.Fatalf("expected duplicate_validation kind, got %#v", issues)
+	if !hasIssueKind(issues, "behavior_clone") {
+		t.Fatalf("expected behavior_clone kind, got %#v", issues)
 	}
 }
 

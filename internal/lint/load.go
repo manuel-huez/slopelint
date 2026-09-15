@@ -257,6 +257,7 @@ func loadOne(meta *packageMeta, byImportPath map[string]*packageMeta) (*LoadedPa
 		Types:      make(map[ast.Expr]types.TypeAndValue),
 		Defs:       make(map[*ast.Ident]types.Object),
 		Uses:       make(map[*ast.Ident]types.Object),
+		Implicits:  make(map[ast.Node]types.Object),
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 		Scopes:     make(map[ast.Node]*types.Scope),
 		Instances:  make(map[*ast.Ident]types.Instance),

@@ -344,15 +344,13 @@ func f(values []string) {
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	if !strings.Contains(
-		joined,
-		`adjacent range loop repeats previous loop body; merge ranges or collapse shared input list`,
-	) {
-		t.Fatalf("expected duplicate range loop finding, got:\n%s", joined)
+	if !strings.Contains(joined, `behavior block in "f" duplicates block in "f" at sample.go:`) ||
+		!strings.Contains(joined, `(effects: calls); extract shared behavior`) {
+		t.Fatalf("expected behavior clone finding, got:\n%s", joined)
 	}
 
-	if !hasIssueKind(issues, "loop_ceremony") {
-		t.Fatalf("expected loop_ceremony kind, got %#v", issues)
+	if !hasIssueKind(issues, "behavior_clone") {
+		t.Fatalf("expected behavior_clone kind, got %#v", issues)
 	}
 }
 
@@ -453,7 +451,7 @@ func f(first, second []int) {
 `)
 
 	joined := joinMessages(lintInDir(t, tmp))
-	if strings.Contains(joined, `adjacent range loop repeats previous loop body`) {
+	if strings.Contains(joined, `behavior block in "f" duplicates block in "f"`) {
 		t.Fatalf("unexpected duplicate-loop finding for different sources, got:\n%s", joined)
 	}
 }

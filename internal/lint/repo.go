@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
 
 // LintPackages runs repo-aware analysis across loaded packages.
@@ -30,14 +31,16 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 	repoDeadCode := opts.ClosedWorld && hasMainPackage(pkgs)
 	repoOpts := opts
 	repoOpts.skipDeadCode = repoDeadCode
+	repoOpts.skipBehaviorClones = true
 
-	sort.Slice(pkgs, func(i, j int) bool {
-		return pkgs[i].ImportPath < pkgs[j].ImportPath
-	})
+	sortLoadedPackages(pkgs)
 
 	var (
-		deadPkgs = make([]*deadcodecheck.Package, 0, len(pkgs))
-		issues   []Issue
+		deadPkgs   = make([]*deadcodecheck.Package, 0, len(pkgs))
+		smellPkgs  = make([]*smellcheck.Package, 0, len(pkgs))
+		pkgLinters = make(map[*smellcheck.Package]*linter, len(pkgs))
+		linters    = make([]*linter, 0, len(pkgs))
+		issues     []Issue
 	)
 
 	for _, pkg := range pkgs {
@@ -47,12 +50,22 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 		l.checkContractComments()
 		l.collectLocalFuncLits()
 		l.analyzeFiles()
-		sortIssues(l.issues)
-		issues = append(issues, l.issues...)
+		linters = append(linters, l)
+
+		smellPkg := l.smellsPackage()
+		smellPkgs = append(smellPkgs, smellPkg)
+		pkgLinters[smellPkg] = l
 
 		if repoDeadCode {
 			deadPkgs = append(deadPkgs, l.deadCodePackage())
 		}
+	}
+
+	addRepoBehaviorFindings(smellPkgs, pkgLinters)
+
+	for _, l := range linters {
+		sortIssues(l.issues)
+		issues = append(issues, l.issues...)
 	}
 
 	if repoDeadCode {
@@ -67,6 +80,15 @@ func LintPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 	}
 
 	return issues
+}
+
+func addRepoBehaviorFindings(
+	pkgs []*smellcheck.Package,
+	linters map[*smellcheck.Package]*linter,
+) {
+	for pkg, findings := range smellcheck.RunBehaviorRepo(pkgs) {
+		linters[pkg].addSmellFindings(findings)
+	}
 }
 
 func hasMainPackage(pkgs []*LoadedPackage) bool {
@@ -87,9 +109,7 @@ func inferRepoSummaries(
 	summaries := make(map[string]callSummary)
 	funcs := make([]repoSummarizableFunc, 0)
 
-	sort.Slice(pkgs, func(i, j int) bool {
-		return pkgs[i].ImportPath < pkgs[j].ImportPath
-	})
+	sortLoadedPackages(pkgs)
 
 	for _, pkg := range pkgs {
 		l := newLinter(pkg, opts)
@@ -130,6 +150,12 @@ func inferRepoSummaries(
 	}
 
 	return explicitFacts, summaries
+}
+
+func sortLoadedPackages(pkgs []*LoadedPackage) {
+	sort.Slice(pkgs, func(i, j int) bool {
+		return pkgs[i].ImportPath < pkgs[j].ImportPath
+	})
 }
 
 type repoSummarizableFunc struct {

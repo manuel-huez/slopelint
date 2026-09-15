@@ -141,7 +141,7 @@ func (l *Runner) reportBoolModeLiteralCalls(paramsByFunc map[string][]boolModePa
 
 			for _, param := range paramsByFunc[key] {
 				if param.index >= len(call.Args) ||
-					!isBoolLiteral(l.unparen(call.Args[param.index])) {
+					!isBoolLiteral(ast.Unparen(call.Args[param.index])) {
 					continue
 				}
 

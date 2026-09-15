@@ -21,28 +21,30 @@ const (
 
 // Options controls linter behavior.
 type Options struct {
-	MaxStates    int
-	CacheEnabled bool
-	CacheDir     string
-	CacheHitHook func(string)
-	ClosedWorld  bool
-	skipDeadCode bool
+	MaxStates          int
+	CacheEnabled       bool
+	CacheDir           string
+	CacheHitHook       func(string)
+	ClosedWorld        bool
+	skipDeadCode       bool
+	skipBehaviorClones bool
 }
 
 type linter struct {
-	pkg             *LoadedPackage
-	index           packageIndex
-	maxStates       int
-	issues          []Issue
-	reported        map[string]struct{}
-	suppressReports int
-	renderCache     map[ast.Node]string
-	explicitFacts   map[string][]guardContract
-	inferredFacts   map[string]callSummary
-	localFuncLits   map[types.Object]*ast.FuncLit
-	externalSummary func(*types.Func) (callSummary, bool)
-	skipDeadCode    bool
-	structureRunner *structurecheck.Runner
+	pkg                *LoadedPackage
+	index              packageIndex
+	maxStates          int
+	issues             []Issue
+	reported           map[string]struct{}
+	suppressReports    int
+	renderCache        map[ast.Node]string
+	explicitFacts      map[string][]guardContract
+	inferredFacts      map[string]callSummary
+	localFuncLits      map[types.Object]*ast.FuncLit
+	externalSummary    func(*types.Func) (callSummary, bool)
+	skipDeadCode       bool
+	skipBehaviorClones bool
+	structureRunner    *structurecheck.Runner
 }
 
 type flowResult struct {
@@ -76,15 +78,16 @@ func newLinter(pkg *LoadedPackage, opts Options) *linter {
 	}
 
 	return &linter{
-		pkg:           pkg,
-		index:         newPackageIndex(pkg),
-		maxStates:     opts.MaxStates,
-		reported:      make(map[string]struct{}),
-		issues:        make([]Issue, 0),
-		renderCache:   make(map[ast.Node]string),
-		explicitFacts: make(map[string][]guardContract),
-		inferredFacts: make(map[string]callSummary),
-		skipDeadCode:  opts.skipDeadCode,
+		pkg:                pkg,
+		index:              newPackageIndex(pkg),
+		maxStates:          opts.MaxStates,
+		reported:           make(map[string]struct{}),
+		issues:             make([]Issue, 0),
+		renderCache:        make(map[ast.Node]string),
+		explicitFacts:      make(map[string][]guardContract),
+		inferredFacts:      make(map[string]callSummary),
+		skipDeadCode:       opts.skipDeadCode,
+		skipBehaviorClones: opts.skipBehaviorClones,
 	}
 }
 

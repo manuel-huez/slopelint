@@ -64,7 +64,7 @@ func (l *linter) recordLocalFuncLit(
 		return
 	}
 
-	lit, ok := l.unparen(rhs).(*ast.FuncLit)
+	lit, ok := ast.Unparen(rhs).(*ast.FuncLit)
 	if !ok {
 		l.markLocalFuncLitAmbiguous(obj, ambiguous)
 
@@ -81,7 +81,7 @@ func (l *linter) recordLocalFuncLit(
 }
 
 func (l *linter) funcVarForExpr(expr ast.Expr) (*types.Var, bool) {
-	name, ok := l.unparen(expr).(*ast.Ident)
+	name, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok {
 		return nil, false
 	}
@@ -103,7 +103,7 @@ func (l *linter) markLocalFuncLitAmbiguous(
 }
 
 func (l *linter) localFuncLitForExpr(expr ast.Expr) (*ast.FuncLit, bool) {
-	ident, ok := l.unparen(expr).(*ast.Ident)
+	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok {
 		return nil, false
 	}

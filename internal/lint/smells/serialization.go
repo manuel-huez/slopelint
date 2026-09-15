@@ -86,12 +86,12 @@ func (l *Runner) marshalTextReturnsReceiverString(
 		return false
 	}
 
-	conversion, ok := l.unparen(results[0]).(*ast.CallExpr)
+	conversion, ok := ast.Unparen(results[0]).(*ast.CallExpr)
 	if !ok || len(conversion.Args) != 1 || conversion.Ellipsis.IsValid() {
 		return false
 	}
 
-	tv, ok := l.pkg.TypesInfo.Types[l.unparen(conversion.Fun)]
+	tv, ok := l.pkg.TypesInfo.Types[ast.Unparen(conversion.Fun)]
 	if !ok || !tv.IsType() || !isByteSlice(tv.Type) {
 		return false
 	}
@@ -175,7 +175,7 @@ func (l *Runner) marshalJSONOnlyMarshalsString(
 		return false
 	}
 
-	call, ok := l.unparen(results[0]).(*ast.CallExpr)
+	call, ok := ast.Unparen(results[0]).(*ast.CallExpr)
 	if !ok || len(call.Args) != 1 {
 		return false
 	}
@@ -201,15 +201,15 @@ func singleReturnResults(body *ast.BlockStmt, count int) ([]ast.Expr, bool) {
 }
 
 func (l *Runner) isReceiverStringCall(expr ast.Expr, recvObj *types.Var) bool {
-	call, ok := l.unparen(expr).(*ast.CallExpr)
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 0 {
 		return false
 	}
 
-	sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr)
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok || sel.Sel == nil || sel.Sel.Name != stringMethodName {
 		return false
 	}
 
-	return identRefersToObject(l.pkg.TypesInfo, l.unparen(sel.X), recvObj)
+	return identRefersToObject(l.pkg.TypesInfo, ast.Unparen(sel.X), recvObj)
 }

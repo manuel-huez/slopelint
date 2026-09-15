@@ -7,13 +7,11 @@ import (
 )
 
 const (
-	boolTrueText              = "true"
-	boolFalseText             = "false"
-	lenPathSegment            = "#len"
-	nilText                   = "nil"
-	panicText                 = "panic"
-	predicatePathSegmentPrefx = "#pred:"
-	unknownPos                = "unknown position"
+	boolTrueText  = "true"
+	boolFalseText = "false"
+	nilText       = "nil"
+	panicText     = "panic"
+	unknownPos    = "unknown position"
 )
 
 // Finding is one smell diagnostic emitted by this package.
@@ -42,6 +40,7 @@ type Runner struct {
 	reported      map[string]struct{}
 	renderCache   map[ast.Node]string
 	funcUseCounts map[string]int
+	behaviorCalls map[string]behaviorSummary
 }
 
 // RunDefault runs smell checks enabled by default.
@@ -65,7 +64,6 @@ func RunDefault(pkg *Package) []Finding {
 // RunPackage runs package-wide smell checks enabled by --package.
 func RunPackage(pkg *Package) []Finding {
 	r := newRunner(pkg)
-	r.checkDuplicateValidationLadders()
 	r.checkSingleUsePrivateHelpers()
 	r.checkSingleImplInterfaces()
 	r.checkOptionsOverkill()
@@ -77,6 +75,14 @@ func RunPackage(pkg *Package) []Finding {
 	r.checkOptionalResultTriples()
 	r.checkProductionErrorPanics()
 	r.checkSentinelErrorBreaks()
+
+	return r.findings
+}
+
+// RunBehaviorPackage reports behavior clones inside one package.
+func RunBehaviorPackage(pkg *Package) []Finding {
+	r := newRunner(pkg)
+	r.checkBehaviorClones(nil)
 
 	return r.findings
 }

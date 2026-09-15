@@ -174,7 +174,7 @@ func (l *Runner) normalizationDependenciesMayChange(
 				}
 			}
 
-			if selector, ok := l.unparen(node.Fun).(*ast.SelectorExpr); ok {
+			if selector, ok := ast.Unparen(node.Fun).(*ast.SelectorExpr); ok {
 				_, changed = deps[l.mutationRootObject(selector.X)]
 			}
 		}
@@ -186,7 +186,7 @@ func (l *Runner) normalizationDependenciesMayChange(
 }
 
 func (l *Runner) mutationRootObject(expr ast.Expr) types.Object {
-	switch expr := l.unparen(expr).(type) {
+	switch expr := ast.Unparen(expr).(type) {
 	case *ast.Ident:
 		return l.pkg.TypesInfo.ObjectOf(expr)
 	case *ast.SelectorExpr:
@@ -229,7 +229,7 @@ func (l *Runner) normalizationCall(call *ast.CallExpr) (*ast.CallExpr, bool) {
 }
 
 func (l *Runner) isTrimSpaceCall(expr ast.Expr) bool {
-	call, ok := l.unparen(expr).(*ast.CallExpr)
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if !ok {
 		return false
 	}

@@ -196,17 +196,6 @@ func (l *Runner) render(node ast.Node) string {
 	return text
 }
 
-func (l *Runner) unparen(expr ast.Expr) ast.Expr {
-	for {
-		paren, ok := expr.(*ast.ParenExpr)
-		if !ok {
-			return expr
-		}
-
-		expr = paren.X
-	}
-}
-
 func (l *Runner) renderCaseClauseHeader(clause *ast.CaseClause) string {
 	if clause == nil || len(clause.List) == 0 {
 		return "default"

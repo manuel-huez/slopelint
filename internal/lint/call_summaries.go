@@ -639,7 +639,7 @@ func (result resultSummary) contractsForScalar(
 }
 
 func callScalar(callExpr, scalarExpr ast.Expr, l *linter) (*ast.CallExpr, scalar, bool) {
-	call, ok := l.unparen(callExpr).(*ast.CallExpr)
+	call, ok := ast.Unparen(callExpr).(*ast.CallExpr)
 	if !ok {
 		return nil, scalar{}, false
 	}

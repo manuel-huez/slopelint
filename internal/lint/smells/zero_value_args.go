@@ -256,7 +256,7 @@ func zeroValueScalarArg(l *Runner, arg ast.Expr, typ types.Type) bool {
 }
 
 func zeroValueCompositeArg(l *Runner, arg ast.Expr, paramType types.Type) bool {
-	lit, ok := l.unparen(arg).(*ast.CompositeLit)
+	lit, ok := ast.Unparen(arg).(*ast.CompositeLit)
 	if !ok || len(lit.Elts) != 0 {
 		return false
 	}

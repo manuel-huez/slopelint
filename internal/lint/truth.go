@@ -52,7 +52,7 @@ func truthAcrossStates(
 }
 
 func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 	if result, known := l.constantBoolTruth(expr); known {
 		return result, nil
 	}

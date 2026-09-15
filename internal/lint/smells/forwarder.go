@@ -231,7 +231,7 @@ func (l *Runner) funcUsesPrivateReceiverMember(fn *ast.FuncDecl) bool {
 
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || !identRefersToObject(l.pkg.TypesInfo, l.unparen(sel.X), receiver) {
+		if !ok || !identRefersToObject(l.pkg.TypesInfo, ast.Unparen(sel.X), receiver) {
 			return true
 		}
 
@@ -311,7 +311,7 @@ func (l *Runner) directTrivialForwarderCall(
 			return nil, false
 		}
 
-		call, ok := l.unparen(stmt.Results[0]).(*ast.CallExpr)
+		call, ok := ast.Unparen(stmt.Results[0]).(*ast.CallExpr)
 		if !ok {
 			return nil, false
 		}
@@ -322,7 +322,7 @@ func (l *Runner) directTrivialForwarderCall(
 			return nil, false
 		}
 
-		call, ok := l.unparen(stmt.X).(*ast.CallExpr)
+		call, ok := ast.Unparen(stmt.X).(*ast.CallExpr)
 		if !ok {
 			return nil, false
 		}
@@ -353,7 +353,7 @@ func (l *Runner) assignReturnTrivialForwarderCall(
 	}
 
 	for idx, result := range ret.Results {
-		if !identRefersToObject(l.pkg.TypesInfo, l.unparen(result), temps[idx]) {
+		if !identRefersToObject(l.pkg.TypesInfo, ast.Unparen(result), temps[idx]) {
 			return nil, false
 		}
 	}
@@ -379,7 +379,7 @@ func (l *Runner) forwardedCallResultTempsFromAssign(
 		return nil, nil, false
 	}
 
-	call, ok := l.unparen(stmt.Rhs[0]).(*ast.CallExpr)
+	call, ok := ast.Unparen(stmt.Rhs[0]).(*ast.CallExpr)
 	if !ok {
 		return nil, nil, false
 	}
@@ -405,7 +405,7 @@ func (l *Runner) forwardedCallResultTempsFromDecl(
 		return nil, nil, false
 	}
 
-	call, ok := l.unparen(spec.Values[0]).(*ast.CallExpr)
+	call, ok := ast.Unparen(spec.Values[0]).(*ast.CallExpr)
 	if !ok {
 		return nil, nil, false
 	}

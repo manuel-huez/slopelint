@@ -21,7 +21,7 @@ type scalar struct {
 }
 
 func (l *Runner) scalarOf(expr ast.Expr) (scalar, bool) {
-	clean := l.unparen(expr)
+	clean := ast.Unparen(expr)
 	if value, ok := nilLiteralScalar(clean); ok {
 		return value, true
 	}

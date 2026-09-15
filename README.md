@@ -53,7 +53,10 @@ Package-level smells:
 - large const, var, or type chunks without blank/comment grouping
 - const chunks mixing unrelated prefixes without grouping
 - large table tests without case names
-- duplicate validation ladders
+- behavior-equivalent functions after SSA normalization, including renamed locals
+  and temporary-variable differences
+- repeated behavior blocks, including validation ladders and structured loops,
+  with local bindings normalized and input identity preserved
 - single-use private helpers with tiny bodies
 - single-implementation private interfaces
 - functional options around tiny private APIs
@@ -88,6 +91,17 @@ It also:
 - invalidates facts conservatively after writes, unknown calls, loops, closures,
   goroutines, `select`, and type switches
 - infers helper summaries for guard-like functions
+- builds typed SSA behavior fingerprints for production functions, including
+  returns, memory access, calls, allocation, panic, defer, and concurrency;
+  dependency-ordered summaries cover arbitrary local-call depth and recursion
+- compares exact SHA-256-indexed canonical summaries in linear expected time;
+  hashes only select candidates, while full canonical summaries confirm matches
+- fingerprints statement regions separately for partial clones and suppresses
+  contained block reports when a whole-function clone already explains them
+- compares behavior across all packages loaded by standalone repo scans;
+  analyzer/vettool mode remains package-scoped because its driver supplies one package
+- propagates canonical behavior and side effects through loaded-package calls,
+  local calls, generic instances, closures, and recursive call groups
 - exports `go/analysis` facts so imported helpers can carry summaries across
   package boundaries
 - propagates boolean and `error`/`nil`-style result facts
@@ -175,12 +189,15 @@ go vet -vettool=$(pwd)/bin/slopelint ./...
 Useful `slopelint` flags:
 
 - `-max-states`: maximum symbolic states before widening, default `32`
+- `-json`: emit repository-aware machine-readable diagnostics
 - `-closed-world`: treat matched `main` packages as complete production entrypoints;
   enables repo-wide exported dead-code findings
 
-Useful inherited `singlechecker` flags:
+Standalone JSON uses `{"issues":[{"position":"...","kind":"behavior_clone","message":"..."}]}`.
+It writes JSON to stdout and returns exit code `3` when findings exist.
 
-- `-json`: emit machine-readable diagnostics
+Useful analyzer/vettool flags:
+
 - `-test=false`: skip test files
 - `-c=N`: show source context around diagnostics
 - `-flags`: print analyzer flags as JSON
@@ -192,7 +209,7 @@ Useful env vars:
 - `SLOPELINT_CACHE=0`: disable cache
 - `SLOPELINT_CACHE_DIR=/path/to/cache`: override cache root
 
-Default cache location: `os.UserCacheDir()/slopelint/analysis-v2`
+Default cache location: `os.UserCacheDir()/slopelint/analysis-v6`
 
 ## Development
 
@@ -216,9 +233,24 @@ similar; `repeated_test_fixture` catches exact copied fixture contents.
 - strongest on small path facts and local/private API smells
 - repo-wide dead-code reachability runs only with standalone `-closed-world`
   when loaded patterns include a `main` package; vettool mode stays package-scoped
-- dead-code results cover the active `GOOS`, `GOARCH`, and build-tag configuration;
+- results cover the active `GOOS`, `GOARCH`, and build-tag configuration;
   run once per relevant configuration, for example with `GOFLAGS='-tags=mytag'`
 - weak at type-level semantic meaning
+- behavior clones are exact under the supported static model, not proof of
+  equivalence for every possible execution
+- whole-function fingerprints include dynamic function parameters, statically
+  bound closures, reflection calls, and `unsafe` conversions as typed operations
+- partial-block fingerprints include closures defined inside the candidate;
+  calls through function values defined outside that block stay fail-closed
+- repeated closure bodies are also compared as independent function candidates
+- generated files are excluded from behavior-clone candidates
+- tiny deferred `Close`/`Release`/`Unlock`/`Cancel`/`Stop` closures, direct
+  `sort.Slice` comparators, and interface-required one-call forwarding methods are
+  excluded only as independent candidates; their parent function behavior remains
+- intentional behavior clones require an attached reason, for example
+  `//slopelint:ignore behavior_clone -- separate protocol boundary`
+- behavior hidden behind reflection data can still cause conservative misses because
+  no static analyzer can observe runtime-generated behavior
 - reports only; no custom autofix implementation yet
 
 ## Rule IDs
@@ -257,7 +289,7 @@ Machine-readable diagnostic categories emitted today:
 - `comment_noise`
 - `serialization_ceremony`
 - `normalization_ceremony`
-- `duplicate_validation`
+- `behavior_clone`
 - `abstraction_overkill`
 - `api_overkill`
 - `result_wrapper`

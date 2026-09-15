@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-const analysisCacheSchema = 3
+const analysisCacheSchema = 6
 
 const cacheDirPerm = 0o755
 

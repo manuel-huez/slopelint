@@ -33,7 +33,7 @@ func (l *linter) valueSymbolOf(expr ast.Expr) (symbol, bool) {
 }
 
 func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 	if id, ok := expr.(*ast.Ident); ok && id.Name == nilText {
 		return scalar{kind: scalarNil, text: nilText}, true
 	}
@@ -86,7 +86,7 @@ func (l *linter) containsRuntimeTargetConstant(expr ast.Expr) bool {
 			return true
 		}
 
-		if l.isRuntimeTargetConstant(l.unparen(expr)) {
+		if l.isRuntimeTargetConstant(ast.Unparen(expr)) {
 			found = true
 			return false
 		}
@@ -98,12 +98,12 @@ func (l *linter) containsRuntimeTargetConstant(expr ast.Expr) bool {
 }
 
 func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {
-	call, ok := l.unparen(expr).(*ast.CallExpr)
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 1 {
 		return symbol{}, false
 	}
 
-	id, ok := l.unparen(call.Fun).(*ast.Ident)
+	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok || id.Name != "len" {
 		return symbol{}, false
 	}
@@ -122,7 +122,7 @@ func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {
 }
 
 func (l *linter) predicateCallSymbolOf(expr ast.Expr) (symbol, bool) {
-	call, ok := l.unparen(expr).(*ast.CallExpr)
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 0 || !isBoolType(l.pkg.TypesInfo.TypeOf(call)) {
 		return symbol{}, false
 	}
@@ -132,7 +132,7 @@ func (l *linter) predicateCallSymbolOf(expr ast.Expr) (symbol, bool) {
 		return symbol{}, false
 	}
 
-	sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr)
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok || l.pkg.TypesInfo.Selections[sel] == nil {
 		return symbol{}, false
 	}

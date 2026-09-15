@@ -17,7 +17,6 @@ const (
 const (
 	ancestorStackCap  = 8
 	identifierWordCap = 4
-	rangeLoopMaxStmts = 3
 )
 
 type boolBranchAction struct {
@@ -49,12 +48,6 @@ type tempAliasDecl struct {
 	name *ast.Ident
 	obj  types.Object
 	rhs  ast.Expr
-}
-
-type rangeLoopShape struct {
-	key    string
-	source string
-	pos    token.Pos
 }
 
 type appendLenGuardMatch struct {
@@ -94,7 +87,6 @@ func (l *Runner) scanStructuralBlock(stmts []ast.Stmt, ctx blockContext) {
 		l.checkRedundantRangeGuard(stmt)
 		l.checkEmptyRangeReturnGuard(stmts, idx, ctx)
 		l.checkNestedFinalIfPyramid(stmts, idx, ctx)
-		l.checkDuplicateAdjacentRangeLoop(stmts, idx)
 		l.scanStructuralStmt(stmt)
 	}
 }

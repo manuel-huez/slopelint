@@ -157,7 +157,7 @@ func (l *Runner) errorSentinelConditions(
 	expr ast.Expr,
 	polarity errorSentinelPolarity,
 ) []errorSentinelCondition {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	switch node := expr.(type) {
 	case *ast.UnaryExpr:
@@ -397,7 +397,7 @@ func (l *Runner) callbackSentinelReturnsInExpr(expr ast.Expr) []sentinelReturn {
 			return false
 		case *ast.CallExpr:
 			for _, arg := range node.Args {
-				lit, ok := l.unparen(arg).(*ast.FuncLit)
+				lit, ok := ast.Unparen(arg).(*ast.FuncLit)
 				if !ok || lit.Body == nil {
 					continue
 				}
@@ -442,7 +442,7 @@ func (l *Runner) callbackSentinelReturnsInFuncLit(lit *ast.FuncLit) []sentinelRe
 }
 
 func (l *Runner) identObject(expr ast.Expr) types.Object {
-	ident, ok := l.unparen(expr).(*ast.Ident)
+	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok || ident == nil {
 		return nil
 	}
@@ -455,7 +455,7 @@ func (l *Runner) isErrorsIsCall(call *ast.CallExpr) bool {
 }
 
 func (l *Runner) errorSentinelText(expr ast.Expr) string {
-	expr = l.unparen(expr)
+	expr = ast.Unparen(expr)
 
 	if ident, ok := expr.(*ast.Ident); ok && ident != nil {
 		if ident.Name == "nil" || ident.Name == "err" {

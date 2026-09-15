@@ -8,7 +8,7 @@ import (
 )
 
 func (l *linter) checkBooleanSubexpressions(states []state, expr ast.Expr) {
-	switch expr := l.unparen(expr).(type) {
+	switch expr := ast.Unparen(expr).(type) {
 	case *ast.UnaryExpr:
 		if expr.Op == token.NOT {
 			l.checkBooleanSubexpressions(states, expr.X)

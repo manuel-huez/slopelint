@@ -95,7 +95,7 @@ func (l *linter) execLabeledStmt(stmt *ast.LabeledStmt, states []state) flowResu
 }
 
 func (l *linter) execExprStmt(stmt *ast.ExprStmt, states []state) []state {
-	if call, ok := l.unparen(stmt.X).(*ast.CallExpr); ok && l.callNeverReturns(call) {
+	if call, ok := ast.Unparen(stmt.X).(*ast.CallExpr); ok && l.callNeverReturns(call) {
 		l.invalidateForExprSideEffects(states, stmt.X)
 		return nil
 	}
@@ -108,7 +108,7 @@ func (l *linter) execGoStmt(stmt *ast.GoStmt, states []state) []state {
 }
 
 func (l *linter) callNeverReturns(call *ast.CallExpr) bool {
-	id, ok := l.unparen(call.Fun).(*ast.Ident)
+	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok {
 		return false
 	}
@@ -240,7 +240,7 @@ func (l *linter) singleCall(exprs []ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 
-	call, ok := l.unparen(exprs[0]).(*ast.CallExpr)
+	call, ok := ast.Unparen(exprs[0]).(*ast.CallExpr)
 	if !ok {
 		return nil, false
 	}

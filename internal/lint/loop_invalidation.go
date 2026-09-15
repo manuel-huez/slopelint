@@ -175,13 +175,13 @@ func (l *linter) collectCallTargetInvalidations(
 	seen map[*ast.FuncLit]struct{},
 	addDescendants func(ast.Expr),
 ) {
-	if lit, ok := l.unparen(call.Fun).(*ast.FuncLit); ok {
+	if lit, ok := ast.Unparen(call.Fun).(*ast.FuncLit); ok {
 		l.collectFuncLitInvalidations(lit, invalidations, seen)
 	} else if lit, ok := l.localFuncLitForExpr(call.Fun); ok {
 		l.collectFuncLitInvalidations(lit, invalidations, seen)
 	}
 
-	sel, ok := l.unparen(call.Fun).(*ast.SelectorExpr)
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok {
 		return
 	}
@@ -200,7 +200,7 @@ func (l *linter) collectCallArgInvalidations(
 	addDescendants func(ast.Expr),
 ) {
 	for _, arg := range call.Args {
-		if lit, ok := l.unparen(arg).(*ast.FuncLit); ok {
+		if lit, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
 			l.collectFuncLitInvalidations(lit, invalidations, seen)
 			continue
 		}
@@ -210,7 +210,7 @@ func (l *linter) collectCallArgInvalidations(
 			continue
 		}
 
-		if unary, ok := l.unparen(arg).(*ast.UnaryExpr); ok && unary.Op == token.AND {
+		if unary, ok := ast.Unparen(arg).(*ast.UnaryExpr); ok && unary.Op == token.AND {
 			addFull(unary.X)
 			continue
 		}
@@ -226,7 +226,7 @@ func (l *linter) collectBuiltinCallInvalidations(
 	call *ast.CallExpr,
 	addDescendants func(ast.Expr),
 ) {
-	ident, ok := l.unparen(call.Fun).(*ast.Ident)
+	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok {
 		return
 	}

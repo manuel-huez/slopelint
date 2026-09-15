@@ -14,7 +14,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
+func TestAnalysisCacheRootIncludesSchema(t *testing.T) {
 	t.Parallel()
 
 	root, err := analysisCacheRoot(t.TempDir())
@@ -22,8 +22,8 @@ func TestAnalysisCacheSchemaIncludesVariadicContractFacts(t *testing.T) {
 		t.Fatalf("analysisCacheRoot: %v", err)
 	}
 
-	if !strings.HasSuffix(root, "analysis-v3") {
-		t.Fatalf("analysis cache root = %q, want schema 3 suffix", root)
+	if !strings.HasSuffix(root, "analysis-v6") {
+		t.Fatalf("analysis cache root = %q, want schema 6 suffix", root)
 	}
 }
 

@@ -234,9 +234,7 @@ func analysisCacheFiles(pass *analysis.Pass) ([]analysisCacheFile, error) {
 		})
 	}
 
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Filename < files[j].Filename
-	})
+	sortAnalysisCacheFiles(files)
 
 	return files, nil
 }
@@ -276,11 +274,15 @@ func repoAnalysisCacheFiles(pkgs []*LoadedPackage) ([]analysisCacheFile, error) 
 		}
 	}
 
+	sortAnalysisCacheFiles(files)
+
+	return files, nil
+}
+
+func sortAnalysisCacheFiles(files []analysisCacheFile) {
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Filename < files[j].Filename
 	})
-
-	return files, nil
 }
 
 func readAnalysisFile(pass *analysis.Pass, name string) ([]byte, error) {

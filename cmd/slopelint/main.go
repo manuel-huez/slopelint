@@ -20,6 +20,14 @@ const (
 	exitIssues       = 3
 )
 
+type similarityMode uint8
+
+const (
+	similarityLocal similarityMode = iota
+	similarityCI
+	similarityOff
+)
+
 func main() {
 	if analysisDriverRequested(os.Args[1:]) {
 		singlechecker.Main(slopelint.Analyzer)
@@ -82,9 +90,8 @@ func runStandalone(args []string, stdout, stderr io.Writer) int {
 		defaultMaxStates,
 		"maximum number of symbolic states before widening",
 	)
-	cacheEnabled := flags.Bool("cache", true, "reuse cached analysis for unchanged packages")
-	cacheDir := flags.String("cache-dir", "", "directory for persistent analysis cache")
 	jsonOutput := flags.Bool("json", false, "emit repository-aware JSON diagnostics")
+	cacheEnabled := flags.Bool("cache", true, "reuse cached analysis for unchanged packages")
 	closedWorld := flags.Bool(
 		"closed-world",
 		false,
@@ -107,50 +114,55 @@ func runStandalone(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	pkgs, err := lint.LoadPackages(patterns)
+	mode, err := similarityModeFromEnv()
 	if err != nil {
-		if _, writeErr := fmt.Fprintf(stderr, "slopelint: %v\n", err); writeErr != nil {
-			return exitFailure
-		}
-
-		return exitFailure
+		return reportStandaloneError(stderr, err)
 	}
 
-	issues := lint.LintPackages(pkgs, lint.Options{
+	cacheActive := *cacheEnabled && lint.CacheEnabledFromEnv()
+	options := lint.Options{
 		MaxStates:    *maxStates,
-		CacheEnabled: *cacheEnabled && lint.CacheEnabledFromEnv(),
-		CacheDir:     lint.ResolveCacheDir(*cacheDir),
+		CacheEnabled: cacheActive,
 		ClosedWorld:  *closedWorld,
-	})
+	}
 
-	return reportStandaloneIssues(stdout, stderr, issues, *jsonOutput)
+	var similarityOptions *lint.SimilarityOptions
+	if mode != similarityOff {
+		similarityOptions = &lint.SimilarityOptions{
+			CI:              mode == similarityCI,
+			CacheEnabled:    cacheActive,
+			AcceptedPairIDs: similarityAcceptedPairIDs(),
+		}
+	}
+
+	issues, err := lint.LintRepository(patterns, ".", options, similarityOptions)
+	if err != nil {
+		return reportStandaloneError(stderr, err)
+	}
+
+	if *jsonOutput {
+		err = writeJSONIssues(stdout, issues)
+	} else {
+		err = writeStandaloneIssues(stderr, issues)
+	}
+
+	if err != nil {
+		return reportStandaloneError(stderr, err)
+	}
+
+	if len(issues) > 0 {
+		return exitIssues
+	}
+
+	return 0
 }
 
-func reportStandaloneIssues(stdout, stderr io.Writer, issues []lint.Issue, jsonOutput bool) int {
-	if jsonOutput {
-		if err := writeJSONIssues(stdout, issues); err != nil {
-			if _, writeErr := fmt.Fprintf(
-				stderr,
-				"slopelint: encode json: %v\n",
-				err,
-			); writeErr != nil {
-				return exitFailure
-			}
+func reportStandaloneError(stderr io.Writer, err error) int {
+	_, _ = fmt.Fprintf(stderr, "slopelint: %v\n", err)
+	return exitFailure
+}
 
-			return exitFailure
-		}
-
-		if len(issues) > 0 {
-			return exitIssues
-		}
-
-		return 0
-	}
-
-	if len(issues) == 0 {
-		return 0
-	}
-
+func writeStandaloneIssues(stderr io.Writer, issues []lint.Issue) error {
 	for _, issue := range issues {
 		if _, err := fmt.Fprintf(
 			stderr,
@@ -158,11 +170,47 @@ func reportStandaloneIssues(stdout, stderr io.Writer, issues []lint.Issue, jsonO
 			lint.FormatIssuePosition(issue),
 			issue.Message,
 		); err != nil {
-			return exitFailure
+			return err
 		}
 	}
 
-	return exitIssues
+	return nil
+}
+
+func similarityModeFromEnv() (similarityMode, error) {
+	// Explicit override keeps local reproductions possible inside CI environments.
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("SLOPELINT_SIMILARITY")))
+	switch value {
+	case "local":
+		return similarityLocal, nil
+	case "ci":
+		return similarityCI, nil
+	case "off":
+		return similarityOff, nil
+	case "":
+		// Cloudflare Workers Builds and Pages expose provider-specific markers in
+		// addition to CI. Check all markers because build variables can be overridden.
+		for _, name := range []string{"CI", "WORKERS_CI", "CF_PAGES"} {
+			signal := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+			if signal != "" && signal != "0" && signal != "false" &&
+				signal != "off" && signal != "no" {
+				return similarityCI, nil
+			}
+		}
+
+		return similarityLocal, nil
+	default:
+		return similarityLocal, fmt.Errorf(
+			"SLOPELINT_SIMILARITY must be local, ci, or off; got %q",
+			value,
+		)
+	}
+}
+
+func similarityAcceptedPairIDs() []string {
+	return strings.FieldsFunc(os.Getenv("SLOPELINT_SIMILARITY_ACCEPT"), func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n'
+	})
 }
 
 type standaloneJSONIssue struct {

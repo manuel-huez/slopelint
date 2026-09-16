@@ -63,6 +63,8 @@ func TestRunStandaloneRequiresPackagePattern(t *testing.T) {
 }
 
 func TestRunStandaloneChecksCurrentPackage(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "off")
+
 	var stderr strings.Builder
 
 	if code := runStandalone([]string{cacheDisabled, "."}, io.Discard, &stderr); code != 0 {
@@ -71,6 +73,8 @@ func TestRunStandaloneChecksCurrentPackage(t *testing.T) {
 }
 
 func TestRunStandaloneWritesRepositoryJSON(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "off")
+
 	var (
 		stdout strings.Builder
 		stderr strings.Builder
@@ -90,5 +94,66 @@ func TestRunStandaloneWritesRepositoryJSON(t *testing.T) {
 
 	if output.Issues == nil {
 		t.Fatal("JSON issues must encode as an array")
+	}
+}
+
+func TestSimilarityModeAutoDetectsCI(t *testing.T) {
+	tests := []struct {
+		name     string
+		variable string
+		value    string
+	}{
+		{name: "generic", variable: "CI", value: "true"},
+		{name: "Cloudflare Workers Builds", variable: "WORKERS_CI", value: "1"},
+		{name: "Cloudflare Pages", variable: "CF_PAGES", value: "1"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("SLOPELINT_SIMILARITY", "")
+			t.Setenv("CI", "")
+			t.Setenv("WORKERS_CI", "")
+			t.Setenv("CF_PAGES", "")
+			t.Setenv(test.variable, test.value)
+
+			mode, err := similarityModeFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if mode != similarityCI {
+				t.Fatalf("similarity mode = %d, want CI", mode)
+			}
+		})
+	}
+}
+
+func TestSimilarityModeIgnoresFalseCIMarkers(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "")
+	t.Setenv("CI", "false")
+	t.Setenv("WORKERS_CI", "0")
+	t.Setenv("CF_PAGES", "off")
+
+	mode, err := similarityModeFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if mode != similarityLocal {
+		t.Fatalf("similarity mode = %d, want local", mode)
+	}
+}
+
+func TestSimilarityModeExplicitLocalOverridesCI(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "local")
+	t.Setenv("WORKERS_CI", "1")
+
+	mode, err := similarityModeFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if mode != similarityLocal {
+		t.Fatalf("similarity mode = %d, want local", mode)
 	}
 }

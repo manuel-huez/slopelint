@@ -1,0 +1,56 @@
+{
+  "schema": 10,
+  "source_digest": "efb85edebd19549a305b9db4cf059dc6a661d83fccfb00f6027ec8f397a4fc30",
+  "repository_digest": "131bc8f50e417eaaff1047573816fa4da8971488b7556a4bc51d37cf150ee969",
+  "model": "jina-embeddings-v2-base-code",
+  "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
+  "description_schema": 4,
+  "description_model": "gpt-5.6-luna",
+  "description_effort": "low",
+  "description_digest": "2775433462877c850e7be824e27a24932f0b61b8765fa11f7f388f07514e385a",
+  "checked_blocks": 1813,
+  "accepted": [
+    {
+      "id": "sim-033a373bab1f0612",
+      "left": "internal/lint/smells/api.go::nodeUsesObject",
+      "left_hash": "f65871ef6b5f43c8845472dfa9c562e604fc513862708658c3a88cebb3ed68d7",
+      "right": "internal/lint/structure/temp_alias.go::nodeUsesObject",
+      "right_hash": "065c95b34816e8762541945f0c7323120b0ba93c818d28936240361a11fcea89"
+    },
+    {
+      "id": "sim-11ed4278d6d51314",
+      "left": "internal/lint/smells/runner.go::*Runner.isBuiltinCall",
+      "left_hash": "282b0fe3dcd6d6903781fae98dba2287ab3509a1369ae58080998f8db5f9f84c",
+      "right": "internal/lint/structure/collections.go::*Runner.isBuiltinCall",
+      "right_hash": "8b0e04946e2bfba5d66f9e2f4d83b9cffdcaeaca6a5da67fdec48d49a1818887"
+    },
+    {
+      "id": "sim-2b3914356db95894",
+      "left": "internal/lint/deadcode/package.go::exprHasCalls",
+      "left_hash": "1f542ea63bd7d7dbd4d5f27765bb93d3e8395d908e9a9e2e05b20f1a77dc1ebf",
+      "right": "internal/lint/structure/branches.go::exprHasCalls",
+      "right_hash": "f0027126eee9ab36f62b34cf876eeeb6dd0d6e417b265aef8a4c46f2b37972d8"
+    },
+    {
+      "id": "sim-bdd2437aef77b411",
+      "left": "internal/lint/contracts.go::funcObjectKey",
+      "left_hash": "a4acea715f2bbd6ee1cc27548b370db976b513c6983457b343648673b87aec1c",
+      "right": "internal/lint/smells/runner.go::funcObjectKey",
+      "right_hash": "fa54866cdf40935cb5d3f2f1ddabd2431a8543132441a63e793c411964ecbae5"
+    },
+    {
+      "id": "sim-ceea8a1b5a462fac",
+      "left": "internal/lint/smells/scalars.go::scalarFromConstantValue",
+      "left_hash": "da8e0e275044b09bed2aea3f9f8c9fa465f2635b9b96ad1be5ee0553eaf1e7dc",
+      "right": "internal/lint/structure/scalars.go::scalarFromConstantValue",
+      "right_hash": "e5c24e3744d337bf54439515f0e0973e4a7fe794fa6faad4b1fae548cf191fc3"
+    },
+    {
+      "id": "sim-f7a499c48164d34e",
+      "left": "internal/lint/domain.go::isIsPredicateName",
+      "left_hash": "6373c2d55b02013d344a9edf692bf4af0a7f53293869881b79893580b315a46d",
+      "right": "internal/lint/smells/names.go::isIsPredicateName",
+      "right_hash": "6e9a888cc615912f9699fd450a6267b046d8628410b36c6a565c79f49c456644"
+    }
+  ]
+}

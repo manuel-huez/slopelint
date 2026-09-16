@@ -153,7 +153,7 @@ func (s state) hash() string {
 	if len(s.bindings) != 0 {
 		b.WriteByte('|')
 
-		for _, key := range sortedBindingKeys(s.bindings) {
+		for _, key := range sortedMapKeys(s.bindings) {
 			b.WriteString(key)
 			b.WriteByte(':')
 			b.WriteString(bindingHash(s.bindings[key]))
@@ -165,14 +165,14 @@ func (s state) hash() string {
 }
 
 func appendFactsHash(b *strings.Builder, facts map[string]fact) {
-	for _, key := range sortedFactKeys(facts) {
+	for _, key := range sortedMapKeys(facts) {
 		appendFactHash(b, key, facts[key])
 	}
 }
 
-func sortedFactKeys(facts map[string]fact) []string {
-	keys := make([]string, 0, len(facts))
-	for key := range facts {
+func sortedMapKeys[Value any](values map[string]Value) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
 		keys = append(keys, key)
 	}
 
@@ -193,24 +193,13 @@ func appendFactHash(b *strings.Builder, key string, f fact) {
 	if len(f.not) != 0 {
 		b.WriteByte('!')
 
-		for _, notKey := range sortedEvidenceKeys(f.not) {
+		for _, notKey := range sortedMapKeys(f.not) {
 			b.WriteString(notKey)
 			b.WriteByte(',')
 		}
 	}
 
 	b.WriteByte(';')
-}
-
-func sortedEvidenceKeys(values map[string]evidence) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	return keys
 }
 
 func sortedAliasEdges(aliases map[string]map[string]struct{}) []string {

@@ -7,10 +7,11 @@ import (
 
 // Issue is one linter finding.
 type Issue struct {
-	Pos     token.Pos
-	Kind    string
-	Message string
-	fset    *token.FileSet
+	Pos      token.Pos
+	Kind     string
+	Message  string
+	fset     *token.FileSet
+	position token.Position
 }
 
 func sortIssues(issues []Issue) {
@@ -35,6 +36,10 @@ func sortIssues(issues []Issue) {
 }
 
 func issuePosition(issue Issue) token.Position {
+	if issue.position.IsValid() {
+		return issue.position
+	}
+
 	if issue.fset == nil {
 		return token.Position{}
 	}

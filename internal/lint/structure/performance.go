@@ -245,8 +245,11 @@ func (l *Runner) externalCallLabel(call *ast.CallExpr) (string, bool) {
 	}
 
 	if pkgPath == "net/http" {
-		switch name {
-		case "Do", "Get", "Head", "Post", "PostForm":
+		// Package and method name alone also match in-memory reads such as Header.Get.
+		switch l.funcObject(call.Fun).FullName() {
+		case "net/http.Get", "net/http.Head", "net/http.Post", "net/http.PostForm",
+			"(*net/http.Client).Do", "(*net/http.Client).Get", "(*net/http.Client).Head",
+			"(*net/http.Client).Post", "(*net/http.Client).PostForm":
 			return "network call " + l.render(call.Fun), true
 		}
 	}

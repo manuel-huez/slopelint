@@ -206,7 +206,7 @@ func (l *Runner) mutationRootObject(expr ast.Expr) types.Object {
 
 func (l *Runner) normalizationCall(call *ast.CallExpr) (*ast.CallExpr, bool) {
 	fn, _, ok := l.calledFunc(call)
-	if !ok || fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != "strings" {
+	if !ok || fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != stringsImportPath {
 		return nil, false
 	}
 

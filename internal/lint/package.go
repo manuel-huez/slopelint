@@ -15,4 +15,6 @@ type LoadedPackage struct {
 	Files      []*ast.File
 	TypesPkg   *types.Package
 	TypesInfo  *types.Info
+	repoFiles  []string
+	testOnly   bool
 }

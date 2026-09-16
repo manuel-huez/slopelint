@@ -9,7 +9,6 @@ const defaultMaxStates = 32
 
 var maxStates = defaultMaxStates
 var cacheEnabled = true
-var cacheDir string
 
 // Analyzer reports path-proven redundancy and other low-signal code structure.
 var Analyzer = &analysis.Analyzer{
@@ -32,19 +31,12 @@ func init() {
 		true,
 		"reuse cached analysis for unchanged packages",
 	)
-	Analyzer.Flags.StringVar(
-		&cacheDir,
-		"cache-dir",
-		"",
-		"directory for persistent analysis cache",
-	)
 }
 
 func run(pass *analysis.Pass) (any, error) {
 	issues, err := lint.RunAnalysis(pass, lint.Options{
 		MaxStates:    maxStates,
 		CacheEnabled: cacheEnabled && lint.CacheEnabledFromEnv(),
-		CacheDir:     lint.ResolveCacheDir(cacheDir),
 	})
 	if err != nil {
 		return nil, err

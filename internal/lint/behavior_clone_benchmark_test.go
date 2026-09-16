@@ -26,16 +26,15 @@ func Transform(input int) int {
 }
 `)
 
-	pkgs, err := loadPackages([]string{"./..."}, dir)
-	if err != nil {
-		b.Fatalf("load packages: %v", err)
-	}
-
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		issues := LintPackages(pkgs, Options{MaxStates: 32})
+		issues, err := LintRepository([]string{"./..."}, dir, Options{MaxStates: 32}, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+
 		if !hasIssueKind(issues, "behavior_clone") {
 			b.Fatal("behavior clone missing")
 		}

@@ -3,15 +3,21 @@ package smells
 import (
 	"fmt"
 	"go/ast"
+	"go/types"
 )
 
 const resultWrapperFieldCount = 2
 
 func (l *Runner) checkInternalResultWrappers() {
 	methodCounts := l.methodCountsByReceiverName()
+	storedTypes := l.resultWrapperStorageTypes()
 
 	l.forEachProductionTypeSpec(func(typeSpec *ast.TypeSpec) {
 		if !l.isInternalResultWrapper(typeSpec, methodCounts) {
+			return
+		}
+
+		if _, stored := storedTypes[l.pkg.TypesInfo.TypeOf(typeSpec.Name)]; stored {
 			return
 		}
 
@@ -24,6 +30,58 @@ func (l *Runner) checkInternalResultWrappers() {
 			),
 		)
 	})
+}
+
+func (l *Runner) resultWrapperStorageTypes() map[types.Type]struct{} {
+	stored := make(map[types.Type]struct{})
+	add := func(typ types.Type) {
+		for {
+			typ = types.Unalias(typ)
+
+			pointer, ok := typ.(*types.Pointer)
+			if !ok {
+				stored[typ] = struct{}{}
+				return
+			}
+
+			typ = pointer.Elem()
+		}
+	}
+
+	// Storage needs one value; splitting it into separate Go results loses that shape.
+	l.forEachProductionDecl(func(decl ast.Decl) {
+		ast.Inspect(decl, func(node ast.Node) bool {
+			expr, ok := node.(ast.Expr)
+			if !ok {
+				return true
+			}
+
+			typ := l.pkg.TypesInfo.TypeOf(expr)
+			if typ == nil {
+				return true
+			}
+
+			switch typ := typ.Underlying().(type) {
+			case *types.Chan:
+				add(typ.Elem())
+			case *types.Map:
+				add(typ.Key())
+				add(typ.Elem())
+			case *types.Slice:
+				add(typ.Elem())
+			case *types.Array:
+				add(typ.Elem())
+			case *types.Struct:
+				for field := range typ.Fields() {
+					add(field.Type())
+				}
+			}
+
+			return true
+		})
+	})
+
+	return stored
 }
 
 func (l *Runner) isInternalResultWrapper(

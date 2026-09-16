@@ -5,32 +5,57 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/tools/go/analysis"
 )
 
-const analysisCacheSchema = 6
+// Bump whenever analyzer semantics or persisted cache/replay invariants change.
+// Standalone cache keys intentionally do not follow unrelated binary releases.
+const analysisCacheSchema = 13
+
+const analysisCacheTypeDigestRefreshLimit = 8
+
+const unsafeImportPath = "unsafe"
 
 const cacheDirPerm = 0o755
 
+const repoAnalysisCacheHitName = "repo"
+
 var errAnalysisCacheDisabled = errors.New("analysis cache disabled")
 
+func slopelintCacheRoot(dir string) (string, error) {
+	if dir != "" {
+		return dir, nil
+	}
+
+	userCacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(userCacheDir, "slopelint"), nil
+}
+
 type analysisCache struct {
-	path string
+	path       string
+	sourceRoot string
 }
 
 type repoAnalysisCache struct {
-	path string
+	path       string
+	sourceRoot string
 }
 
 type analysisCacheEntry struct {
-	Issues  []analysisCacheIssue  `json:"issues"`
-	Exports []analysisCacheExport `json:"exports"`
+	Issues       []analysisCacheIssue        `json:"issues"`
+	Exports      []analysisCacheExport       `json:"exports"`
+	Dependencies []analysisCacheImportedFact `json:"dependencies,omitempty"`
 }
 
 type analysisCacheIssue struct {
 	Filename string `json:"filename"`
+	FileID   string `json:"file_id"`
 	Offset   int    `json:"offset"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
 	Kind     string `json:"kind"`
 	Message  string `json:"message"`
 }
@@ -49,17 +74,6 @@ type analysisCacheFingerprint struct {
 	ImportedFacts []analysisCacheImportedFact `json:"imported_facts"`
 }
 
-type repoAnalysisCachePackage struct {
-	ImportPath string `json:"import_path"`
-	Name       string `json:"name"`
-}
-
-type repoAnalysisCacheImport struct {
-	Path    string   `json:"path"`
-	Name    string   `json:"name"`
-	Objects []string `json:"objects"`
-}
-
 type analysisCacheExecutable struct {
 	Path             string `json:"path"`
 	Size             int64  `json:"size"`
@@ -67,59 +81,65 @@ type analysisCacheExecutable struct {
 }
 
 type analysisCacheFile struct {
-	Filename string `json:"filename"`
-	SHA256   string `json:"sha256"`
+	SHA256 string `json:"sha256"`
+	Name   string `json:"name,omitempty"`
 }
 
 type analysisCacheImportedFact struct {
 	FuncKey string          `json:"func_key"`
+	Present bool            `json:"present"`
 	Fact    callSummaryFact `json:"fact"`
 }
 
-func newAnalysisCache(
-	pass *analysis.Pass,
-	pkg *LoadedPackage,
+func analysisCacheForSourceRoot(
+	sourceRoot string,
 	opts Options,
+	namespace string,
+	keyForPackage func() (string, error),
 ) (*analysisCache, error) {
 	if !opts.CacheEnabled {
 		return nil, errAnalysisCacheDisabled
 	}
 
-	root, err := analysisCacheRoot(opts.CacheDir)
+	root, err := analysisCacheRoot(opts.cacheDir)
 	if err != nil {
 		return nil, err
 	}
 
-	key, err := analysisCacheKey(pass, pkg, opts)
+	key, err := keyForPackage()
 	if err != nil {
 		return nil, err
 	}
 
 	return &analysisCache{
-		path: filepath.Join(root, key[:2], key[2:]+".json"),
+		path:       filepath.Join(root, namespace, key[:2], key[2:]+".json"),
+		sourceRoot: sourceRoot,
 	}, nil
 }
 
 func newRepoAnalysisCache(
-	pkgs []*LoadedPackage,
+	patterns []string,
+	dir string,
 	opts Options,
+	similarity *SimilarityOptions,
 ) (*repoAnalysisCache, error) {
 	if !opts.CacheEnabled {
 		return nil, errAnalysisCacheDisabled
 	}
 
-	root, err := analysisCacheRoot(opts.CacheDir)
+	root, err := analysisCacheRoot(opts.cacheDir)
 	if err != nil {
 		return nil, err
 	}
 
-	key, err := repoAnalysisCacheKey(pkgs, opts)
+	key, sourceRoot, err := repoAnalysisCacheKey(patterns, dir, opts, similarity)
 	if err != nil {
 		return nil, err
 	}
 
 	return &repoAnalysisCache{
-		path: filepath.Join(root, "repo", key[:2], key[2:]+".json"),
+		path:       filepath.Join(root, "repo", key[:2], key[2:]+".json"),
+		sourceRoot: sourceRoot,
 	}, nil
 }
 
@@ -131,18 +151,9 @@ func CacheEnabledFromEnv() bool {
 	}
 
 	switch strings.ToLower(value) {
-	case zeroIntText, boolFalseText, "off", "no":
+	case zeroIntText, boolFalseText, offText, "no":
 		return false
 	default:
 		return true
 	}
-}
-
-// ResolveCacheDir returns explicit cache dir, or SLOPELINT_CACHE_DIR when set.
-func ResolveCacheDir(dir string) string {
-	if dir != "" {
-		return dir
-	}
-
-	return strings.TrimSpace(os.Getenv("SLOPELINT_CACHE_DIR"))
 }

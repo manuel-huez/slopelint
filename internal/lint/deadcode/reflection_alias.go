@@ -117,7 +117,7 @@ func (l *packageLinter) deadCodeCallContextFunc(call *ast.CallExpr) *ast.FuncDec
 	}
 
 	for _, fn := range l.pkg.ProductionFuncs {
-		if nodeContainsPos(fn.Body, call.Pos()) {
+		if fn != nil && fn.Body != nil && nodeContainsPos(fn.Body, call.Pos()) {
 			return fn
 		}
 	}
@@ -162,6 +162,7 @@ func reflectedFuncDeclContainsCall(
 	return fn != nil &&
 		fn.Name != nil &&
 		fn.Name.Name == methodName &&
+		fn.Body != nil &&
 		nodeContainsPos(fn.Body, call.Pos())
 }
 

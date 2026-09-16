@@ -260,7 +260,7 @@ func (l *linter) summaryContractsForReturns(
 func summaryContractsFromState(st state, bindings []summaryBinding) []guardContract {
 	out := make([]guardContract, 0)
 
-	for _, key := range sortedFactKeys(st.facts) {
+	for _, key := range sortedMapKeys(st.facts) {
 		target, ok := summaryTargetForKey(key, bindings)
 		if !ok {
 			continue
@@ -275,7 +275,7 @@ func summaryContractsFromState(st state, bindings []summaryBinding) []guardContr
 			})
 		}
 
-		for _, notKey := range sortedEvidenceKeys(f.not) {
+		for _, notKey := range sortedMapKeys(f.not) {
 			value := st.facts[key].notValue(notKey)
 			out = append(out, guardContract{
 				target: target,

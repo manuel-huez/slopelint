@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"strings"
 )
 
 const (
@@ -303,7 +302,7 @@ func (l *Runner) scatteredInputGuardReturns(
 			continue
 		}
 
-		seenWork = true
+		seenWork = seenWork || l.validationStatementEffect(stmt, body) == validationWork
 	}
 
 	if summary.total < scatteredGuardMinTotal || summary.late < scatteredGuardMinLate {
@@ -431,63 +430,6 @@ func (l *Runner) inputValidationExpr(
 
 		return ok && value.kind != 0
 	}
-}
-
-func (l *Runner) inputValidationCall(
-	call *ast.CallExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if call == nil {
-		return false
-	}
-
-	if l.inputValidationLenCall(call, validationTemps) {
-		return true
-	}
-
-	return l.inputValidationMethodCall(call, validationTemps)
-}
-
-func (l *Runner) inputValidationLenCall(
-	call *ast.CallExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if len(call.Args) != 1 {
-		return false
-	}
-
-	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
-	if !ok {
-		return false
-	}
-
-	builtin, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Builtin)
-	if !ok || builtin.Name() != builtinLenName {
-		return false
-	}
-
-	return l.inputValidationExpr(call.Args[0], validationTemps)
-}
-
-func (l *Runner) inputValidationMethodCall(
-	call *ast.CallExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if len(call.Args) != 0 {
-		return false
-	}
-
-	selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || (selector.Sel.Name != "IsZero" && !strings.HasPrefix(selector.Sel.Name, "Is")) {
-		return false
-	}
-
-	selection := l.pkg.TypesInfo.Selections[selector]
-	if selection == nil || selection.Kind() != types.MethodVal {
-		return false
-	}
-
-	return l.inputValidationExpr(selector.X, validationTemps)
 }
 
 func (l *Runner) inputValidationBinary(
@@ -677,17 +619,71 @@ func (l *Runner) isBoolLiteral(expr ast.Expr, want bool) bool {
 	return ident.Name == boolFalseText
 }
 
+func (l *Runner) inputValidationDeferredCleanup(
+	stmt ast.Stmt,
+	validationTemps map[types.Object]struct{},
+) bool {
+	switch stmt := stmt.(type) {
+	case *ast.DeferStmt:
+		// The body runs on return; only its receiver and arguments run before guards.
+		for _, arg := range stmt.Call.Args {
+			if !l.inputValidationExpr(arg, validationTemps) {
+				return false
+			}
+		}
+
+		switch fun := ast.Unparen(stmt.Call.Fun).(type) {
+		case *ast.FuncLit, *ast.Ident:
+			return true
+		case *ast.SelectorExpr:
+			return l.inputValidationExpr(fun.X, validationTemps)
+		default:
+			return false
+		}
+	case *ast.IfStmt:
+		_, plain := l.plainIfStmt(stmt)
+		if !plain || len(stmt.Body.List) != 1 ||
+			!l.inputValidationExpr(stmt.Cond, validationTemps) {
+			return false
+		}
+
+		_, deferred := stmt.Body.List[0].(*ast.DeferStmt)
+
+		return deferred && l.inputValidationDeferredCleanup(stmt.Body.List[0], validationTemps)
+	}
+
+	return false
+}
+
 func (l *Runner) inputValidationPrepStmt(
 	stmt ast.Stmt,
 	validationTemps map[types.Object]struct{},
 ) bool {
+	if l.inputValidationDeferredCleanup(stmt, validationTemps) {
+		return true
+	}
+
 	assign, ok := stmt.(*ast.AssignStmt)
 	if !ok || len(assign.Rhs) == 0 {
 		return false
 	}
 
+	for _, lhs := range assign.Lhs {
+		ident, ok := ast.Unparen(lhs).(*ast.Ident)
+		if !ok {
+			return false
+		}
+
+		if obj := l.pkg.TypesInfo.ObjectOf(
+			ident,
+		); obj != nil &&
+			obj.Parent() == l.pkg.TypesPkg.Scope() {
+			return false
+		}
+	}
+
 	for _, rhs := range assign.Rhs {
-		if !l.inputValidationPrepExpr(rhs, validationTemps) {
+		if !l.inputValidationExpr(rhs, validationTemps) {
 			return false
 		}
 
@@ -697,56 +693,6 @@ func (l *Runner) inputValidationPrepStmt(
 	}
 
 	return true
-}
-
-func (l *Runner) inputValidationPrepExpr(
-	expr ast.Expr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	expr = ast.Unparen(expr)
-
-	if l.inputValidationExpr(expr, validationTemps) {
-		return true
-	}
-
-	call, ok := expr.(*ast.CallExpr)
-	if !ok || !l.inputValidationPrepCall(call, validationTemps) {
-		return false
-	}
-
-	for _, arg := range call.Args {
-		if !l.inputValidationPrepExpr(arg, validationTemps) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (l *Runner) inputValidationPrepCall(
-	call *ast.CallExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if call == nil {
-		return false
-	}
-
-	switch fun := ast.Unparen(call.Fun).(type) {
-	case *ast.Ident:
-		return inputValidationPrepFuncName(fun.Name)
-	case *ast.SelectorExpr:
-		if !inputValidationPrepFuncName(fun.Sel.Name) {
-			return false
-		}
-
-		if selection := l.pkg.TypesInfo.Selections[fun]; selection != nil {
-			return l.inputValidationExpr(fun.X, validationTemps)
-		}
-
-		return true
-	default:
-		return false
-	}
 }
 
 func (l *Runner) addValidationPrepObjects(
@@ -768,15 +714,4 @@ func (l *Runner) addValidationPrepObjects(
 			validationTemps[obj] = struct{}{}
 		}
 	}
-}
-
-func inputValidationPrepFuncName(name string) bool {
-	lower := strings.ToLower(name)
-
-	return strings.HasPrefix(lower, "normalize") ||
-		strings.HasPrefix(lower, "parse") ||
-		strings.HasPrefix(lower, "key") ||
-		strings.HasPrefix(name, "New") ||
-		strings.HasPrefix(name, "Trim") ||
-		strings.HasPrefix(name, "To")
 }

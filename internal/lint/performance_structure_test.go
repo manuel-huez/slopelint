@@ -428,6 +428,41 @@ func f(urls []string) {
 	}
 }
 
+func TestNetworkLoopCallReceivers(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "net/http"
+
+type wrappedClient struct { *http.Client }
+type clientAlias = http.Client
+
+func f(requests []*http.Request, client *http.Client, wrapped wrappedClient, alias *clientAlias) {
+	for _, request := range requests {
+		_ = request.Header.Get("Content-Type")
+		_ = http.Header.Get(request.Header, "Content-Type")
+		client.Get(request.URL.String())
+		client.Do(request)
+		wrapped.Head(request.URL.String())
+		alias.Post(request.URL.String(), "text/plain", request.Body)
+		(*http.Client).Do(client, request)
+	}
+}
+`)
+
+	var calls []string
+
+	for _, issue := range lintInDir(t, tmp) {
+		if issue.Kind == "loop_external_call" {
+			calls = append(calls, issue.Message)
+		}
+	}
+
+	if len(calls) != 5 || strings.Contains(strings.Join(calls, "\n"), "Header.Get") {
+		t.Fatalf("want five client calls and no header reads, got %v", calls)
+	}
+}
+
 func TestDetectsNetworkCallWithLoopDerivedTemp(t *testing.T) {
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample

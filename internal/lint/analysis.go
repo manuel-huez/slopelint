@@ -49,7 +49,9 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 		TypesInfo:  pass.TypesInfo,
 	}
 
-	cache, err := newAnalysisCache(pass, pkg, opts)
+	cache, err := analysisCacheForSourceRoot(pkg.Dir, opts, "", func() (string, error) {
+		return analysisCacheKey(pass, pkg, opts)
+	})
 	if err == nil {
 		if entry, ok := cache.load(); ok {
 			if issues, ok := replayAnalysisCache(pass, pkg, entry, opts.CacheHitHook); ok {
@@ -79,6 +81,8 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 	if cache != nil {
 		// Cache persistence is best-effort; analysis results remain valid without it.
 		_ = cache.store(pass, l, l.issues)
+
+		maybePruneCaches(opts.cacheDir)
 	}
 
 	return l.issues, nil

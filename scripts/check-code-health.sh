@@ -77,25 +77,10 @@ run_slopelint() {
   go run ./cmd/slopelint ./...
 }
 
-run_jscpd() {
-  # Production stays clone-free. Test threshold covers harness code while allowing
-  # intentionally similar embedded Go fixtures; slopelint catches exact repeats.
-  npx --yes jscpd@5.0.11 internal/ \
-    --ignore "**/*_test.go" \
-    --threshold 0
-
-  npx --yes jscpd@5.0.11 internal/lint/ \
-    --pattern "**/*_test.go" \
-    --min-lines 5 \
-    --min-tokens 50 \
-    --threshold 18
-}
-
 launch_step "go vet" go vet ./...
 launch_step "slopelint self-check" run_slopelint
 launch_step "go test" go test ./...
 launch_step "golangci-lint" run_golangci_lint
-launch_step "jscpd" run_jscpd
 
 wait_for_steps
 

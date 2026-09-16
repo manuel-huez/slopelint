@@ -14,6 +14,7 @@ const (
 	boolTrueText       = "true"
 	boolFalseText      = "false"
 	zeroIntText        = "0"
+	offText            = "off"
 	panicText          = "panic"
 	mainPkgName        = "main"
 	unknownPos         = "unknown position"
@@ -23,7 +24,7 @@ const (
 type Options struct {
 	MaxStates          int
 	CacheEnabled       bool
-	CacheDir           string
+	cacheDir           string
 	CacheHitHook       func(string)
 	ClosedWorld        bool
 	skipDeadCode       bool

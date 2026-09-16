@@ -143,7 +143,7 @@ func (l *Runner) testingFatalStmt(stmt ast.Stmt) bool {
 
 	fn, _, ok := l.calledFunc(call)
 
-	return ok && fn.Pkg() != nil && fn.Pkg().Path() == "testing" &&
+	return ok && fn.Pkg() != nil && fn.Pkg().Path() == testingImportPath &&
 		(fn.Name() == "Fatal" || fn.Name() == "Fatalf")
 }
 

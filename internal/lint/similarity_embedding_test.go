@@ -358,6 +358,7 @@ func TestHTTPSimilarityEmbedderRejectsInvalidResponses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			defer func() {
 				if err := embedder.close(); err != nil {
 					t.Error(err)

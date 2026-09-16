@@ -22,6 +22,7 @@ func populateSimilarityScanVectors(
 	opts SimilarityOptions,
 ) (vectors similarityVectorMatrices, descriptionDigest string, err error) {
 	embeddings := newSimilarityEmbeddingRuntime(opts.embedder, cacheRoot, opts.CacheEnabled)
+
 	defer func() { err = errors.Join(err, embeddings.close()) }()
 
 	if !descriptionRuntime.enabled {

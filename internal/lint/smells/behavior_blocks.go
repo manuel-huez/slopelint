@@ -252,6 +252,7 @@ func (l *Runner) normalizedBehaviorBlock(
 		typeKeys,
 		defined,
 	)
+
 	defer func() {
 		for _, item := range renamed {
 			item.ident.Name = item.original

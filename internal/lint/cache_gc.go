@@ -74,6 +74,7 @@ func maybePruneCaches(dir string) {
 	if !acquireCachePruneLock(lockPath, now) {
 		return
 	}
+
 	defer func() { _ = os.Remove(lockPath) }()
 
 	// Another worktree can finish maintenance between the first check and lock claim.

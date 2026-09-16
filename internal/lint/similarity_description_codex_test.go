@@ -489,6 +489,7 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
+
 	go func() { done <- describer.describe(requests, func([]similarityDescription) error { return nil }) }()
 
 	for range similarityDescriptionWorkers {

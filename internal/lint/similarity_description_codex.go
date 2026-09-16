@@ -397,6 +397,7 @@ func (describer *codexSimilarityDescriber) executeBatch(prompt, schema string) (
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	schemaPath := dir + "/schema.json"

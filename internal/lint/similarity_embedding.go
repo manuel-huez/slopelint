@@ -151,6 +151,7 @@ func (embedder *httpSimilarityEmbedder) embed(inputs []string) (vectors [][]floa
 			err,
 		)
 	}
+
 	defer func() { err = errors.Join(err, response.Body.Close()) }()
 
 	return readSimilarityEmbeddingResponse(response, embedder.endpoint, len(inputs))

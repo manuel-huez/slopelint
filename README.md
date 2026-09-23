@@ -170,7 +170,7 @@ func defaultName(name string) string {
 
 - Go 1.26.5+
 - A shared embedding HTTP server for local semantic similarity checks
-- Optional: authenticated Codex CLI for Astra behavior descriptions
+- Optional: Codex CLI with GPT-6 Luna access for behavior descriptions
 - For full repo health checks: `golangci-lint`
 
 ## Build
@@ -226,12 +226,12 @@ go run ./cmd/slopelint ./...
 The first local run needs the shared server to be available. Model downloads and
 server lifecycle stay outside the slopelint process.
 
-When an authenticated `codex` executable is available, the same lint command
-runs source inference while `gpt-6-astra` creates three signatures for every
+When an authenticated `codex` executable can access `gpt-6-luna`, the same lint
+command runs source inference while Luna creates three signatures for every
 missing block with low reasoning. Production functions get intent, flow, and
 boundary signatures. Tests get contract, scenario, and oracle signatures.
 Slopelint embeds one compact labeled bundle containing all three; one embedding
-avoids tripling local inference work. After either channel finds a pair, Astra
+avoids tripling local inference work. After either channel finds a pair, Luna
 creates full purpose/input/output/processing/effect/error details, or the
 test-specific subject/scenario/setup/action/assertion/fixture/contract shape,
 only for reported blocks. Those details appear in the diagnostic for agent review
@@ -411,7 +411,7 @@ an older tag, retry exact-tag resolution with `GOPROXY=direct`.
   is embedded without truncation; connected similarity groups report one
   finding with every member instead of every possible pair; comparisons stop
   beyond immediate sibling or parent-child packages
-- Astra describes each eligible function in isolation; behavior that
+- Luna describes each eligible function in isolation; behavior that
   exists only in caller context or an unknown private helper can still be missed
 - one semantic similarity run covers one Go module because each module owns one
   committed stamp

@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"go/types"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
+	"sync"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -29,6 +32,11 @@ func analysisCacheKey(
 	pkg *LoadedPackage,
 	opts Options,
 ) (string, error) {
+	buildID, err := analysisCacheBuildID(opts)
+	if err != nil {
+		return "", err
+	}
+
 	maxStates := opts.MaxStates
 	if maxStates <= 0 {
 		maxStates = 32
@@ -36,6 +44,7 @@ func analysisCacheKey(
 
 	fingerprint := analysisCacheFingerprint{
 		Schema:        analysisCacheSchema,
+		BuildID:       buildID,
 		Package:       pkg.ImportPath,
 		MaxStates:     maxStates,
 		Executable:    analysisCacheExecutableStamp(),
@@ -54,6 +63,7 @@ func analysisCacheKey(
 
 type standaloneAnalysisCacheFingerprint struct {
 	Schema       int                    `json:"schema"`
+	BuildID      string                 `json:"build_id"`
 	Package      string                 `json:"package"`
 	TestOnly     bool                   `json:"test_only"`
 	MaxStates    int                    `json:"max_states"`
@@ -76,6 +86,11 @@ func standaloneAnalysisCacheKey(
 	opts Options,
 	typeDigests map[string]string,
 ) (string, error) {
+	buildID, err := analysisCacheBuildID(opts)
+	if err != nil {
+		return "", err
+	}
+
 	maxStates := opts.MaxStates
 	if maxStates <= 0 {
 		maxStates = 32
@@ -110,6 +125,7 @@ func standaloneAnalysisCacheKey(
 
 	return analysisCacheFingerprintKey(standaloneAnalysisCacheFingerprint{
 		Schema:       analysisCacheSchema,
+		BuildID:      buildID,
 		Package:      importPath,
 		TestOnly:     testOnly,
 		MaxStates:    maxStates,
@@ -354,6 +370,41 @@ func analysisCacheFingerprintKey(fingerprint any) (string, error) {
 
 	return hex.EncodeToString(sum[:]), nil
 }
+
+func analysisCacheBuildID(opts Options) (string, error) {
+	if opts.cacheBuildID != "" {
+		return opts.cacheBuildID, nil
+	}
+
+	return installedAnalysisCacheBuildID()
+}
+
+var installedAnalysisCacheBuildID = sync.OnceValues(func() (string, error) {
+	if info, ok := debug.ReadBuildInfo(); ok &&
+		info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Path + "@" + info.Main.Version, nil
+	}
+
+	// Local builds have no module version. Hash once so rebuilt analyzers cannot
+	// reuse findings from a different executable, even when source is unchanged.
+	path, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+})
 
 func analysisCacheExecutableStamp() analysisCacheExecutable {
 	path, err := os.Executable()

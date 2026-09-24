@@ -95,6 +95,47 @@ func TestRunAnalysisCachesUnchangedPackage(t *testing.T) {
 	}
 }
 
+func TestRunAnalysisCacheInvalidatesAcrossBuilds(t *testing.T) {
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
+	writeAnalysisCacheDiagnosticFile(t, filepath.Join(tmp, "sample.go"))
+	pkg := mustPackage(t, loadPackagesForTest(t, tmp), "example.com/sample")
+
+	run := func(buildID string) (string, []string) {
+		t.Helper()
+
+		pass, _ := newAnalysisTestPass(pkg, nil)
+
+		var hits []string
+
+		issues, err := RunAnalysis(pass, Options{
+			CacheEnabled: true,
+			cacheDir:     cacheDir,
+			cacheBuildID: buildID,
+			CacheHitHook: func(name string) { hits = append(hits, name) },
+		})
+		if err != nil {
+			t.Fatalf("analyze with build %s: %v", buildID, err)
+		}
+
+		return issuesDigest(pkg.FSet, issues), hits
+	}
+
+	first, hits := run("build-a")
+	if len(hits) != 0 || first == "" {
+		t.Fatalf("first build: hits %v, issues %q", hits, first)
+	}
+
+	if _, hits = run("build-a"); !slices.Equal(hits, []string{pkg.ImportPath}) {
+		t.Fatalf("same build: want package cache hit, got %v", hits)
+	}
+
+	second, hits := run("build-b")
+	if len(hits) != 0 || second != first {
+		t.Fatalf("new build: hits %v, issues %q; want fresh issues %q", hits, second, first)
+	}
+}
+
 func TestLintRepositoryCachesStandaloneResult(t *testing.T) {
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
@@ -138,6 +179,48 @@ func TestLintRepositoryCachesStandaloneResult(t *testing.T) {
 
 	if len(issues2) == 0 || !strings.Contains(FormatIssuePosition(issues2[0]), "sample.go:") {
 		t.Fatalf("cached issue lost source position: %#v", issues2)
+	}
+}
+
+func TestLintRepositoryCacheInvalidatesAcrossBuilds(t *testing.T) {
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
+	writeAnalysisCacheDiagnosticFile(t, filepath.Join(tmp, "sample.go"))
+
+	run := func(buildID string) (string, []string) {
+		t.Helper()
+
+		var hits []string
+
+		issues, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
+			CacheEnabled: true,
+			cacheDir:     cacheDir,
+			cacheBuildID: buildID,
+			CacheHitHook: func(name string) { hits = append(hits, name) },
+		}, nil)
+		if err != nil {
+			t.Fatalf("lint with build %s: %v", buildID, err)
+		}
+
+		return joinMessages(issues), hits
+	}
+
+	first, hits := run("build-a")
+	if len(hits) != 0 || first == "" {
+		t.Fatalf("first build: hits %v, issues %q", hits, first)
+	}
+
+	if _, hits = run("build-a"); !slices.Equal(hits, []string{repoAnalysisCacheHitName}) {
+		t.Fatalf("same build: want repository cache hit, got %v", hits)
+	}
+
+	second, hits := run("build-b")
+	if len(hits) != 0 || second != first {
+		t.Fatalf("new build: hits %v, issues %q; want fresh issues %q", hits, second, first)
+	}
+
+	if _, hits = run("build-b"); !slices.Equal(hits, []string{repoAnalysisCacheHitName}) {
+		t.Fatalf("warm new build: want repository cache hit, got %v", hits)
 	}
 }
 

@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// Bump whenever analyzer semantics or persisted cache/replay invariants change.
-// Standalone cache keys intentionally do not follow unrelated binary releases.
+// Bump when the persisted cache/replay format changes. Analysis keys track builds.
 const analysisCacheSchema = 13
 
 const analysisCacheTypeDigestRefreshLimit = 8
@@ -67,6 +66,7 @@ type analysisCacheExport struct {
 
 type analysisCacheFingerprint struct {
 	Schema        int                         `json:"schema"`
+	BuildID       string                      `json:"build_id"`
 	Package       string                      `json:"package"`
 	MaxStates     int                         `json:"max_states"`
 	Executable    analysisCacheExecutable     `json:"executable"`

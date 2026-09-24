@@ -66,6 +66,11 @@ func repoAnalysisCacheKey(
 		return "", "", errAnalysisCacheDisabled
 	}
 
+	buildID, err := analysisCacheBuildID(opts)
+	if err != nil {
+		return "", "", err
+	}
+
 	maxStates := opts.MaxStates
 	if maxStates <= 0 {
 		maxStates = 32
@@ -105,6 +110,7 @@ func repoAnalysisCacheKey(
 
 	fingerprint := struct {
 		Schema      int                                `json:"schema"`
+		BuildID     string                             `json:"build_id"`
 		Dir         string                             `json:"dir"`
 		Patterns    []string                           `json:"patterns"`
 		MaxStates   int                                `json:"max_states"`
@@ -115,6 +121,7 @@ func repoAnalysisCacheKey(
 		Similarity  *repoAnalysisSimilarityFingerprint `json:"similarity,omitempty"`
 	}{
 		Schema:      analysisCacheSchema,
+		BuildID:     buildID,
 		Dir:         location.relativeDir,
 		Patterns:    append([]string(nil), patterns...),
 		MaxStates:   maxStates,

@@ -22,12 +22,16 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
-const gitListFilesCommand = "ls-files"
+const (
+	gitListFilesCommand = "ls-files"
+	goModFilename       = "go.mod"
+	goSumFilename       = "go.sum"
+)
 
 var repoAnalysisSourcePathspecs = []string{
 	"*.go",
-	"go.mod",
-	"go.sum",
+	goModFilename,
+	goSumFilename,
 	"go.work",
 	"go.work.sum",
 	"*.c",
@@ -50,8 +54,8 @@ var repoAnalysisSourcePathspecs = []string{
 
 var similarityRepositoryPathspecs = []string{
 	"*.go",
-	"go.mod",
-	"go.sum",
+	goModFilename,
+	goSumFilename,
 	"go.work",
 	"go.work.sum",
 }
@@ -330,8 +334,14 @@ func repoAnalysisSourceDigest(
 			return "", err
 		}
 
+		moduleRoot, err := findGoModuleRoot(dir)
+		if err != nil {
+			return "", err
+		}
+
 		return repoAnalysisGitDigest(
 			location.sourceRoot,
+			moduleRoot,
 			location.objectFormat,
 			repoAnalysisSourcePathspecs,
 		)
@@ -345,7 +355,7 @@ func repoAnalysisSourceDigest(
 		return "", err
 	}
 
-	return repoAnalysisWalkDigest(location.sourceRoot)
+	return repoAnalysisWalkDigest(location.sourceRoot, repoAnalysisSourcePathspecs)
 }
 
 func repoAnalysisLocalPatterns(patterns []string) bool {
@@ -409,6 +419,7 @@ func repoAnalysisGitInfo(dir string) (string, string, string, error) {
 
 func repoAnalysisGitDigest(
 	root string,
+	moduleRoot string,
 	objectFormat string,
 	pathspecs []string,
 ) (string, error) {
@@ -416,8 +427,7 @@ func repoAnalysisGitDigest(
 		files     map[string]string
 		modified  []byte
 		untracked []byte
-		ignored   []byte
-		errs      [4]error
+		errs      [3]error
 		jobs      sync.WaitGroup
 	)
 
@@ -440,9 +450,33 @@ func repoAnalysisGitDigest(
 			pathspecs...,
 		)
 	})
-	jobs.Go(func() {
-		// Git omits ignored files from ordinary --others output, but Go still loads them.
-		ignored, errs[3] = repoAnalysisGitOutput(
+	jobs.Wait()
+
+	for _, err := range errs {
+		if err != nil {
+			return "", err
+		}
+	}
+
+	for _, paths := range [][]byte{modified, untracked} {
+		if err := repoAnalysisApplyWorktree(files, paths, root, objectFormat); err != nil {
+			return "", err
+		}
+	}
+	// Go names relevant ignored files without traversing tool caches.
+	needsIgnoredScan, err := repoAnalysisApplyListedInputs(
+		files,
+		root,
+		moduleRoot,
+		objectFormat,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	if needsIgnoredScan {
+		// Cgo can include headers outside package directories.
+		ignored, err := repoAnalysisGitOutput(
 			root,
 			"ignored files",
 			[]string{
@@ -455,17 +489,11 @@ func repoAnalysisGitDigest(
 			},
 			pathspecs...,
 		)
-	})
-	jobs.Wait()
-
-	for _, err := range errs {
 		if err != nil {
 			return "", err
 		}
-	}
 
-	for _, paths := range [][]byte{modified, untracked, ignored} {
-		if err := repoAnalysisApplyWorktree(files, paths, root, objectFormat); err != nil {
+		if err := repoAnalysisApplyWorktree(files, ignored, root, objectFormat); err != nil {
 			return "", err
 		}
 	}
@@ -548,6 +576,19 @@ func repoAnalysisApplyWorktree(
 			continue
 		}
 
+		skip, err := repoAnalysisExcludedWorktreePath(root, name)
+		if err != nil {
+			return err
+		}
+
+		if skip {
+			continue
+		}
+
+		if strings.HasSuffix(name, "/") {
+			return errAnalysisCacheDisabled
+		}
+
 		delete(files, name)
 
 		objectID, blobErr := repoAnalysisBlobID(root, name, objectFormat)
@@ -561,6 +602,37 @@ func repoAnalysisApplyWorktree(
 	}
 
 	return nil
+}
+
+func repoAnalysisExcludedWorktreePath(root, name string) (bool, error) {
+	// Go excludes hidden, underscore, and testdata directory trees.
+	components := strings.Split(filepath.ToSlash(name), "/")
+	for _, component := range components[:len(components)-1] {
+		if strings.HasPrefix(component, ".") ||
+			strings.HasPrefix(component, "_") || component == "testdata" {
+			return true, nil
+		}
+	}
+
+	// Go also excludes nested modules. Git can list an ignored directory
+	// instead of its files; other directories need a conservative miss.
+	dir := filepath.Dir(name)
+	if strings.HasSuffix(name, "/") {
+		dir = filepath.Clean(name)
+	}
+
+	for ; dir != "."; dir = filepath.Dir(dir) {
+		_, err := os.Stat(filepath.Join(root, dir, goModFilename))
+		if err == nil {
+			return true, nil
+		}
+
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	}
+
+	return false, nil
 }
 
 func repoAnalysisBlobID(root, name, objectFormat string) (string, error) {
@@ -601,7 +673,10 @@ func repoAnalysisBlobID(root, name, objectFormat string) (string, error) {
 	return hex.EncodeToString(objectHash.Sum(nil)), nil
 }
 
-func repoAnalysisWalkDigest(root string) (string, error) {
+func repoAnalysisWalkDigest(
+	root string,
+	pathspecs []string,
+) (string, error) {
 	hash := sha256.New()
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -610,15 +685,10 @@ func repoAnalysisWalkDigest(root string) (string, error) {
 		}
 
 		if entry.IsDir() {
-			name := entry.Name()
-			if path != root && repoAnalysisIgnoredDirectory(name) {
-				return filepath.SkipDir
-			}
-
-			return nil
+			return repoAnalysisWalkDirectory(root, path, entry.Name())
 		}
 
-		if !repoAnalysisSourceFile(entry.Name()) {
+		if !repoAnalysisSourceFile(entry.Name(), pathspecs) {
 			return nil
 		}
 
@@ -644,6 +714,24 @@ func repoAnalysisWalkDigest(root string) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func repoAnalysisWalkDirectory(root, path, name string) error {
+	if path == root {
+		return nil
+	}
+
+	if repoAnalysisIgnoredDirectory(name) {
+		return filepath.SkipDir
+	}
+
+	if _, err := os.Stat(filepath.Join(path, goModFilename)); err == nil {
+		return filepath.SkipDir
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	return nil
 }
 
 func repoAnalysisSubmodulesSupported(root string) (bool, error) {
@@ -691,8 +779,8 @@ func repoAnalysisIgnoredDirectory(name string) bool {
 		strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
-func repoAnalysisSourceFile(name string) bool {
-	for _, pattern := range repoAnalysisSourcePathspecs {
+func repoAnalysisSourceFile(name string, pathspecs []string) bool {
+	for _, pattern := range pathspecs {
 		if strings.HasPrefix(pattern, "*.") && strings.HasSuffix(name, pattern[1:]) {
 			return true
 		}
@@ -715,19 +803,23 @@ func repoAnalysisExternalModuleCheck(dir, cacheRoot, goWork string) error {
 		return err
 	}
 
-	return repoAnalysisReplacementCheck(moduleRoot, cacheRoot)
+	_, err = repoAnalysisReplacementRoots(moduleRoot, cacheRoot)
+
+	return err
 }
 
-func repoAnalysisReplacementCheck(moduleRoot, cacheRoot string) error {
-	data, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod"))
+func repoAnalysisReplacementRoots(moduleRoot, cacheRoot string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(moduleRoot, goModFilename))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	parsed, err := modfile.Parse("go.mod", data, nil)
+	parsed, err := modfile.Parse(goModFilename, data, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	var roots []string
 
 	for _, replacement := range parsed.Replace {
 		if replacement.New.Version != "" || !modfile.IsDirectoryPath(replacement.New.Path) {
@@ -741,9 +833,11 @@ func repoAnalysisReplacementCheck(moduleRoot, cacheRoot string) error {
 
 		if relative, relErr := filepath.Rel(cacheRoot, path); relErr != nil ||
 			relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return errAnalysisCacheDisabled
+			return nil, errAnalysisCacheDisabled
 		}
+
+		roots = append(roots, path)
 	}
 
-	return nil
+	return roots, nil
 }

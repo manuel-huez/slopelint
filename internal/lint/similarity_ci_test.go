@@ -9,6 +9,113 @@ import (
 	"testing"
 )
 
+func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
+	tmp := newTestModule(t)
+	cacheDir := t.TempDir()
+	writeSimilarityTestSource(t, tmp)
+
+	embedder := &similarityTestEmbedder{vector: func(input string) []float32 {
+		if strings.Contains(input, "func first") {
+			return []float32{1, 0}
+		}
+
+		return []float32{0, 1}
+	}}
+
+	pkgs := loadPackagesForTest(t, tmp)
+
+	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
+		CacheEnabled:        true,
+		cacheDir:            cacheDir,
+		embedder:            embedder,
+		descriptionDisabled: true,
+	})
+	if err != nil {
+		t.Fatalf("local check: %v", err)
+	}
+
+	if len(issues) != 0 {
+		t.Fatalf("local issues: %v", issues)
+	}
+
+	if embedder.calls != 1 {
+		t.Fatalf("embedding batches = %d, want 1", embedder.calls)
+	}
+
+	stampPath := filepath.Join(tmp, similarityStampName)
+	if _, err := os.Stat(stampPath); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+
+	pkgs = loadPackagesForTest(t, tmp)
+
+	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{descriptionDisabled: true})
+	if err != nil {
+		t.Fatalf("stamped local check: %v", err)
+	}
+
+	if len(issues) != 0 {
+		t.Fatalf("stamped local issues: %v", issues)
+	}
+
+	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{CI: true})
+	if err != nil {
+		t.Fatalf("CI check: %v", err)
+	}
+
+	if len(issues) != 0 {
+		t.Fatalf("CI issues: %v", issues)
+	}
+
+	writeFile(
+		t,
+		filepath.Join(tmp, similarityTestFilename),
+		similarityTestSource+"\n// source changed\n",
+	)
+	pkgs = loadPackagesForTest(t, tmp)
+
+	_, err = CheckSimilarCode(pkgs, SimilarityOptions{CI: true})
+	if err == nil || !strings.Contains(err.Error(), "is stale") {
+		t.Fatalf("stale CI check error = %v", err)
+	}
+}
+
+func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) {
+	tmp := newTestModule(t)
+	writeSimilarityTestSource(t, tmp)
+	initTestGitRepository(t, tmp)
+	pkgs := loadPackagesForTest(t, tmp)
+
+	sourceDigest, err := similaritySourceDigest(pkgs, tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stamp := newSimilarityStamp(sourceDigest, 0, nil, false, "")
+	stamp.RepositoryDigest = "old-digest"
+
+	encoded, err := json.Marshal(stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, filepath.Join(tmp, similarityStampName), string(encoded))
+
+	if _, err := CheckSimilarCode(pkgs, SimilarityOptions{descriptionDisabled: true}); err != nil {
+		t.Fatalf("refresh stamp: %v", err)
+	}
+
+	stored, err := loadSimilarityStamp(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	digest, err := similarityRepositoryDigest(tmp)
+	if err != nil || stored.RepositoryDigest != digest {
+		t.Fatalf("refreshed digest = %q, want %q, err=%v", stored.RepositoryDigest, digest, err)
+	}
+}
+
 func TestLintRepositoryCIMissingStampFailsBeforeGoList(t *testing.T) {
 	tmp := newTestModule(t)
 	path := gitOnlyPath(t)

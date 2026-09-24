@@ -323,17 +323,22 @@ func storeSimilarityStamp(root string, stamp similarityStamp) error {
 	return nil
 }
 
+func refreshSimilarityStamp(root string, stamp similarityStamp) error {
+	digest, err := similarityRepositoryDigest(root)
+	if err == nil && stamp.RepositoryDigest != digest {
+		return storeSimilarityStamp(root, stamp)
+	}
+
+	return nil
+}
+
 func similarityRepositoryDigest(root string) (string, error) {
 	location, err := repositoryCacheLocationForDir(root)
 	if err != nil || !location.git {
 		return "", errAnalysisCacheDisabled
 	}
 
-	return repoAnalysisGitDigest(
-		location.sourceRoot,
-		location.objectFormat,
-		similarityRepositoryPathspecs,
-	)
+	return repoAnalysisWalkDigest(root, similarityRepositoryPathspecs)
 }
 
 func similarityVectorCacheRoot(dir string) (string, error) {

@@ -66,6 +66,88 @@ func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
 	}
 }
 
+func TestRepoAnalysisGitDigestSkipsIgnoredGoTreesAndNestedModules(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
+	writeFile(t, filepath.Join(tmp, ".gitignore"), ".cache/\nbackup/\n")
+	initTestGitRepository(t, tmp)
+
+	baseline, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
+	if err != nil {
+		t.Fatalf("baseline digest: %v", err)
+	}
+
+	writeFile(t, filepath.Join(tmp, ".cache", "go-build", "cached.go"), "package cached\n")
+	writeFile(t, filepath.Join(tmp, "backup", "go.mod"), "module backup\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(tmp, "backup", "copy.go"), "package backup\n")
+
+	digest, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
+	if err != nil {
+		t.Fatalf("digest with ignored trees: %v", err)
+	}
+
+	if digest != baseline {
+		t.Fatal("ignored Go trees or nested module invalidated repository cache")
+	}
+}
+
+func TestRepoAnalysisGitDigestTracksIgnoredReplacementSource(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(
+		t,
+		filepath.Join(tmp, "go.mod"),
+		"module example.com/sample\n\ngo 1.22\n\nrequire example.com/dep v0.0.0\nreplace example.com/dep => ./dep\n",
+	)
+	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\nimport _ \"example.com/dep\"\n")
+	writeTestGoMod(t, filepath.Join(tmp, "dep"), "example.com/dep")
+	writeFile(t, filepath.Join(tmp, "dep", "dep.go"), "package dep\n")
+	writeFile(t, filepath.Join(tmp, ".gitignore"), "dep/generated.go\n")
+	initTestGitRepository(t, tmp)
+
+	baseline, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
+	if err != nil {
+		t.Fatalf("baseline digest: %v", err)
+	}
+
+	writeFile(t, filepath.Join(tmp, "dep", "generated.go"), "package dep\nfunc Added() {}\n")
+
+	digest, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
+	if err != nil {
+		t.Fatalf("digest with ignored replacement file: %v", err)
+	}
+
+	if digest == baseline {
+		t.Fatal("ignored replacement source did not invalidate repository cache")
+	}
+}
+
+func TestRepoAnalysisGitDigestTracksEmbeddedFile(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(
+		t,
+		filepath.Join(tmp, "sample.go"),
+		"package sample\nimport _ \"embed\"\n//go:embed data.txt\nvar data string\n",
+	)
+	writeFile(t, filepath.Join(tmp, "data.txt"), "before\n")
+	initTestGitRepository(t, tmp)
+
+	baseline, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
+	if err != nil {
+		t.Fatalf("baseline digest: %v", err)
+	}
+
+	writeFile(t, filepath.Join(tmp, "data.txt"), "after\n")
+
+	digest, err := repoAnalysisSourceDigestForTest(tmp, []string{allPackagesPattern})
+	if err != nil {
+		t.Fatalf("digest after embedded file change: %v", err)
+	}
+
+	if digest == baseline {
+		t.Fatal("embedded file change did not invalidate repository cache")
+	}
+}
+
 func TestLintRepositoryCacheTracksIgnoredGoFiles(t *testing.T) {
 	tests := []struct {
 		name   string

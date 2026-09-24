@@ -157,7 +157,9 @@ func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, e
 	}
 
 	if stampExists && stamp.covers(sourceDigest, descriptionRuntime.enabled) {
-		return nil, nil
+		// Refresh repository attestations when their file-selection rule changes
+		// without rerunning embeddings for unchanged source.
+		return nil, refreshSimilarityStamp(root, stamp)
 	}
 
 	if opts.CacheEnabled {

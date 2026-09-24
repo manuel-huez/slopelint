@@ -1,13 +1,14 @@
 {
   "schema": 10,
-  "source_digest": "72e7861afef8e9123b3dd5cc4f931d539282af2b501771c46e8872b7f5afa0bd",
+  "source_digest": "9851f03999cb36608fb96b921654faf72ba83b6e9ffba96dedf4a8afa032b1fd",
+  "repository_digest": "3179a524eea1fd2992f3b4d14fc771ba8f15cc5897ea424961d5dd872c28d5d7",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "1767f16e8d26122b50cdd34ca77af6780d4c29528d66d2584e608847ea53a9c8",
-  "checked_blocks": 1815,
+  "description_digest": "a830123e489693e7bdd039daf28a1a800da8d19640eb83faaf93150139a91cd9",
+  "checked_blocks": 1824,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",
@@ -58,6 +59,5 @@
       "right": "internal/lint/smells/names.go::isIsPredicateName",
       "right_hash": "6e9a888cc615912f9699fd450a6267b046d8628410b36c6a565c79f49c456644"
     }
-  ],
-  "repository_digest": "1cdd44e6359e0b6d0581e8d90c526fc02baa383b0ffc93d312e7e0da826ebfde"
+  ]
 }

@@ -3,7 +3,6 @@ package lint
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,8 +117,7 @@ func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) 
 
 func TestLintRepositoryCIMissingStampFailsBeforeGoList(t *testing.T) {
 	tmp := newTestModule(t)
-	path := gitOnlyPath(t)
-	t.Setenv("PATH", path)
+	forbidGoCommand(t)
 
 	_, err := LintRepository(
 		[]string{allPackagesPattern},
@@ -160,8 +158,7 @@ func TestLintRepositoryCIStaleStampFailsBeforeGoList(t *testing.T) {
 		)
 	}
 
-	path := gitOnlyPath(t)
-	t.Setenv("PATH", path)
+	forbidGoCommand(t)
 
 	_, err = LintRepository(
 		[]string{allPackagesPattern},
@@ -225,18 +222,27 @@ func TestLintRepositoryCIRejectsStampWithoutRepositoryDigest(t *testing.T) {
 	}
 }
 
-func gitOnlyPath(t *testing.T) string {
+func forbidGoCommand(t *testing.T) {
 	t.Helper()
 
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
+	binDir := t.TempDir()
+
+	goPath := filepath.Join(binDir, "go")
+	if err := os.WriteFile(
+		goPath,
+		[]byte("#!/bin/sh\n: > \"$0.called\"\nexit 1\n"),
+		0o700,
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	path := t.TempDir()
-	if err := os.Symlink(gitPath, filepath.Join(path, "git")); err != nil {
-		t.Fatal(err)
-	}
-
-	return path
+	// Keep Git wrappers' interpreters and tools available while blocking Go.
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Cleanup(func() {
+		if _, err := os.Stat(goPath + ".called"); err == nil {
+			t.Error("Go ran before CI stamp rejection")
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	})
 }

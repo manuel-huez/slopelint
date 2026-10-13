@@ -452,7 +452,7 @@ func TestSimilarityDescriptionThresholdUsesIndependentCalibration(t *testing.T) 
 	}{
 		{name: similaritySameFileCase, tier: 0, want: 0.950},
 		{name: similaritySamePackageCase, tier: 1, want: 0.960},
-		{name: "sibling package", tier: 2, want: 0.960},
+		{name: "sibling package", tier: 2, want: 0.958},
 		{name: "test code", tier: 0, test: true, want: 0.965},
 		{name: "sibling test code", tier: 2, test: true, want: 0.975},
 	}

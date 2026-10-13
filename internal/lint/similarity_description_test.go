@@ -3,6 +3,7 @@ package lint
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math"
 	"path/filepath"
@@ -249,6 +250,45 @@ func TestSimilarityDescriptionsPersistCompletedBatchesBeforeFailure(t *testing.T
 	}
 }
 
+func storeSimilarityCacheWithOlderPolicy(
+	t *testing.T,
+	cacheDir, moduleRoot string,
+	stamp similarityStamp,
+) string {
+	t.Helper()
+
+	cacheRoot, err := similarityVectorCacheRoot(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cache, ok := loadSimilarityScanCache(cacheRoot, moduleRoot, true, stamp.SourceDigest)
+	if !ok {
+		t.Fatal("missing warm scan cache")
+	}
+
+	cache.SimilaritySchema--
+	cache.Matches, cache.Findings = nil, nil
+
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(
+		t,
+		similarityScanCachePath(cacheRoot, moduleRoot, true, stamp.SourceDigest),
+		string(data),
+	)
+
+	stamp.Schema--
+	if err := storeSimilarityStamp(moduleRoot, stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	return cacheRoot
+}
+
 func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T) {
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
@@ -298,11 +338,30 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		t.Fatalf("enriched stamp = %#v", stamp)
 	}
 
+	options.AcceptedPairIDs = nil
 	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), options)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "hot description calls", describer.calls, 2)
 	requireSimilarityCount(t, "hot embedding batches", embedder.calls, 2)
+
+	// An old policy can omit a now-reportable pair. Rescore it from cached vectors
+	// and descriptions, preserving reviewed content-bound acceptances.
+	cacheRoot := storeSimilarityCacheWithOlderPolicy(t, cacheDir, tmp, stamp)
+
+	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), options)
+	requireNoSimilarityIssues(t, issues, err)
+	requireSimilarityCount(t, "policy change description calls", describer.calls, 2)
+	requireSimilarityCount(t, "policy change embedding batches", embedder.calls, 2)
+
+	cache, ok := loadSimilarityScanCache(cacheRoot, tmp, true, stamp.SourceDigest)
+	if !ok || cache.SimilaritySchema != similaritySchema || len(cache.Matches) != 1 {
+		t.Fatalf(
+			"policy change did not rescore cached pair: schema=%d matches=%d",
+			cache.SimilaritySchema,
+			len(cache.Matches),
+		)
+	}
 
 	withoutCodex := options
 	withoutCodex.describer = nil
@@ -323,7 +382,6 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		t.Fatal("CI accepted stale source attestation after rename")
 	}
 
-	options.AcceptedPairIDs = nil
 	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), options)
 	requireSingleSimilarityIssue(t, issues, err)
 	requireSimilarityCount(t, "description requests after rename", describer.requests, 4)

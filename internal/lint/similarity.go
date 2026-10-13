@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	similaritySchema        = 10
+	// Matching policy changes rescore findings without changing content-addressed vectors.
+	similaritySchema        = 12
 	similarityMinimumBlocks = 2
 	// Immediate siblings and parent-child packages share refactor ownership.
 	// Deeper branches do not; skipping them bounds cold all-pairs work.
@@ -51,9 +52,11 @@ const (
 	similarityTestThresholdOffset  = 0.025
 	similarityTestMaximumThreshold = 0.999
 
+	// Cross-package descriptions recover refactors with different source shape;
+	// related helpers within one package still need the stricter existing gates.
 	similarityDescriptionSameFileThreshold    = 0.950
 	similarityDescriptionSamePackageThreshold = 0.960
-	similarityDescriptionDistantThreshold     = 0.960
+	similarityDescriptionDistantThreshold     = 0.958
 	similarityDescriptionTestOffset           = 0.015
 )
 

@@ -74,7 +74,8 @@ Once semantic findings are fixed or accepted, commit the generated
 `.slopelint-similarity.json` stamp.
 
 CI validates the stamp's policy and Git digest before structural lint, without
-model inference. Missing or stale stamps fail. Refresh locally and commit the
+model inference. Policy changes rescore cached vectors; unchanged embeddings
+remain reusable. Missing or stale stamps fail. Refresh locally and commit the
 stamp; the stamp itself is excluded from its digest. Each Go module needs its own
 stamp.
 

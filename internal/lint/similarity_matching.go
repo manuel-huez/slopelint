@@ -397,6 +397,10 @@ func similarityDescriptionThreshold(tier int, testPair bool) float64 {
 		threshold = similarityDescriptionSamePackageThreshold
 	default:
 		threshold = similarityDescriptionDistantThreshold
+		if testPair {
+			// Shared setup across packages does not make test scenarios equivalent.
+			threshold = similarityDescriptionSamePackageThreshold
+		}
 	}
 
 	if testPair {

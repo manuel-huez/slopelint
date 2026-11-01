@@ -273,7 +273,12 @@ func (state reflectedFuncLitState) assign(
 	before token.Pos,
 ) reflectedFuncLitState {
 	for index, lhs := range assign.Lhs {
-		if reflectedExprObject(info, lhs) != target {
+		var object types.Object
+		if ident, ok := unparenReflectedExpr(lhs).(*ast.Ident); ok && info != nil {
+			object = info.ObjectOf(ident)
+		}
+
+		if object != target {
 			continue
 		}
 
@@ -364,15 +369,6 @@ func reflectedExprAt(exprs []ast.Expr, index int) ast.Expr {
 	}
 
 	return exprs[index]
-}
-
-func reflectedExprObject(info *types.Info, expr ast.Expr) types.Object {
-	ident, ok := unparenReflectedExpr(expr).(*ast.Ident)
-	if !ok || info == nil {
-		return nil
-	}
-
-	return info.ObjectOf(ident)
 }
 
 func (graph deadCodeGraph) invokedFuncParamIndexes(

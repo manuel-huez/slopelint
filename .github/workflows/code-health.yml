@@ -31,10 +31,13 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Run repo formatters
+        id: pre_push_format
         run: ./scripts/format-code.sh
 
       - name: Fail on formatter changes
+        id: pre_push_format_clean
         run: git diff --exit-code
 
       - name: Run full code health checks, including slopelint self-check
+        id: pre_push_code_health
         run: ./scripts/check-code-health.sh

@@ -396,6 +396,7 @@ var installedAnalysisCacheBuildID = sync.OnceValues(func() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()

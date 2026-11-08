@@ -7,6 +7,9 @@ import (
 )
 
 func TestRepoDeadCodeKeepsExternalGoccyJSONGenericMarshalWrapperFields(t *testing.T) {
+	// Trimmed export-data paths must still resolve the dependency's generic body.
+	t.Setenv("GOFLAGS", "-trimpath")
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 

@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"go/version"
 	"io"
 	"os"
 	"os/exec"
@@ -53,6 +54,10 @@ func resolvePackageMetadata(
 		patterns = []string{allPackagesPattern}
 	}
 
+	if err := requireReadableExportData(dir); err != nil {
+		return nil, nil, err
+	}
+
 	metas, err := goList(patterns, dir)
 	if err != nil {
 		return nil, nil, err
@@ -81,11 +86,42 @@ func resolvePackageMetadata(
 	return targets, byImportPath, nil
 }
 
+// requireReadableExportData rejects toolchains whose export data this binary's
+// go/importer cannot decode; it panics on a newer format instead of returning an error.
+func requireReadableExportData(dir string) error {
+	cmd := exec.Command("go", "env", "GOVERSION")
+	cmd.Dir = dir
+
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("read Go toolchain version: %w", err)
+	}
+
+	// Devel builds have no comparable release; let go/importer decide.
+	toolchain := strings.TrimSpace(string(output))
+	built := version.Lang(runtime.Version())
+
+	if built != "" && version.Compare(version.Lang(toolchain), built) > 0 {
+		return fmt.Errorf(
+			"binary built with %s cannot read %s export data; "+
+				"reinstall slopelint with %s",
+			runtime.Version(),
+			toolchain,
+			toolchain,
+		)
+	}
+
+	return nil
+}
+
 func goList(patterns []string, dir string) ([]*packageMeta, error) {
 	args := append(
 		[]string{
 			"list",
 			"-buildvcs=false",
+			// Dead-code checks parse dependency source from export-data positions;
+			// a GOFLAGS -trimpath would turn those into unresolvable module paths.
+			"-trimpath=false",
 			"-deps",
 			"-test",
 			"-export",

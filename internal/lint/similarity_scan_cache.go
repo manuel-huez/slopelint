@@ -151,7 +151,7 @@ func loadSimilarityScanCache(
 		descriptions,
 		sourceDigest,
 	)
-	if cache, ok := readSimilarityScanCache(root, exactPath); ok {
+	if cache, ok := readSimilarityScanCache(exactPath); ok {
 		return cache, true
 	}
 
@@ -161,7 +161,7 @@ func loadSimilarityScanCache(
 			continue
 		}
 
-		if cache, ok := readSimilarityScanCache(root, snapshot.path); ok {
+		if cache, ok := readSimilarityScanCache(snapshot.path); ok {
 			return cache, true
 		}
 	}
@@ -169,7 +169,7 @@ func loadSimilarityScanCache(
 	return similarityScanCache{}, false
 }
 
-func readSimilarityScanCache(root string, path string) (similarityScanCache, bool) {
+func readSimilarityScanCache(path string) (similarityScanCache, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return similarityScanCache{}, false
@@ -186,10 +186,6 @@ func readSimilarityScanCache(root string, path string) (similarityScanCache, boo
 
 	if cache.policyMatches(cache.Descriptions) {
 		refreshCacheEntry(path)
-
-		if _, ok := loadSimilarityCacheReferenceManifest(path, cache.SourceDigest); !ok {
-			_ = storeSimilarityCacheReferenceManifest(root, path, cache)
-		}
 	}
 
 	return cache, true
@@ -422,10 +418,6 @@ func storeSimilarityScanCache(
 		sourceDigest,
 	)
 	if err := writeFileAtomically(path, data); err != nil {
-		return err
-	}
-
-	if err := storeSimilarityCacheReferenceManifest(root, path, cache); err != nil {
 		return err
 	}
 
@@ -816,7 +808,6 @@ func pruneSimilarityScanCacheSnapshots(dir string) {
 	snapshots := similarityScanCacheSnapshotsInDir(dir)
 	for _, snapshot := range snapshots[:max(0, len(snapshots)-similarityScanCacheSnapshots)] {
 		_ = os.Remove(snapshot.path)
-		_ = os.Remove(similarityCacheReferenceManifestPath(snapshot.path))
 	}
 }
 

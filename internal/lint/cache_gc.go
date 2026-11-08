@@ -36,17 +36,14 @@ const (
 	cachePruneUnknown cachePruneEntryKind = iota
 	cachePruneAnalysis
 	cachePruneScan
-	cachePruneReferences
 	cachePruneVector
 	cachePruneDescription
 )
 
 type cachePruneEntry struct {
-	path       string
-	modified   time.Time
-	lastUse    time.Time
-	kind       cachePruneEntryKind
-	referenced bool
+	path     string
+	modified time.Time
+	kind     cachePruneEntryKind
 }
 
 // maybePruneCaches runs only after cache writes; exact cache hits skip maintenance entirely.
@@ -133,8 +130,6 @@ func pruneCaches(root string, now time.Time, policy cachePrunePolicy) error {
 		return err
 	}
 
-	// No size cap: entries go only when obsolete or unused for the retention period.
-	markSimilarityCacheReferences(root, entries, now, policy)
 	pruneUnusedCacheEntries(entries, now, policy)
 	removeEmptyCacheDirectories(root)
 
@@ -227,7 +222,6 @@ func cachePruneEntries(root string) ([]*cachePruneEntry, error) {
 			entries = append(entries, &cachePruneEntry{
 				path:     path,
 				modified: info.ModTime(),
-				lastUse:  info.ModTime(),
 				kind:     kind,
 			})
 
@@ -253,8 +247,6 @@ func similarityCacheEntryKind(root string, path string) cachePruneEntryKind {
 	}
 
 	switch {
-	case parts[0] == "repos" && strings.HasSuffix(relative, ".json.refs"):
-		return cachePruneReferences
 	case parts[0] == "repos" && strings.HasSuffix(relative, ".json"):
 		return cachePruneScan
 	case parts[0] == "vectors" && strings.HasSuffix(relative, ".bin"):
@@ -266,9 +258,9 @@ func similarityCacheEntryKind(root string, path string) cachePruneEntryKind {
 	}
 }
 
-// pruneUnusedCacheEntries keeps unreferenced vectors and descriptions until normal
-// retention expires: a repository whose snapshot was evicted reuses them on its next
-// scan instead of paying for new embeddings or Codex descriptions.
+// pruneUnusedCacheEntries removes lint results and scan snapshots unused for the
+// retention period. Per-block vectors and Codex descriptions stay until a cache
+// schema change: content keys keep them valid, and regenerating them costs model calls.
 func pruneUnusedCacheEntries(
 	entries []*cachePruneEntry,
 	now time.Time,
@@ -278,17 +270,12 @@ func pruneUnusedCacheEntries(
 	recent := now.Add(-policy.writeGrace)
 
 	for _, entry := range entries {
-		if entry.modified.After(recent) {
+		if entry.modified.After(recent) ||
+			entry.kind == cachePruneVector || entry.kind == cachePruneDescription {
 			continue
 		}
 
-		remove := entry.lastUse.Before(oldest)
-		if !entry.referenced &&
-			(entry.kind == cachePruneReferences || entry.kind == cachePruneUnknown) {
-			remove = true
-		}
-
-		if remove {
+		if entry.kind == cachePruneUnknown || entry.modified.Before(oldest) {
 			_ = os.Remove(entry.path)
 		}
 	}

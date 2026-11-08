@@ -171,7 +171,6 @@ func TestPruneCachesRemovesOnlyExpiredOrObsoleteData(t *testing.T) {
 	if err := pruneCaches(root, now, cachePrunePolicy{
 		unusedRetention: cacheUnusedRetention,
 		writeGrace:      cacheConcurrentWriteGrace,
-		maximumBytes:    1024 * 1024,
 	}); err != nil {
 		t.Fatalf("prune caches: %v", err)
 	}
@@ -195,99 +194,6 @@ func TestPruneCachesRemovesOnlyExpiredOrObsoleteData(t *testing.T) {
 		expiredSnapshotPath,
 		expiredVector,
 	)
-}
-
-func TestPruneCachesEnforcesGlobalSizeCapByLastUse(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
-
-	analysisRoot, err := analysisCacheRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	paths := []string{
-		filepath.Join(analysisRoot, "packages", "aa", "oldest.json"),
-		filepath.Join(analysisRoot, "packages", "bb", "middle.json"),
-		filepath.Join(analysisRoot, "packages", "cc", "newest.json"),
-	}
-	for index, path := range paths {
-		writeFile(t, path, strings.Repeat("x", 8))
-		setCacheTestModTime(t, path, now.Add(time.Duration(index-3)*time.Hour))
-	}
-
-	similarityRoot, err := similarityVectorCacheRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Older than every analysis entry, yet Codex output outlives rebuildable caches.
-	description := filepath.Join(
-		similarityRoot,
-		"descriptions",
-		"signatures",
-		"ab",
-		strings.Repeat("c", 62)+".json",
-	)
-	writeFile(t, description, strings.Repeat("x", 4))
-	setCacheTestModTime(t, description, now.Add(-24*time.Hour))
-
-	if err := pruneCaches(root, now, cachePrunePolicy{
-		unusedRetention: 365 * 24 * time.Hour,
-		writeGrace:      0,
-		maximumBytes:    12,
-	}); err != nil {
-		t.Fatalf("prune caches: %v", err)
-	}
-
-	for _, path := range paths[:2] {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("evicted cache %s still exists: %v", path, err)
-		}
-	}
-
-	requireCacheTestPaths(t, paths[2], description)
-}
-
-func TestPruneCachesPreservesBlobsWhileRetainedSnapshotNeedsManifest(t *testing.T) {
-	root := t.TempDir()
-	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
-	mature := now.Add(-2 * cacheConcurrentWriteGrace)
-
-	similarityRoot, err := similarityVectorCacheRoot(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	snapshotPath := filepath.Join(
-		similarityRoot,
-		"repos",
-		"aa",
-		"repo",
-		strings.Repeat("a", sha256.Size*2)+".json",
-	)
-	writeFile(t, snapshotPath, "{}")
-	setCacheTestModTime(t, snapshotPath, mature)
-
-	vectorKey := strings.Repeat("b", sha256.Size*2)
-	if err := storeSimilarityVector(similarityRoot, vectorKey, []float32{1, 0}); err != nil {
-		t.Fatal(err)
-	}
-
-	vectorPath := similarityVectorPath(similarityRoot, vectorKey)
-	setCacheTestModTime(t, vectorPath, mature)
-
-	if err := pruneCaches(root, now, cachePrunePolicy{
-		unusedRetention: cacheUnusedRetention,
-		writeGrace:      cacheConcurrentWriteGrace,
-		maximumBytes:    1,
-	}); err != nil {
-		t.Fatalf("prune caches: %v", err)
-	}
-
-	if _, err := os.Stat(vectorPath); err != nil {
-		t.Fatalf("blob removed before retained snapshots have manifests: %v", err)
-	}
 }
 
 func cacheGCTestBlock() similarityCachedBlock {

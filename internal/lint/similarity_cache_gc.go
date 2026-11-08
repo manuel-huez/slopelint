@@ -195,7 +195,7 @@ func markSimilarityCacheReferences(
 	entries []*cachePruneEntry,
 	now time.Time,
 	policy cachePrunePolicy,
-) bool {
+) {
 	byPath := make(map[string]*cachePruneEntry, len(entries))
 	for _, entry := range entries {
 		byPath[entry.path] = entry
@@ -203,10 +203,9 @@ func markSimilarityCacheReferences(
 
 	similarityRoot, err := similarityVectorCacheRoot(root)
 	if err != nil {
-		return false
+		return
 	}
 
-	complete := true
 	oldest := now.Add(-policy.unusedRetention)
 
 	for _, entry := range entries {
@@ -218,7 +217,6 @@ func markSimilarityCacheReferences(
 		paths, ok := loadSimilarityCacheReferenceManifest(entry.path, sourceDigest)
 
 		if !ok {
-			complete = false
 			continue
 		}
 
@@ -234,8 +232,6 @@ func markSimilarityCacheReferences(
 			)
 		}
 	}
-
-	return complete
 }
 
 func markCacheReference(entry *cachePruneEntry, lastUse time.Time) {

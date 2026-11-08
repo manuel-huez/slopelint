@@ -1,7 +1,6 @@
 package lint
 
 import (
-	"cmp"
 	"errors"
 	"io/fs"
 	"os"
@@ -13,25 +12,22 @@ import (
 )
 
 const (
-	cachePruneInterval              = 24 * time.Hour
-	cacheUnusedRetention            = 30 * 24 * time.Hour
-	cacheConcurrentWriteGrace       = time.Hour
-	cachePruneLockStaleAfter        = time.Hour
-	cacheMaximumBytes         int64 = 512 * 1024 * 1024
-	cachePruneMarkerName            = ".last-prune"
-	cachePruneLockName              = ".prune-lock"
+	cachePruneInterval        = 24 * time.Hour
+	cacheUnusedRetention      = 30 * 24 * time.Hour
+	cacheConcurrentWriteGrace = time.Hour
+	cachePruneLockStaleAfter  = time.Hour
+	cachePruneMarkerName      = ".last-prune"
+	cachePruneLockName        = ".prune-lock"
 )
 
 type cachePrunePolicy struct {
 	unusedRetention time.Duration
 	writeGrace      time.Duration
-	maximumBytes    int64
 }
 
 var defaultCachePrunePolicy = cachePrunePolicy{
 	unusedRetention: cacheUnusedRetention,
 	writeGrace:      cacheConcurrentWriteGrace,
-	maximumBytes:    cacheMaximumBytes,
 }
 
 type cachePruneEntryKind uint8
@@ -45,18 +41,12 @@ const (
 	cachePruneDescription
 )
 
-// cachePruneModelOutputs lists blob kinds in size-eviction order: local embeddings
-// go before Codex descriptions, which cost the most to regenerate.
-var cachePruneModelOutputs = []cachePruneEntryKind{cachePruneVector, cachePruneDescription}
-
 type cachePruneEntry struct {
 	path       string
-	size       int64
 	modified   time.Time
 	lastUse    time.Time
 	kind       cachePruneEntryKind
 	referenced bool
-	removed    bool
 }
 
 // maybePruneCaches runs only after cache writes; exact cache hits skip maintenance entirely.
@@ -143,11 +133,9 @@ func pruneCaches(root string, now time.Time, policy cachePrunePolicy) error {
 		return err
 	}
 
-	// Legacy snapshots have no compact manifest. Keep all blobs until those snapshots
-	// are loaded and backfilled or expire, rather than risk cross-worktree cache loss.
-	completeReferences := markSimilarityCacheReferences(root, entries, now, policy)
+	// No size cap: entries go only when obsolete or unused for the retention period.
+	markSimilarityCacheReferences(root, entries, now, policy)
 	pruneUnusedCacheEntries(entries, now, policy)
-	pruneCacheSize(entries, now, policy, completeReferences)
 	removeEmptyCacheDirectories(root)
 
 	return nil
@@ -238,7 +226,6 @@ func cachePruneEntries(root string) ([]*cachePruneEntry, error) {
 
 			entries = append(entries, &cachePruneEntry{
 				path:     path,
-				size:     info.Size(),
 				modified: info.ModTime(),
 				lastUse:  info.ModTime(),
 				kind:     kind,
@@ -301,60 +288,9 @@ func pruneUnusedCacheEntries(
 			remove = true
 		}
 
-		if remove && os.Remove(entry.path) == nil {
-			entry.removed = true
+		if remove {
+			_ = os.Remove(entry.path)
 		}
-	}
-}
-
-func pruneCacheSize(
-	entries []*cachePruneEntry,
-	now time.Time,
-	policy cachePrunePolicy,
-	completeReferences bool,
-) {
-	var total int64
-
-	remaining := make([]*cachePruneEntry, 0, len(entries))
-	for _, entry := range entries {
-		if entry.removed {
-			continue
-		}
-
-		total += entry.size
-		remaining = append(remaining, entry)
-	}
-
-	if total <= policy.maximumBytes {
-		return
-	}
-
-	// Rebuildable snapshots and analysis results (index -1) go before model outputs.
-	slices.SortFunc(remaining, func(left, right *cachePruneEntry) int {
-		return cmp.Or(
-			cmp.Compare(
-				slices.Index(cachePruneModelOutputs, left.kind),
-				slices.Index(cachePruneModelOutputs, right.kind),
-			),
-			left.lastUse.Compare(right.lastUse),
-			strings.Compare(left.path, right.path),
-		)
-	})
-
-	recent := now.Add(-policy.writeGrace)
-	for _, entry := range remaining {
-		if total <= policy.maximumBytes {
-			break
-		}
-
-		unverifiedBlob := !completeReferences &&
-			(entry.kind == cachePruneVector || entry.kind == cachePruneDescription)
-		if unverifiedBlob || entry.modified.After(recent) || os.Remove(entry.path) != nil {
-			continue
-		}
-
-		entry.removed = true
-		total -= entry.size
 	}
 }
 

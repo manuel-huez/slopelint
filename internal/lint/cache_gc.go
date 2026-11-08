@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"cmp"
 	"errors"
 	"io/fs"
 	"os"
@@ -43,6 +44,10 @@ const (
 	cachePruneVector
 	cachePruneDescription
 )
+
+// cachePruneModelOutputs lists blob kinds in size-eviction order: local embeddings
+// go before Codex descriptions, which cost the most to regenerate.
+var cachePruneModelOutputs = []cachePruneEntryKind{cachePruneVector, cachePruneDescription}
 
 type cachePruneEntry struct {
 	path       string
@@ -141,7 +146,7 @@ func pruneCaches(root string, now time.Time, policy cachePrunePolicy) error {
 	// Legacy snapshots have no compact manifest. Keep all blobs until those snapshots
 	// are loaded and backfilled or expire, rather than risk cross-worktree cache loss.
 	completeReferences := markSimilarityCacheReferences(root, entries, now, policy)
-	pruneUnusedCacheEntries(entries, now, policy, completeReferences)
+	pruneUnusedCacheEntries(entries, now, policy)
 	pruneCacheSize(entries, now, policy, completeReferences)
 	removeEmptyCacheDirectories(root)
 
@@ -274,11 +279,13 @@ func similarityCacheEntryKind(root string, path string) cachePruneEntryKind {
 	}
 }
 
+// pruneUnusedCacheEntries keeps unreferenced vectors and descriptions until normal
+// retention expires: a repository whose snapshot was evicted reuses them on its next
+// scan instead of paying for new embeddings or Codex descriptions.
 func pruneUnusedCacheEntries(
 	entries []*cachePruneEntry,
 	now time.Time,
 	policy cachePrunePolicy,
-	completeReferences bool,
 ) {
 	oldest := now.Add(-policy.unusedRetention)
 	recent := now.Add(-policy.writeGrace)
@@ -289,11 +296,8 @@ func pruneUnusedCacheEntries(
 		}
 
 		remove := entry.lastUse.Before(oldest)
-
-		unreferencedBlob := completeReferences &&
-			(entry.kind == cachePruneVector || entry.kind == cachePruneDescription)
-		if !entry.referenced && (unreferencedBlob ||
-			entry.kind == cachePruneReferences || entry.kind == cachePruneUnknown) {
+		if !entry.referenced &&
+			(entry.kind == cachePruneReferences || entry.kind == cachePruneUnknown) {
 			remove = true
 		}
 
@@ -325,12 +329,16 @@ func pruneCacheSize(
 		return
 	}
 
+	// Rebuildable snapshots and analysis results (index -1) go before model outputs.
 	slices.SortFunc(remaining, func(left, right *cachePruneEntry) int {
-		if order := left.lastUse.Compare(right.lastUse); order != 0 {
-			return order
-		}
-
-		return strings.Compare(left.path, right.path)
+		return cmp.Or(
+			cmp.Compare(
+				slices.Index(cachePruneModelOutputs, left.kind),
+				slices.Index(cachePruneModelOutputs, right.kind),
+			),
+			left.lastUse.Compare(right.lastUse),
+			strings.Compare(left.path, right.path),
+		)
 	})
 
 	recent := now.Add(-policy.writeGrace)

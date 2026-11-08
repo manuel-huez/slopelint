@@ -1,14 +1,14 @@
 {
   "schema": 12,
-  "source_digest": "3e783e4408f29fa7734faf85e02d5af5429918e09d543df6f3e4b2d74e1ed2c1",
-  "repository_digest": "d8e4783f2323598828901bb615868a44c4a87522e55dc6a43fbce21a27729120",
+  "source_digest": "a91a2b756b29d5a276e2cb1c14a166e4f7f8c78db580b4923083873328aa71e0",
+  "repository_digest": "cd1e334235aac3f661457d2e53c0caa99d9f5b4ffd8429e9143864a2549e22e8",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "cdff18cfd7e45eb28b716f0ad2a0c76d26aeb28e323e67771529535a4b6305b9",
-  "checked_blocks": 1825,
+  "description_digest": "d2a1898d0e800e156b24be7128b34828f7eb74c175f0e5fbc8065251a51bdac1",
+  "checked_blocks": 1826,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",
@@ -30,6 +30,13 @@
       "left_hash": "1f542ea63bd7d7dbd4d5f27765bb93d3e8395d908e9a9e2e05b20f1a77dc1ebf",
       "right": "internal/lint/structure/branches.go::exprHasCalls",
       "right_hash": "f0027126eee9ab36f62b34cf876eeeb6dd0d6e417b265aef8a4c46f2b37972d8"
+    },
+    {
+      "id": "sim-4da24c46842b227f",
+      "left": "internal/lint/smells/runner.go::newRunner",
+      "left_hash": "98505f2449a82ef904ad8ee7fb93ca301beec16e46ce570c07101a6592bdf73b",
+      "right": "internal/lint/structure/package.go::New",
+      "right_hash": "c7e3dfff5323fec480a7d0d1e5488cbf6a19bd6ecfe5d16d74ba1868bdf3f005"
     },
     {
       "id": "sim-9da540dfef0031e6",
@@ -58,6 +65,13 @@
       "left_hash": "6373c2d55b02013d344a9edf692bf4af0a7f53293869881b79893580b315a46d",
       "right": "internal/lint/smells/names.go::isIsPredicateName",
       "right_hash": "6e9a888cc615912f9699fd450a6267b046d8628410b36c6a565c79f49c456644"
+    },
+    {
+      "id": "sim-ffebd02839150359",
+      "left": "internal/lint/truth.go::*linter.truthAnd",
+      "left_hash": "b7b342488e924294cf8548b036a478eb6339834ebbd74779eb9de325d234f272",
+      "right": "internal/lint/truth.go::*linter.truthOr",
+      "right_hash": "8e422e471331abc0315e97914e21dfe82c71f7079e2b66abd9f8f7e04e624a7b"
     }
   ]
 }

@@ -28,7 +28,7 @@ func TestSimilarityStructuralCachePackingRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPruneCachesRemovesOnlyUnreachableOrExpiredData(t *testing.T) {
+func TestPruneCachesRemovesOnlyExpiredOrObsoleteData(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
 	mature := now.Add(-2 * cacheConcurrentWriteGrace)
@@ -165,17 +165,8 @@ func TestPruneCachesRemovesOnlyUnreachableOrExpiredData(t *testing.T) {
 		"ef",
 		strings.Repeat("f", 62)+".json",
 	)
-	legacyDescription := filepath.Join(
-		similarityRoot,
-		"descriptions",
-		"ab",
-		strings.Repeat("c", 62)+".json",
-	)
-
 	writeFile(t, orphanDescription, "{}")
-	writeFile(t, legacyDescription, "{}")
 	setCacheTestModTime(t, orphanDescription, mature)
-	setCacheTestModTime(t, legacyDescription, mature)
 
 	if err := pruneCaches(root, now, cachePrunePolicy{
 		unusedRetention: cacheUnusedRetention,
@@ -190,6 +181,8 @@ func TestPruneCachesRemovesOnlyUnreachableOrExpiredData(t *testing.T) {
 		currentAnalysis,
 		snapshotPath,
 		manifestPath,
+		orphanVector,
+		orphanDescription,
 		recentOrphan,
 		futureAnalysis,
 		futureSimilarity,
@@ -199,9 +192,6 @@ func TestPruneCachesRemovesOnlyUnreachableOrExpiredData(t *testing.T) {
 		obsoleteAnalysis,
 		obsoleteSimilarity,
 		expiredAnalysis,
-		orphanVector,
-		orphanDescription,
-		legacyDescription,
 		expiredSnapshotPath,
 		expiredVector,
 	)
@@ -226,6 +216,22 @@ func TestPruneCachesEnforcesGlobalSizeCapByLastUse(t *testing.T) {
 		setCacheTestModTime(t, path, now.Add(time.Duration(index-3)*time.Hour))
 	}
 
+	similarityRoot, err := similarityVectorCacheRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Older than every analysis entry, yet Codex output outlives rebuildable caches.
+	description := filepath.Join(
+		similarityRoot,
+		"descriptions",
+		"signatures",
+		"ab",
+		strings.Repeat("c", 62)+".json",
+	)
+	writeFile(t, description, strings.Repeat("x", 4))
+	setCacheTestModTime(t, description, now.Add(-24*time.Hour))
+
 	if err := pruneCaches(root, now, cachePrunePolicy{
 		unusedRetention: 365 * 24 * time.Hour,
 		writeGrace:      0,
@@ -240,9 +246,7 @@ func TestPruneCachesEnforcesGlobalSizeCapByLastUse(t *testing.T) {
 		}
 	}
 
-	if _, err := os.Stat(paths[2]); err != nil {
-		t.Fatalf("newest cache removed: %v", err)
-	}
+	requireCacheTestPaths(t, paths[2], description)
 }
 
 func TestPruneCachesPreservesBlobsWhileRetainedSnapshotNeedsManifest(t *testing.T) {

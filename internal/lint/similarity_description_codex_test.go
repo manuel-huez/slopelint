@@ -497,8 +497,7 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 		case <-started:
 		case <-time.After(5 * time.Second):
 			close(release)
-			<-done
-			t.Fatal("Codex requests did not overlap under one CPU")
+			t.Fatalf("Codex requests did not overlap under one CPU; describe: %v", <-done)
 		}
 	}
 

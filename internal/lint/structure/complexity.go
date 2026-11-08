@@ -436,7 +436,8 @@ func (l *Runner) inputValidationBinary(
 	expr *ast.BinaryExpr,
 	validationTemps map[types.Object]struct{},
 ) bool {
-	//exhaustive:ignore only boolean and comparison operators form validation guards.
+	// Only boolean and comparison operators form validation guards.
+	//exhaustive:ignore
 	switch expr.Op {
 	case token.LAND, token.LOR,
 		token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:

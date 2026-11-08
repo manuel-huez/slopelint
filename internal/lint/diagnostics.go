@@ -14,7 +14,8 @@ func (l *linter) checkBooleanSubexpressions(states []state, expr ast.Expr) {
 			l.checkBooleanSubexpressions(states, expr.X)
 		}
 	case *ast.BinaryExpr:
-		//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
+		// token.Token includes operators not meaningful for this expression type.
+		//exhaustive:ignore
 		switch expr.Op {
 		case token.LAND:
 			l.reportRedundantBooleanOperand(states, expr.X, "left side of &&")

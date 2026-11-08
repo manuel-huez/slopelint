@@ -52,7 +52,8 @@ func scalarFromConstantValue(value constant.Value) (scalar, bool) {
 	out := scalar{kind: scalarInvalid}
 	ok := true
 
-	//exhaustive:ignore unsupported numeric kinds are intentionally not scalar facts.
+	// Unsupported numeric kinds are intentionally not scalar facts.
+	//exhaustive:ignore
 	switch value.Kind() {
 	case constant.Bool:
 		out.kind = scalarBool

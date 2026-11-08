@@ -61,7 +61,8 @@ func scalarFromConstantValue(value constant.Value) (scalar, bool) {
 		return scalar{}, false
 	}
 
-	//exhaustive:ignore structural checks only use bool, string, and integer constants.
+	// Structural checks only use bool, string, and integer constants.
+	//exhaustive:ignore
 	switch value.Kind() {
 	case constant.Bool:
 		return newScalar(scalarBool, strconv.FormatBool(constant.BoolVal(value))), true

@@ -70,7 +70,8 @@ func (l *linter) refineBinary(
 	expr *ast.BinaryExpr,
 	wantTrue bool,
 ) []state {
-	//exhaustive:ignore token.Token includes operators not meaningful for this expression type.
+	// token.Token includes operators not meaningful for this expression type.
+	//exhaustive:ignore
 	switch expr.Op {
 	case token.LAND:
 		return l.refineLogicalAnd(st, expr.X, expr.Y, wantTrue)

@@ -459,7 +459,8 @@ func (l *Runner) binaryComparesObjects(
 }
 
 func comparisonToken(op token.Token) bool {
-	//exhaustive:ignore only comparison tokens matter for loop object comparisons.
+	// Only comparison tokens matter for loop object comparisons.
+	//exhaustive:ignore
 	switch op {
 	case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
 		return true

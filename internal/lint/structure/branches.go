@@ -225,7 +225,8 @@ func (l *Runner) returnGuardConditionSafe(expr ast.Expr) bool {
 }
 
 func (l *Runner) returnGuardBinaryConditionSafe(expr *ast.BinaryExpr) bool {
-	//exhaustive:ignore only boolean and comparison operators are safe to drop.
+	// Only boolean and comparison operators are safe to drop.
+	//exhaustive:ignore
 	switch expr.Op {
 	case token.LAND, token.LOR:
 		return l.returnGuardConditionSafe(expr.X) && l.returnGuardConditionSafe(expr.Y)

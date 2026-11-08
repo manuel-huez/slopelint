@@ -34,7 +34,8 @@ func scalarIntValue(value scalar) (int64, bool) {
 }
 
 func reverseOrderedOp(op token.Token) token.Token {
-	//exhaustive:ignore token.Token includes many non-ordered operators irrelevant here.
+	// token.Token includes many non-ordered operators irrelevant here.
+	//exhaustive:ignore
 	switch op {
 	case token.GTR:
 		return token.LSS
@@ -50,7 +51,8 @@ func reverseOrderedOp(op token.Token) token.Token {
 }
 
 func compareInts(left, right int64, op token.Token) bool {
-	//exhaustive:ignore token.Token includes many non-ordered operators irrelevant here.
+	// token.Token includes many non-ordered operators irrelevant here.
+	//exhaustive:ignore
 	switch op {
 	case token.GTR:
 		return left > right
@@ -66,7 +68,8 @@ func compareInts(left, right int64, op token.Token) bool {
 }
 
 func lenCompareFromNonNegative(limit int64, op token.Token) (bool, bool) {
-	//exhaustive:ignore token.Token includes many non-ordered operators irrelevant here.
+	// token.Token includes many non-ordered operators irrelevant here.
+	//exhaustive:ignore
 	switch op {
 	case token.GTR:
 		if limit < 0 {
@@ -94,7 +97,8 @@ func lenCompareFromNonNegative(limit int64, op token.Token) (bool, bool) {
 }
 
 func lenCompareFromNonZero(limit int64, op token.Token) (bool, bool) {
-	//exhaustive:ignore token.Token includes many non-ordered operators irrelevant here.
+	// token.Token includes many non-ordered operators irrelevant here.
+	//exhaustive:ignore
 	switch op {
 	case token.GTR:
 		if limit == 0 {

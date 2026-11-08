@@ -264,7 +264,8 @@ func (l *Runner) lenCompareOperand(lenExpr ast.Expr, limitExpr ast.Expr) (string
 }
 
 func lenCompareProvesNonEmpty(op token.Token, limit int64) bool {
-	//exhaustive:ignore token.Token includes operators irrelevant to len guards.
+	// token.Token includes operators irrelevant to len guards.
+	//exhaustive:ignore
 	switch op {
 	case token.GTR:
 		return limit == 0
@@ -282,7 +283,8 @@ func (l *Runner) emptyRangeGuardSource(expr ast.Expr) (rangeGuard, bool) {
 }
 
 func lenCompareProvesEmpty(op token.Token, limit int64) bool {
-	//exhaustive:ignore token.Token includes operators irrelevant to len guards.
+	// token.Token includes operators irrelevant to len guards.
+	//exhaustive:ignore
 	switch op {
 	case token.EQL, token.LEQ:
 		return limit == 0

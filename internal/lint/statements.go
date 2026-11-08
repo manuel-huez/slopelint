@@ -28,7 +28,8 @@ func (l *linter) execStmt(stmt ast.Stmt, states []state) flowResult {
 	case *ast.ReturnStmt:
 		return l.execReturnStmt(stmt, states)
 	case *ast.BranchStmt:
-		//exhaustive:ignore token.Token includes many non-branch values irrelevant here.
+		// token.Token includes many non-branch values irrelevant here.
+		//exhaustive:ignore
 		switch stmt.Tok {
 		case token.BREAK:
 			if stmt.Label != nil {

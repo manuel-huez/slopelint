@@ -166,7 +166,7 @@ func TestSimilarityScanCacheBoundsPastSourceSnapshots(t *testing.T) {
 	total := similarityScanCacheSnapshots + 3
 
 	for index := range total {
-		path := filepath.Join(dir, fmt.Sprintf("%02d.json", index))
+		path := filepath.Join(dir, fmt.Sprintf("%02d"+similarityScanCacheExt, index))
 		writeFile(t, path, "{}")
 		setCacheTestModTime(t, path, now.Add(time.Duration(index)*time.Second))
 	}
@@ -179,7 +179,7 @@ func TestSimilarityScanCacheBoundsPastSourceSnapshots(t *testing.T) {
 	}
 
 	for index := range total - similarityScanCacheSnapshots {
-		path := filepath.Join(dir, fmt.Sprintf("%02d.json", index))
+		path := filepath.Join(dir, fmt.Sprintf("%02d"+similarityScanCacheExt, index))
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("old snapshot %s still exists: %v", path, err)
 		}

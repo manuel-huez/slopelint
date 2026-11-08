@@ -604,7 +604,6 @@ func TestSimilarityScanCacheRejectsMismatchedFinding(t *testing.T) {
 		ContentHash:  hex.EncodeToString(leftDigest[:]),
 		Line:         1,
 		Column:       1,
-		Structural:   packSimilarityStructural([]uint64{1}),
 		VectorCount:  1,
 	}
 	rightContent := "func second() {}"
@@ -618,7 +617,6 @@ func TestSimilarityScanCacheRejectsMismatchedFinding(t *testing.T) {
 		ContentHash:  hex.EncodeToString(rightDigest[:]),
 		Line:         1,
 		Column:       1,
-		Structural:   packSimilarityStructural([]uint64{2}),
 		VectorCount:  1,
 	}
 	id := similarityPairID(

@@ -1,10 +1,10 @@
 package lint
 
 import (
+	"bytes"
 	"cmp"
+	"compress/gzip"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"go/token"
@@ -16,10 +16,9 @@ import (
 )
 
 const (
-	similarityScanCacheSchema    = 6
+	similarityScanCacheSchema    = 7
 	similarityScanCacheSnapshots = 16
-	// Sorted 64-bit hash deltas average close to one eight-byte varint.
-	similarityPackedStructuralBytesPerValue = 8
+	similarityScanCacheExt       = ".json.gz"
 )
 
 type similarityScanCache struct {
@@ -62,7 +61,6 @@ type similarityCachedBlock struct {
 	Line                   int    `json:"line"`
 	Column                 int    `json:"column"`
 	IsTest                 bool   `json:"is_test,omitempty"`
-	Structural             string `json:"structural"`
 	VectorCount            int    `json:"vector_count"`
 	Description            string `json:"description,omitempty"`
 	DescriptionHash        string `json:"description_hash,omitempty"`
@@ -170,13 +168,19 @@ func loadSimilarityScanCache(
 }
 
 func readSimilarityScanCache(path string) (similarityScanCache, bool) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return similarityScanCache{}, false
+	}
+	defer func() { _ = file.Close() }()
+
+	reader, err := gzip.NewReader(file)
 	if err != nil {
 		return similarityScanCache{}, false
 	}
 
 	var cache similarityScanCache
-	if json.Unmarshal(data, &cache) != nil {
+	if json.NewDecoder(reader).Decode(&cache) != nil {
 		return similarityScanCache{}, false
 	}
 
@@ -307,20 +311,14 @@ func validSimilarityCachedBlockSource(
 		block.ContentHash,
 	) || !filepath.IsLocal(block.RelativePath) || files[block.RelativePath] == "" ||
 		len(block.ContentHash) != sha256.Size*2 || block.Offset < 0 ||
-		block.Line <= 0 || block.Column <= 0 || block.Structural == "" {
-		return false
-	}
-
-	structural, ok := unpackSimilarityStructural(block.Structural)
-	if !ok {
+		block.Line <= 0 || block.Column <= 0 {
 		return false
 	}
 
 	digest := sha256.Sum256([]byte(block.Content))
 
 	return hex.EncodeToString(digest[:]) == block.ContentHash &&
-		validSimilarityCachedBlockLocation(block) &&
-		strictlyIncreasing(structural)
+		validSimilarityCachedBlockLocation(block)
 }
 
 func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
@@ -332,16 +330,6 @@ func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
 	return block.Identity == block.RelativePath+"::"+block.Symbol &&
 		block.IsTest == strings.HasSuffix(block.RelativePath, "_test.go") &&
 		block.PackageDir == packageDir
-}
-
-func strictlyIncreasing(values []uint64) bool {
-	for index := 1; index < len(values); index++ {
-		if values[index-1] >= values[index] {
-			return false
-		}
-	}
-
-	return true
 }
 
 func storeSimilarityScanCache(
@@ -406,18 +394,13 @@ func storeSimilarityScanCache(
 		})
 	}
 
-	data, err := json.Marshal(cache)
-	if err != nil {
-		return err
-	}
-
 	path := similarityScanCachePath(
 		root,
 		moduleRoot,
 		descriptions,
 		sourceDigest,
 	)
-	if err := writeFileAtomically(path, data); err != nil {
+	if err := writeSimilarityScanCache(path, cache); err != nil {
 		return err
 	}
 
@@ -603,13 +586,6 @@ func (cache similarityScanCache) changedBlocks(blocks []*similarityBlock) map[st
 func cacheSimilarityBlocks(blocks []*similarityBlock) []similarityCachedBlock {
 	cached := make([]similarityCachedBlock, 0, len(blocks))
 	for _, block := range blocks {
-		structural := make([]uint64, 0, len(block.Structural))
-		for shingle := range block.Structural {
-			structural = append(structural, shingle)
-		}
-
-		slices.Sort(structural)
-
 		cached = append(cached, similarityCachedBlock{
 			Identity:               block.Identity,
 			Symbol:                 block.Symbol,
@@ -621,7 +597,6 @@ func cacheSimilarityBlocks(blocks []*similarityBlock) []similarityCachedBlock {
 			Line:                   block.Position.Line,
 			Column:                 block.Position.Column,
 			IsTest:                 block.IsTest,
-			Structural:             packSimilarityStructural(structural),
 			VectorCount:            block.VectorCount,
 			Description:            block.Description,
 			DescriptionHash:        block.DescriptionHash,
@@ -668,16 +643,6 @@ func (cache similarityScanCache) blocksForFile(
 			continue
 		}
 
-		packed, ok := unpackSimilarityStructural(cached.Structural)
-		if !ok {
-			continue
-		}
-
-		structural := make(map[uint64]struct{}, len(packed))
-		for _, shingle := range packed {
-			structural[shingle] = struct{}{}
-		}
-
 		blocks = append(blocks, &similarityBlock{
 			Identity:     currentPath + "::" + cached.Symbol,
 			Symbol:       cached.Symbol,
@@ -692,8 +657,9 @@ func (cache similarityScanCache) blocksForFile(
 				Line:     cached.Line,
 				Column:   cached.Column,
 			},
-			IsTest:                 strings.HasSuffix(currentPath, "_test.go"),
-			Structural:             structural,
+			IsTest: strings.HasSuffix(currentPath, "_test.go"),
+			// Shingles are cheap to rebuild and were half of each stored snapshot.
+			Structural:             structuralShingles(normalizedSimilarityTokens(cached.Content)),
 			VectorCount:            cached.VectorCount,
 			Description:            cached.Description,
 			DescriptionHash:        cached.DescriptionHash,
@@ -704,66 +670,6 @@ func (cache similarityScanCache) blocksForFile(
 	return blocks
 }
 
-func packSimilarityStructural(values []uint64) string {
-	if len(values) == 0 {
-		return ""
-	}
-
-	// Sorted hashes become positive deltas. Varints halve snapshot size versus
-	// decimal JSON while preserving exact structural evidence.
-	data := make([]byte, 0, len(values)*binary.MaxVarintLen64)
-	buffer := make([]byte, binary.MaxVarintLen64)
-	previous := uint64(0)
-
-	for index, value := range values {
-		delta := value
-		if index > 0 {
-			delta = value - previous
-		}
-
-		count := binary.PutUvarint(buffer, delta)
-		data = append(data, buffer[:count]...)
-		previous = value
-	}
-
-	return base64.RawStdEncoding.EncodeToString(data)
-}
-
-func unpackSimilarityStructural(packed string) ([]uint64, bool) {
-	data, err := base64.RawStdEncoding.DecodeString(packed)
-	if err != nil || len(data) == 0 {
-		return nil, false
-	}
-
-	values := make(
-		[]uint64,
-		0,
-		max(1, len(data)/similarityPackedStructuralBytesPerValue),
-	)
-	previous := uint64(0)
-
-	for len(data) > 0 {
-		delta, count := binary.Uvarint(data)
-		if count <= 0 || len(values) > 0 && delta == 0 {
-			return nil, false
-		}
-
-		value := delta
-		if len(values) > 0 {
-			value = previous + delta
-			if value <= previous {
-				return nil, false
-			}
-		}
-
-		values = append(values, value)
-		previous = value
-		data = data[count:]
-	}
-
-	return values, true
-}
-
 func similarityBlockHashes(blocks []similarityCachedBlock) map[string]string {
 	hashes := make(map[string]string, len(blocks))
 	for _, block := range blocks {
@@ -771,6 +677,23 @@ func similarityBlockHashes(blocks []similarityCachedBlock) map[string]string {
 	}
 
 	return hashes
+}
+
+// writeSimilarityScanCache gzips snapshots: copied source and descriptions shrink
+// about 4x, which matters with up to similarityScanCacheSnapshots per repository.
+func writeSimilarityScanCache(path string, cache similarityScanCache) error {
+	var data bytes.Buffer
+
+	writer := gzip.NewWriter(&data)
+	if err := json.NewEncoder(writer).Encode(cache); err != nil {
+		return err
+	}
+
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	return writeFileAtomically(path, data.Bytes())
 }
 
 func similarityScanCachePath(
@@ -801,7 +724,7 @@ func similarityScanCachePath(
 	))
 	key := hex.EncodeToString(sum[:])
 
-	return filepath.Join(root, "repos", key[:2], key[2:], sourceDigest+".json")
+	return filepath.Join(root, "repos", key[:2], key[2:], sourceDigest+similarityScanCacheExt)
 }
 
 func pruneSimilarityScanCacheSnapshots(dir string) {
@@ -824,7 +747,7 @@ func similarityScanCacheSnapshotsInDir(dir string) []similarityScanCacheSnapshot
 
 	snapshots := make([]similarityScanCacheSnapshot, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), similarityScanCacheExt) {
 			continue
 		}
 

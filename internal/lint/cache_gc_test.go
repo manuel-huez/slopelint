@@ -10,22 +10,6 @@ import (
 	"time"
 )
 
-func TestSimilarityStructuralCachePackingRoundTrip(t *testing.T) {
-	values := []uint64{0, 1, 255, 1 << 40, ^uint64(0)}
-	packed := packSimilarityStructural(values)
-	got, ok := unpackSimilarityStructural(packed)
-
-	if !ok || len(got) != len(values) {
-		t.Fatalf("unpack = %v, valid=%t", got, ok)
-	}
-
-	for index := range values {
-		if got[index] != values[index] {
-			t.Fatalf("unpack[%d] = %d, want %d", index, got[index], values[index])
-		}
-	}
-}
-
 func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
@@ -58,9 +42,10 @@ func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 	snapshotDir := filepath.Join(similarityRoot, "repos", "aa", "repo")
 	expiredAnalysis := filepath.Join(analysisRoot, "packages", "aa", "expired.json")
 	currentAnalysis := filepath.Join(analysisRoot, "packages", "bb", "current.json")
-	expiredSnapshot := filepath.Join(snapshotDir, "expired.json")
-	currentSnapshot := filepath.Join(snapshotDir, "current.json")
-	legacyManifest := filepath.Join(snapshotDir, "current.json.refs")
+	expiredSnapshot := filepath.Join(snapshotDir, "expired"+similarityScanCacheExt)
+	currentSnapshot := filepath.Join(snapshotDir, "current"+similarityScanCacheExt)
+	legacySnapshot := filepath.Join(snapshotDir, "legacy.json")
+	legacyManifest := filepath.Join(snapshotDir, "legacy.json.refs")
 	recentUnknown := filepath.Join(snapshotDir, "writing.json.refs")
 	vectorKey := strings.Repeat("e", sha256.Size*2)
 	expiredVector := similarityVectorPath(similarityRoot, vectorKey)
@@ -79,6 +64,7 @@ func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 		currentAnalysis:    mature,
 		expiredSnapshot:    expired,
 		currentSnapshot:    mature,
+		legacySnapshot:     mature,
 		legacyManifest:     mature,
 		recentUnknown:      now,
 		expiredVector:      expired,
@@ -106,6 +92,7 @@ func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 		obsoleteSimilarity,
 		expiredAnalysis,
 		expiredSnapshot,
+		legacySnapshot,
 		legacyManifest,
 	)
 }

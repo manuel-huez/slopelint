@@ -3,7 +3,6 @@ package lint
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math"
 	"path/filepath"
@@ -270,16 +269,12 @@ func storeSimilarityCacheWithOlderPolicy(
 	cache.SimilaritySchema--
 	cache.Matches, cache.Findings = nil, nil
 
-	data, err := json.Marshal(cache)
-	if err != nil {
+	if err := writeSimilarityScanCache(
+		similarityScanCachePath(cacheRoot, moduleRoot, true, stamp.SourceDigest),
+		cache,
+	); err != nil {
 		t.Fatal(err)
 	}
-
-	writeFile(
-		t,
-		similarityScanCachePath(cacheRoot, moduleRoot, true, stamp.SourceDigest),
-		string(data),
-	)
 
 	stamp.Schema--
 	if err := storeSimilarityStamp(moduleRoot, stamp); err != nil {

@@ -247,7 +247,7 @@ func similarityCacheEntryKind(root string, path string) cachePruneEntryKind {
 	}
 
 	switch {
-	case parts[0] == "repos" && strings.HasSuffix(relative, ".json"):
+	case parts[0] == "repos" && strings.HasSuffix(relative, similarityScanCacheExt):
 		return cachePruneScan
 	case parts[0] == "vectors" && strings.HasSuffix(relative, ".bin"):
 		return cachePruneVector

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/manuel-huez/slopelint"
@@ -98,8 +100,19 @@ func runStandalone(args []string, stdout, stderr io.Writer) int {
 		"treat matched main packages as the complete set of production entrypoints",
 	)
 
+	printVersion := flags.Bool("version", false, "print the slopelint version and exit")
+
 	if err := flags.Parse(args); err != nil {
 		return exitUsage
+	}
+
+	if *printVersion {
+		_, err := fmt.Fprintf(stdout, "slopelint %s %s\n", buildVersion(), runtime.Version())
+		if err != nil {
+			return exitFailure
+		}
+
+		return 0
 	}
 
 	patterns := flags.Args()
@@ -114,11 +127,6 @@ func runStandalone(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	mode, err := similarityModeFromEnv()
-	if err != nil {
-		return reportStandaloneError(stderr, err)
-	}
-
 	cacheActive := *cacheEnabled && lint.CacheEnabledFromEnv()
 	options := lint.Options{
 		MaxStates:    *maxStates,
@@ -126,13 +134,9 @@ func runStandalone(args []string, stdout, stderr io.Writer) int {
 		ClosedWorld:  *closedWorld,
 	}
 
-	var similarityOptions *lint.SimilarityOptions
-	if mode != similarityOff {
-		similarityOptions = &lint.SimilarityOptions{
-			CI:              mode == similarityCI,
-			CacheEnabled:    cacheActive,
-			AcceptedPairIDs: similarityAcceptedPairIDs(),
-		}
+	similarityOptions, err := similarityOptionsFromEnv(cacheActive)
+	if err != nil {
+		return reportStandaloneError(stderr, err)
 	}
 
 	issues, err := lint.LintRepository(patterns, ".", options, similarityOptions)
@@ -155,6 +159,31 @@ func runStandalone(args []string, stdout, stderr io.Writer) int {
 	}
 
 	return 0
+}
+
+// similarityOptionsFromEnv returns nil when SLOPELINT_SIMILARITY or CI markers
+// turn semantic similarity off.
+func similarityOptionsFromEnv(cacheActive bool) (*lint.SimilarityOptions, error) {
+	mode, err := similarityModeFromEnv()
+	if err != nil || mode == similarityOff {
+		return nil, err
+	}
+
+	return &lint.SimilarityOptions{
+		CI:              mode == similarityCI,
+		CacheEnabled:    cacheActive,
+		AcceptedPairIDs: similarityAcceptedPairIDs(),
+	}, nil
+}
+
+// buildVersion returns the module version stamped by go install or go build;
+// go run builds report "(devel)".
+func buildVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+
+	return "(devel)"
 }
 
 func reportStandaloneError(stderr io.Writer, err error) int {

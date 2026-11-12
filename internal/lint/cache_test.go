@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/tools/go/analysis"
@@ -454,9 +455,18 @@ type Value struct { Name string }
 func Present(value *Value) bool { return value != nil }
 `)
 
-	var hits []string
+	var (
+		hits    []string
+		hitsMux sync.Mutex
+	)
 
-	opts.CacheHitHook = func(importPath string) { hits = append(hits, importPath) }
+	// Packages in one dependency level replay in parallel.
+	opts.CacheHitHook = func(importPath string) {
+		hitsMux.Lock()
+		defer hitsMux.Unlock()
+
+		hits = append(hits, importPath)
+	}
 
 	second, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
 	if err != nil {

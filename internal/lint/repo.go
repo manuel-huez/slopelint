@@ -1,10 +1,12 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"go/types"
 	"maps"
 	"sort"
+	"sync"
 
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
 	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
@@ -40,24 +42,31 @@ func LintRepository(
 		return nil, err
 	}
 
-	var issues []Issue
+	var (
+		issues        []Issue
+		similarityErr error
+		similarityRun sync.WaitGroup
+	)
 
 	if similarity != nil && !similarity.CI {
-		// Similarity uses source syntax only. Validate CI stamps or finish local
-		// work before retaining type graphs for structural linting.
 		similarityPkgs, filesErr := similarityPackagesForTargets(targets)
 		if filesErr != nil {
 			return nil, filesErr
 		}
 
-		issues, err = CheckSimilarCode(similarityPkgs, *similarity)
-		if err != nil {
-			return nil, err
-		}
+		// Changed blocks spend most local similarity time waiting on Codex and the
+		// embedding server. Similarity parses its own syntax and shares no state
+		// with structural lint, so both run at once and join before persistence.
+		similarityRun.Go(func() {
+			issues, similarityErr = CheckSimilarCode(similarityPkgs, *similarity)
+		})
 	}
 
 	packageIssues, err := lintPackageTargets(targets, byImportPath, opts)
-	if err != nil {
+
+	similarityRun.Wait()
+
+	if err = errors.Join(similarityErr, err); err != nil {
 		return nil, err
 	}
 

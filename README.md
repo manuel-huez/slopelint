@@ -37,6 +37,7 @@ time and does not run semantic similarity or repo-wide dead-code reachability.
 | `-json` | Write JSON diagnostics to stdout | `false` |
 | `-closed-world` | Use matched `main` packages as complete production entrypoints for exported dead-code checks | `false` |
 | `-cache` | Reuse cached results | `true` |
+| `-version` | Print the slopelint version and exit | `false` |
 
 Standalone exit codes: `0` clean, `1` failure, `2` usage error, `3` findings.
 JSON format:

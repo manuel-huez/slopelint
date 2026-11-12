@@ -34,6 +34,7 @@ func TestAnalysisDriverRequested(t *testing.T) {
 		{name: "unitchecker config", args: []string{"vet.cfg"}, want: true},
 		{name: "standalone", args: []string{"-closed-world", allPackages}, want: false},
 		{name: "standalone cache", args: []string{cacheDisabled, allPackages}, want: false},
+		{name: "standalone version", args: []string{"-version"}, want: false},
 		{name: "after separator", args: []string{"--", jsonFlag}, want: false},
 	}
 
@@ -59,6 +60,20 @@ func TestRunStandaloneRequiresPackagePattern(t *testing.T) {
 
 	if !strings.Contains(stderr.String(), "usage: slopelint") {
 		t.Fatalf("missing usage output: %q", stderr.String())
+	}
+}
+
+func TestRunStandalonePrintsVersionWithoutPackages(t *testing.T) {
+	t.Parallel()
+
+	var stdout strings.Builder
+
+	if code := runStandalone([]string{"-version"}, &stdout, io.Discard); code != 0 {
+		t.Fatalf("runStandalone exit = %d, want 0", code)
+	}
+
+	if !strings.HasPrefix(stdout.String(), "slopelint ") {
+		t.Fatalf("version output = %q, want slopelint prefix", stdout.String())
 	}
 }
 

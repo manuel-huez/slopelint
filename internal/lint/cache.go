@@ -18,6 +18,8 @@ const cacheDirPerm = 0o755
 
 const repoAnalysisCacheHitName = "repo"
 
+const repoBehaviorCacheHitName = "behavior"
+
 var errAnalysisCacheDisabled = errors.New("analysis cache disabled")
 
 func slopelintCacheRoot(dir string) (string, error) {

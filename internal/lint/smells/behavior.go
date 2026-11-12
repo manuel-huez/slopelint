@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"go/token"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -116,18 +120,36 @@ func RunBehaviorRepo(pkgs []*Package) map[*Package][]Finding {
 	}
 
 	comparableSignatures := behaviorComparableSignatures(allCandidateFunctions)
-	candidates := make([]behaviorCandidate, 0)
+	perPackage := make([][]behaviorCandidate, len(pkgs))
+	// Candidate encoding dominates repo runs. The shared SSA analysis is read-only
+	// here and block renaming touches only its own package AST, so packages run in
+	// parallel; per-index slots keep the sorted package order of the serial loop.
+	var (
+		next atomic.Int64
+		wg   sync.WaitGroup
+	)
+	for range min(runtime.GOMAXPROCS(0), len(pkgs)) {
+		wg.Go(func() {
+			for {
+				index := int(next.Add(1)) - 1
+				if index >= len(pkgs) {
+					return
+				}
 
-	for _, pkg := range pkgs {
-		r := newRunner(pkg)
-		r.behaviorCalls = analysis.objectSummary
-		candidates = append(candidates, r.functionBehaviorCandidatesFrom(
-			analysis.candidates[pkg],
-			comparableSignatures,
-			analysis,
-		)...)
-		candidates = append(candidates, r.blockBehaviorCandidates()...)
+				r := newRunner(pkgs[index])
+				r.behaviorCalls = analysis.objectSummary
+				perPackage[index] = append(r.functionBehaviorCandidatesFrom(
+					analysis.candidates[pkgs[index]],
+					comparableSignatures,
+					analysis,
+				), r.blockBehaviorCandidates()...)
+			}
+		})
 	}
+
+	wg.Wait()
+
+	candidates := slices.Concat(perPackage...)
 
 	matches := exactBehaviorMatches(candidates)
 	covered := make(map[*Package][]behaviorSpan)

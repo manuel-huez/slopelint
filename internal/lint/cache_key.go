@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 
 	"golang.org/x/tools/go/analysis"
@@ -380,12 +381,14 @@ func analysisCacheBuildID(opts Options) (string, error) {
 }
 
 var installedAnalysisCacheBuildID = sync.OnceValues(func() (string, error) {
+	// A "+dirty" version names a commit, not the uncommitted analyzer code.
 	if info, ok := debug.ReadBuildInfo(); ok &&
-		info.Main.Version != "" && info.Main.Version != "(devel)" {
+		info.Main.Version != "" && info.Main.Version != "(devel)" &&
+		!strings.HasSuffix(info.Main.Version, "+dirty") {
 		return info.Main.Path + "@" + info.Main.Version, nil
 	}
 
-	// Local builds have no module version. Hash once so rebuilt analyzers cannot
+	// Local and dirty builds hash the executable once so rebuilt analyzers cannot
 	// reuse findings from a different executable, even when source is unchanged.
 	path, err := os.Executable()
 	if err != nil {

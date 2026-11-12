@@ -68,8 +68,8 @@ func g(req *guard.Req) {
 
 	joined := string(out)
 	for _, want := range []string{
-		`condition \"req == nil\" is always false here`,
-		`condition \"req.Name == \\\"\\\"\" is always false here`,
+		`condition "req == nil" is always false here`,
+		`condition "req.Name == \"\"" is always false here`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing diagnostic %q in:\n%s", want, joined)

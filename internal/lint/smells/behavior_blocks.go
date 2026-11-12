@@ -197,17 +197,19 @@ func (l *Runner) blockBehaviorCandidate(
 	typeKeys *behaviorTypeEncoder,
 	stmts []ast.Stmt,
 ) (behaviorCandidate, bool) {
-	key, ok := l.normalizedBehaviorBlock(bindings, typeKeys, stmts)
-	if !ok {
-		return behaviorCandidate{}, false
-	}
-
+	// Check size before normalization: renaming and formatting every window
+	// dominates repo runs, and most short windows fail this cheap check.
 	weight := 0
 	for _, stmt := range stmts {
 		weight += behaviorNodeCount(stmt)
 	}
 
 	if len(stmts) > 1 && weight < behaviorMinBlockNodes && !behaviorValidationWindow(stmts) {
+		return behaviorCandidate{}, false
+	}
+
+	key, ok := l.normalizedBehaviorBlock(bindings, typeKeys, stmts)
+	if !ok {
 		return behaviorCandidate{}, false
 	}
 

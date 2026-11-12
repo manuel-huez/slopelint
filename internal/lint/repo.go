@@ -367,6 +367,17 @@ func repoBehaviorIssues(
 	opts Options,
 	loadContext *packageLoadContext,
 ) ([]Issue, error) {
+	cache, files := repoBehaviorCache(inputs, results, opts)
+	if entry, ok := cache.load(); ok {
+		if issues, valid := replayStandaloneAnalysisIssues(entry, files); valid {
+			if opts.CacheHitHook != nil {
+				opts.CacheHitHook(repoBehaviorCacheHitName)
+			}
+
+			return issues, nil
+		}
+	}
+
 	linters := make([]*linter, len(inputs))
 
 	err := runPackageJobs(len(inputs), func(index int) error {
@@ -409,7 +420,102 @@ func repoBehaviorIssues(
 		issues = append(issues, l.issues...)
 	}
 
+	storeRepoBehaviorCache(cache, files, issues)
+
 	return issues, nil
+}
+
+// repoBehaviorCache keys cross-package behavior findings by every package
+// cache key. Each key hashes one package's source and imported APIs, so the set
+// covers every function body the shared SSA analysis reads. File paths join the
+// key because messages name the matching file. Paths are virtual import-path
+// names so cached findings replay after a checkout moves.
+func repoBehaviorCache(
+	inputs []repoPackageInput,
+	results map[string]repoPackageLintResult,
+	opts Options,
+) (*analysisCache, []analysisCacheSourceFile) {
+	type packageKey struct {
+		Package string   `json:"package"`
+		Key     string   `json:"key"`
+		Files   []string `json:"files"`
+	}
+
+	keys := make([]packageKey, 0, len(inputs))
+	files := make([]analysisCacheSourceFile, 0, len(inputs))
+	seen := make(map[string]struct{})
+
+	for _, input := range inputs {
+		key := results[input.importPath].cacheKey
+		if key == "" {
+			return nil, nil
+		}
+
+		names := make([]string, len(input.files))
+		for index, file := range input.files {
+			names[index] = file.RelativePath
+		}
+
+		keys = append(keys, packageKey{Package: input.importPath, Key: key, Files: names})
+
+		// Test variants repeat production files; keep the first sorted owner.
+		for _, file := range input.files {
+			if _, ok := seen[file.Name]; ok {
+				continue
+			}
+
+			seen[file.Name] = struct{}{}
+			file.RelativePath = input.importPath + "/" + file.RelativePath
+			files = append(files, file)
+		}
+	}
+
+	cache, err := analysisCacheForSourceRoot("", opts, "behavior", func() (string, error) {
+		return analysisCacheFingerprintKey(keys)
+	})
+	if err != nil {
+		return nil, nil
+	}
+
+	return cache, files
+}
+
+func storeRepoBehaviorCache(
+	cache *analysisCache,
+	files []analysisCacheSourceFile,
+	issues []Issue,
+) {
+	if cache == nil {
+		return
+	}
+
+	byName := make(map[string]*analysisCacheSourceFile, len(files))
+	for index := range files {
+		byName[files[index].Name] = &files[index]
+	}
+
+	entry := analysisCacheEntry{Issues: make([]analysisCacheIssue, 0, len(issues))}
+
+	for _, issue := range issues {
+		pos := issuePosition(issue)
+
+		file := byName[pos.Filename]
+		if file == nil || pos.Offset < 0 {
+			return
+		}
+
+		entry.Issues = append(entry.Issues, analysisCacheIssue{
+			Filename: file.RelativePath,
+			FileID:   file.SHA256,
+			Offset:   pos.Offset,
+			Line:     pos.Line,
+			Column:   pos.Column,
+			Kind:     issue.Kind,
+			Message:  issue.Message,
+		})
+	}
+
+	_ = writeAnalysisCacheEntry(cache.path, entry)
 }
 
 func lintRepoPackageLevel(
@@ -447,12 +553,14 @@ func lintRepoPackage(
 	repoDeadCode bool,
 	loadContext *packageLoadContext,
 ) (repoPackageLintResult, error) {
+	var cacheKey string
+
 	cache, _ := analysisCacheForSourceRoot(input.dir, opts, "packages", func() (string, error) {
 		if input.sourceErr != nil {
 			return "", input.sourceErr
 		}
 
-		return standaloneAnalysisCacheKey(
+		key, err := standaloneAnalysisCacheKey(
 			input.importPath,
 			input.testOnly,
 			input.imports,
@@ -460,6 +568,9 @@ func lintRepoPackage(
 			opts,
 			typeDigests,
 		)
+		cacheKey = key
+
+		return key, err
 	})
 	if cached, ok := cachedRepoPackageLintResult(
 		cache,
@@ -469,6 +580,7 @@ func lintRepoPackage(
 		repoDeadCode,
 		loadContext,
 	); ok {
+		cached.cacheKey = cacheKey
 		return cached, nil
 	}
 
@@ -502,6 +614,7 @@ func lintRepoPackage(
 
 	result := repoPackageLintResult{
 		importPath: input.importPath,
+		cacheKey:   cacheKey,
 		issues:     l.issues,
 		exports:    cachedExportsForLinter(l),
 		pkg:        pkg,
@@ -605,10 +718,12 @@ func sortedAnalysisCacheDependencies(
 
 type repoPackageLintResult struct {
 	importPath string
-	issues     []Issue
-	exports    []analysisCacheExport
-	deadCode   *deadcodecheck.Package
-	pkg        *LoadedPackage
+	// cacheKey is empty when the package result cannot be cached.
+	cacheKey string
+	issues   []Issue
+	exports  []analysisCacheExport
+	deadCode *deadcodecheck.Package
+	pkg      *LoadedPackage
 }
 
 func hasMainPackageInputs(inputs []repoPackageInput) bool {

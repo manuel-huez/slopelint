@@ -1,14 +1,14 @@
 {
   "schema": 12,
-  "source_digest": "f0339bd91bb3e672b470879af49e3cc483bb18b96600551471542cf55cfe71c1",
-  "repository_digest": "382d8f66c2f1c27c070b70473222b127fb40f0b8d87883c458ca46c00ea06977",
+  "source_digest": "b2b280534f7a74f66cd1ff9bdd8645173b7de907a805ec8f56f6ef9d7fb77834",
+  "repository_digest": "44b9482b6a9197108d45cd745a4feaf99e1ea9d98ae972b775b04a662301a2aa",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "2918179713ba3a37eb97ba5a27bc1f93f304350257d5967b2605b58428f6ba7d",
-  "checked_blocks": 1810,
+  "description_digest": "d6acd5562b04ebf5911c89f8da651abe3ec78a36a55484fd9ab529d42d5083fd",
+  "checked_blocks": 1812,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",
@@ -44,6 +44,13 @@
       "left_hash": "4dfa03ae59987dea9845904bf0eb770870663b3e69fbea2a5e1d79672bc60893",
       "right": "internal/lint/cache_key.go::standaloneAnalysisCacheKey",
       "right_hash": "b80ac9b632451e562a6574ac87cb083d5b3d1a68268f81103ef61fddc1add5fc"
+    },
+    {
+      "id": "sim-a427a069c1e4234a",
+      "left": "internal/lint/deadcode_test.go::TestRepoDeadCodeKeepsCrossPackageGenericConstraintMethods",
+      "left_hash": "dea2866ffaf5c1495d552de8a32d3f2b8666c48e6c7013663208e6a41b6333e1",
+      "right": "internal/lint/deadcode_test.go::TestRepoDeadCodeKeepsGenericConstraintMethods",
+      "right_hash": "53095abb8d244b7370dfc885e8cce8274dd678b26c1ccaffadc83a1615efaea9"
     },
     {
       "id": "sim-bdd2437aef77b411",

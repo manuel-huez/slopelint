@@ -382,36 +382,68 @@ type Item struct {
 }
 
 func TestStandalonePackageCacheRecomputesOnlyAffectedPackages(t *testing.T) {
+	const otherPkg = "example.com/sample/other"
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	depPath := filepath.Join(tmp, "dep", "dep.go")
 
-	writeFile(t, depPath, `package dep
+	// Cross-package behavior findings come from the repo-wide pass, so the
+	// final revert proves that pass replays instead of rerunning.
+	clone := `
+
+func Labels(values []string, prefix string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if !strings.HasPrefix(value, prefix) {
+			value = prefix + value
+		}
+		out = append(out, strings.ToLower(value))
+	}
+	return out
+}
+`
+	original := `package dep
 
 type Value struct { Name string }
 
 func Present(value *Value) bool { return value != nil }
-`)
+`
+	writeFile(t, depPath, original)
 	writeFile(t, filepath.Join(tmp, "use", "use.go"), `package use
 
-import "example.com/sample/dep"
+import (
+	"strings"
+
+	"example.com/sample/dep"
+)
 
 func Name(value *dep.Value) string {
 	if !dep.Present(value) { return "" }
 	if value == nil { return "" }
 	return value.Name
 }
-`)
+`+clone)
 	writeFile(t, filepath.Join(tmp, "other", "other.go"), `package other
 
+import "strings"
+
 func Value() int { return 1 }
-`)
+`+clone)
 
 	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
 
 	first, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
 	if err != nil {
 		t.Fatalf("first repo lint: %v", err)
+	}
+
+	if !strings.Contains(joinMessages(first), `function "Labels" has same supported behavior`) {
+		t.Fatalf("first repo lint lacks cross-package behavior clone:\n%s", joinMessages(first))
 	}
 
 	writeFile(t, depPath, `// Package dep owns shared value guards.
@@ -433,7 +465,7 @@ func Present(value *Value) bool { return value != nil }
 
 	sort.Strings(hits)
 
-	wantHits := []string{"example.com/sample/other", "example.com/sample/use"}
+	wantHits := []string{otherPkg, "example.com/sample/use"}
 	if !slices.Equal(hits, wantHits) {
 		t.Fatalf("comment edit cache hits = %v, want %v", hits, wantHits)
 	}
@@ -459,8 +491,41 @@ func Present(value *Value) bool { return value != nil && value.Name != "" }
 		t.Fatalf("summary-edit repo lint: %v", err)
 	}
 
-	if !slices.Equal(hits, []string{"example.com/sample/other"}) {
+	if !slices.Equal(hits, []string{otherPkg}) {
 		t.Fatalf("summary edit cache hits = %v, want only unrelated package", hits)
+	}
+
+	// A local edit run rewrites the stamp, which is part of the repo-level key, so
+	// a revert misses that cache and must reuse package and behavior entries.
+	writeFile(t, depPath, original)
+	writeFile(t, filepath.Join(tmp, similarityStampName), "{}\n")
+
+	hits = nil
+
+	reverted, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
+	if err != nil {
+		t.Fatalf("reverted repo lint: %v", err)
+	}
+
+	sort.Strings(hits)
+
+	// use keeps one entry per key, last written with the edited dep summary, so
+	// only use re-lints; the repo-wide behavior pass replays.
+	wantHits = []string{
+		repoBehaviorCacheHitName,
+		"example.com/sample/dep",
+		otherPkg,
+	}
+	if !slices.Equal(hits, wantHits) {
+		t.Fatalf("revert cache hits = %v, want %v", hits, wantHits)
+	}
+
+	if joinMessages(first) != joinMessages(reverted) {
+		t.Fatalf(
+			"revert changed diagnostics:\nfirst:\n%s\n\nreverted:\n%s",
+			joinMessages(first),
+			joinMessages(reverted),
+		)
 	}
 }
 

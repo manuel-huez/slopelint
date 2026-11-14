@@ -9,7 +9,7 @@ Early-stage: expect breaking changes and conservative misses.
 Requires Go 1.26.5+.
 
 ```bash
-go install github.com/manuel-huez/slopelint/cmd/slopelint@v0.3.4
+go install github.com/manuel-huez/slopelint/cmd/slopelint@v0.4.0
 slopelint ./...
 ```
 

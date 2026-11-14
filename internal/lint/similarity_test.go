@@ -33,7 +33,7 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
+	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		embedder:            embedder,
@@ -57,7 +57,7 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 	}
 
 	pairID := similarityIssuePairID(t, firstIssue.Message)
-	cachedIssues, err := CheckSimilarCode(pkgs, SimilarityOptions{
+	cachedIssues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		embedder:            embedder,
@@ -70,7 +70,7 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 		t.Fatalf("cached issue = %#v, want exact replay", cachedIssue)
 	}
 
-	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{
+	issues, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		AcceptedPairIDs:     []string{pairID},
@@ -101,7 +101,7 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
-	_, err := CheckSimilarCode(pkgs, SimilarityOptions{
+	_, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		AcceptedPairIDs:     []string{similarityAcceptAllID},
@@ -124,7 +124,7 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 	)
 	pkgs = loadPackagesForTest(t, tmp)
 
-	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
+	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		AcceptedPairIDs:     []string{stamp.Accepted[0].ID},
@@ -155,7 +155,7 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
+	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		cacheDir:            cacheDir,
 		AcceptedPairIDs:     []string{similarityAcceptAllID},
 		embedder:            embedder,
@@ -196,7 +196,7 @@ func TestSimilarityRejectsUnknownAcceptance(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
-	_, err := CheckSimilarCode(pkgs, SimilarityOptions{
+	_, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		AcceptedPairIDs:     []string{"sim-unknown"},
 		descriptionDisabled: true,
 	})

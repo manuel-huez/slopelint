@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -57,6 +58,7 @@ type similarityDescriptionRequest struct {
 
 type similarityDescriber interface {
 	describe(
+		context.Context,
 		[]similarityDescriptionRequest,
 		func([]similarityDescription) error,
 	) error
@@ -158,6 +160,7 @@ func similarityDescriptionRuntimeForOptions(
 }
 
 func populateSimilarityDescriptions(
+	ctx context.Context,
 	blocks []*similarityBlock,
 	runtime similarityDescriptionRuntime,
 	cacheRoot string,
@@ -176,6 +179,7 @@ func populateSimilarityDescriptions(
 
 	if len(missing) > 0 {
 		if err := generateSimilarityDescriptions(
+			ctx,
 			missing,
 			inputs,
 			runtime,
@@ -190,6 +194,7 @@ func populateSimilarityDescriptions(
 }
 
 func populateSimilarityDetails(
+	ctx context.Context,
 	blocks []*similarityBlock,
 	runtime similarityDescriptionRuntime,
 	cacheRoot string,
@@ -207,6 +212,7 @@ func populateSimilarityDetails(
 	}
 
 	return generateSimilarityDescriptions(
+		ctx,
 		missing,
 		inputs,
 		runtime,
@@ -216,6 +222,7 @@ func populateSimilarityDetails(
 }
 
 func populateSimilarityMatchDetails(
+	ctx context.Context,
 	matches []similarityMatch,
 	runtime similarityDescriptionRuntime,
 	cacheRoot string,
@@ -239,7 +246,7 @@ func populateSimilarityMatchDetails(
 		}
 	}
 
-	return populateSimilarityDetails(detailBlocks, runtime, cacheRoot, cacheEnabled)
+	return populateSimilarityDetails(ctx, detailBlocks, runtime, cacheRoot, cacheEnabled)
 }
 
 func indexSimilarityDescriptionInputs(
@@ -336,6 +343,7 @@ func loadCachedSimilarityDescriptions(
 }
 
 func generateSimilarityDescriptions(
+	ctx context.Context,
 	missing []similarityDescriptionRequest,
 	inputs map[string]*similarityDescriptionInput,
 	runtime similarityDescriptionRuntime,
@@ -374,7 +382,7 @@ func generateSimilarityDescriptions(
 		total:        len(missing),
 		ready:        runtime.ready,
 	}
-	if err := runtime.describer.describe(missing, collector.accept); err != nil {
+	if err := runtime.describer.describe(ctx, missing, collector.accept); err != nil {
 		return err
 	}
 

@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/manuel-huez/slopelint"
 	"github.com/manuel-huez/slopelint/internal/lint"
@@ -20,6 +24,11 @@ const (
 	exitFailure      = 1
 	exitUsage        = 2
 	exitIssues       = 3
+	exitInterrupted  = 130
+
+	// Cancellation kills Codex processes at once; structural lint holds no
+	// outside resources, so exit after this grace instead of waiting for it.
+	interruptGrace = 2 * time.Second
 )
 
 type similarityMode uint8
@@ -36,7 +45,30 @@ func main() {
 		return
 	}
 
-	os.Exit(runStandalone(os.Args[1:], os.Stdout, os.Stderr))
+	// Non-interactive shells start background jobs with SIGINT ignored. Handle it
+	// anyway: Ctrl-C on a parallel check script must stop Codex spend, not leave
+	// an orphaned slopelint generating descriptions.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	done := make(chan int, 1)
+
+	go func() { done <- runStandalone(ctx, os.Args[1:], os.Stdout, os.Stderr) }()
+
+	var code int
+
+	select {
+	case code = <-done:
+	case <-ctx.Done():
+		select {
+		case <-done:
+		case <-time.After(interruptGrace):
+		}
+
+		_, _ = fmt.Fprintln(os.Stderr, "slopelint: stopped by signal")
+		code = exitInterrupted
+	}
+
+	stop()
+	os.Exit(code)
 }
 
 func analysisDriverRequested(args []string) bool {
@@ -83,7 +115,7 @@ func analysisDriverRequested(args []string) bool {
 	return false
 }
 
-func runStandalone(args []string, stdout, stderr io.Writer) int {
+func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("slopelint", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
@@ -139,7 +171,7 @@ func runStandalone(args []string, stdout, stderr io.Writer) int {
 		return reportStandaloneError(stderr, err)
 	}
 
-	issues, err := lint.LintRepository(patterns, ".", options, similarityOptions)
+	issues, err := lint.LintRepository(ctx, patterns, ".", options, similarityOptions)
 	if err != nil {
 		return reportStandaloneError(stderr, err)
 	}

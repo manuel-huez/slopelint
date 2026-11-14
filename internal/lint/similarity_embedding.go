@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	similarityLlamaURLEnv               = "SLOPELINT_LLAMA_URL"
-	similarityLlamaDefaultURL           = "http://127.0.0.1:8080"
-	similarityEmbeddingDimensions       = 768
-	similarityEmbeddingRequestTimeout   = 30 * time.Minute
+	similarityLlamaURLEnv         = "SLOPELINT_LLAMA_URL"
+	similarityLlamaDefaultURL     = "http://127.0.0.1:18080"
+	similarityEmbeddingDimensions = 768
+	// One full batch takes about 20s on an 8-core VPS CPU. The limit leaves room
+	// for a server shared by parallel runs and fails a hung server in minutes.
+	similarityEmbeddingRequestTimeout   = 3 * time.Minute
 	similarityEmbeddingMaxErrorBytes    = 4096
 	similarityEmbeddingMaxResponseBytes = 16 << 20
 	similarityEmbeddingsPath            = "/v1/embeddings"
@@ -32,6 +34,7 @@ type similarityEmbedder interface {
 type httpSimilarityEmbedder struct {
 	endpoint string
 	client   *http.Client
+	timeout  time.Duration
 }
 
 type similarityEmbeddingRequest struct {
@@ -64,6 +67,7 @@ func newHTTPSimilarityEmbedder(rawURL string) (*httpSimilarityEmbedder, error) {
 	return &httpSimilarityEmbedder{
 		endpoint: endpoint,
 		client:   &http.Client{Transport: transport},
+		timeout:  similarityEmbeddingRequestTimeout,
 	}, nil
 }
 
@@ -118,7 +122,7 @@ func (embedder *httpSimilarityEmbedder) embed(inputs []string) (vectors [][]floa
 		return nil, fmt.Errorf("encode llama-server embedding request: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), similarityEmbeddingRequestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), embedder.timeout)
 	defer cancel()
 
 	request, err := http.NewRequestWithContext(
@@ -139,7 +143,7 @@ func (embedder *httpSimilarityEmbedder) embed(inputs []string) (vectors [][]floa
 			return nil, fmt.Errorf(
 				"llama-server embedding request to %s timed out after %s: %w",
 				embedder.endpoint,
-				similarityEmbeddingRequestTimeout,
+				embedder.timeout,
 				err,
 			)
 		}
@@ -200,7 +204,7 @@ func readSimilarityEmbeddingResponse(
 		io.LimitReader(response.Body, similarityEmbeddingMaxResponseBytes+1),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("read llama-server embedding response: %w", err)
+		return nil, fmt.Errorf("read llama-server embedding response from %s: %w", endpoint, err)
 	}
 
 	if len(encoded) > similarityEmbeddingMaxResponseBytes {

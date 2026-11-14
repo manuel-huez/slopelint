@@ -142,7 +142,7 @@ func TestLintRepositoryCachesStandaloneResult(t *testing.T) {
 	cacheDir := t.TempDir()
 	writeAnalysisCacheDiagnosticFile(t, filepath.Join(tmp, "sample.go"))
 
-	issues1, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
+	issues1, err := LintRepository(t.Context(), []string{allPackagesPattern}, tmp, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
@@ -158,7 +158,7 @@ func TestLintRepositoryCachesStandaloneResult(t *testing.T) {
 
 	var hits []string
 
-	issues2, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
+	issues2, err := LintRepository(t.Context(), []string{allPackagesPattern}, tmp, Options{
 		MaxStates:    32,
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
@@ -193,7 +193,7 @@ func TestLintRepositoryCacheInvalidatesAcrossBuilds(t *testing.T) {
 
 		var hits []string
 
-		issues, err := LintRepository([]string{allPackagesPattern}, tmp, Options{
+		issues, err := LintRepository(t.Context(), []string{allPackagesPattern}, tmp, Options{
 			CacheEnabled: true,
 			cacheDir:     cacheDir,
 			cacheBuildID: buildID,
@@ -231,7 +231,13 @@ func TestLintRepositoryCacheHitSkipsMaintenanceSweep(t *testing.T) {
 	writeAnalysisCacheDiagnosticFile(t, filepath.Join(tmp, "sample.go"))
 
 	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
-	if _, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil); err != nil {
+	if _, err := LintRepository(
+		t.Context(),
+		[]string{allPackagesPattern},
+		tmp,
+		opts,
+		nil,
+	); err != nil {
 		t.Fatalf("first repo lint: %v", err)
 	}
 
@@ -240,7 +246,13 @@ func TestLintRepositoryCacheHitSkipsMaintenanceSweep(t *testing.T) {
 		t.Fatalf("remove maintenance marker: %v", err)
 	}
 
-	if _, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil); err != nil {
+	if _, err := LintRepository(
+		t.Context(),
+		[]string{allPackagesPattern},
+		tmp,
+		opts,
+		nil,
+	); err != nil {
 		t.Fatalf("cached repo lint: %v", err)
 	}
 
@@ -256,6 +268,7 @@ func TestLintRepositoryCacheSharesLinkedWorktree(t *testing.T) {
 	initTestGitRepository(t, primary)
 
 	first, err := LintRepository(
+		t.Context(),
 		[]string{allPackagesPattern},
 		primary,
 		Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir},
@@ -270,6 +283,7 @@ func TestLintRepositoryCacheSharesLinkedWorktree(t *testing.T) {
 	var hits []string
 
 	second, err := LintRepository(
+		t.Context(),
 		[]string{allPackagesPattern},
 		linked,
 		Options{
@@ -348,14 +362,26 @@ func Name(item dep.Item) string { return item.Name }
 `)
 
 	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
-	if _, err := LintRepository([]string{usePackagePattern}, tmp, opts, nil); err != nil {
+	if _, err := LintRepository(
+		t.Context(),
+		[]string{usePackagePattern},
+		tmp,
+		opts,
+		nil,
+	); err != nil {
 		t.Fatalf("first repo lint: %v", err)
 	}
 
 	var hits []string
 
 	opts.CacheHitHook = func(name string) { hits = append(hits, name) }
-	if _, err := LintRepository([]string{usePackagePattern}, tmp, opts, nil); err != nil {
+	if _, err := LintRepository(
+		t.Context(),
+		[]string{usePackagePattern},
+		tmp,
+		opts,
+		nil,
+	); err != nil {
 		t.Fatalf("cached repo lint: %v", err)
 	}
 
@@ -373,7 +399,13 @@ type Item struct {
 
 	hits = nil
 
-	if _, err := LintRepository([]string{usePackagePattern}, tmp, opts, nil); err != nil {
+	if _, err := LintRepository(
+		t.Context(),
+		[]string{usePackagePattern},
+		tmp,
+		opts,
+		nil,
+	); err != nil {
 		t.Fatalf("dependency-changed repo lint: %v", err)
 	}
 
@@ -438,7 +470,7 @@ func Value() int { return 1 }
 
 	opts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
 
-	first, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
+	first, err := LintRepository(t.Context(), []string{allPackagesPattern}, tmp, opts, nil)
 	if err != nil {
 		t.Fatalf("first repo lint: %v", err)
 	}
@@ -468,7 +500,7 @@ func Present(value *Value) bool { return value != nil }
 		hits = append(hits, importPath)
 	}
 
-	second, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
+	second, err := LintRepository(t.Context(), []string{allPackagesPattern}, tmp, opts, nil)
 	if err != nil {
 		t.Fatalf("comment-edit repo lint: %v", err)
 	}
@@ -497,7 +529,13 @@ func Present(value *Value) bool { return value != nil && value.Name != "" }
 
 	hits = nil
 
-	if _, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil); err != nil {
+	if _, err := LintRepository(
+		t.Context(),
+		[]string{allPackagesPattern},
+		tmp,
+		opts,
+		nil,
+	); err != nil {
 		t.Fatalf("summary-edit repo lint: %v", err)
 	}
 
@@ -512,7 +550,7 @@ func Present(value *Value) bool { return value != nil && value.Name != "" }
 
 	hits = nil
 
-	reverted, err := LintRepository([]string{allPackagesPattern}, tmp, opts, nil)
+	reverted, err := LintRepository(t.Context(), []string{allPackagesPattern}, tmp, opts, nil)
 	if err != nil {
 		t.Fatalf("reverted repo lint: %v", err)
 	}

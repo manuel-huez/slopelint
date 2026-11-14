@@ -2,6 +2,7 @@ package lint
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -140,7 +141,11 @@ const (
 
 // CheckSimilarCode checks or attests semantic duplicate analysis for loaded packages.
 // Local runs use the shared embedding server and update the stamp; CI runs only validate it.
-func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, error) {
+func CheckSimilarCode(
+	ctx context.Context,
+	pkgs []*LoadedPackage,
+	opts SimilarityOptions,
+) ([]Issue, error) {
 	if len(pkgs) == 0 {
 		return nil, nil
 	}
@@ -196,6 +201,7 @@ func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, e
 	}
 
 	return analyzeChangedSimilarCode(
+		ctx,
 		pkgs,
 		root,
 		sourceDigest,
@@ -207,6 +213,7 @@ func CheckSimilarCode(pkgs []*LoadedPackage, opts SimilarityOptions) ([]Issue, e
 }
 
 func analyzeChangedSimilarCode(
+	ctx context.Context,
 	pkgs []*LoadedPackage,
 	root string,
 	sourceDigest string,
@@ -238,6 +245,7 @@ func analyzeChangedSimilarCode(
 	releaseSimilarityTypes(pkgs)
 
 	scan, err := similarityMatchesForBlocks(
+		ctx,
 		blocks,
 		cacheRoot,
 		previous,
@@ -319,6 +327,7 @@ func loadSimilarityCheck(
 }
 
 func similarityMatchesForBlocks(
+	ctx context.Context,
 	blocks []*similarityBlock,
 	cacheRoot string,
 	previous similarityScanCache,
@@ -341,6 +350,7 @@ func similarityMatchesForBlocks(
 
 	if noChangedBlocks {
 		return restoreUnchangedSimilarityScan(
+			ctx,
 			result,
 			previous,
 			blocks,
@@ -369,6 +379,7 @@ func similarityMatchesForBlocks(
 	}
 
 	vectors, descriptionDigest, err := populateSimilarityScanVectors(
+		ctx,
 		scanBlocks,
 		descriptionBlocks,
 		blocks,
@@ -396,6 +407,7 @@ func similarityMatchesForBlocks(
 	}
 
 	if err := populateSimilarityScanDetails(
+		ctx,
 		&result,
 		blocks,
 		descriptionRuntime,
@@ -408,6 +420,7 @@ func similarityMatchesForBlocks(
 }
 
 func restoreUnchangedSimilarityScan(
+	ctx context.Context,
 	result similarityScanResult,
 	previous similarityScanCache,
 	blocks []*similarityBlock,
@@ -428,6 +441,7 @@ func restoreUnchangedSimilarityScan(
 	result.rawMatches = previous.restoreMatches(blocks, changed)
 
 	if err := populateSimilarityScanDetails(
+		ctx,
 		&result,
 		blocks,
 		descriptionRuntime,
@@ -500,6 +514,7 @@ func incrementalSimilarityScanBlocks(
 }
 
 func populateSimilarityScanDetails(
+	ctx context.Context,
 	result *similarityScanResult,
 	blocks []*similarityBlock,
 	descriptionRuntime similarityDescriptionRuntime,
@@ -508,6 +523,7 @@ func populateSimilarityScanDetails(
 	result.matches = groupSimilarityMatches(blocks, result.rawMatches)
 
 	return populateSimilarityMatchDetails(
+		ctx,
 		result.matches,
 		descriptionRuntime,
 		result.cacheRoot,

@@ -19,7 +19,7 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		return []float32{1, 0}
 	}}
 	firstPackages := loadPackagesForTest(t, primary)
-	first, err := CheckSimilarCode(firstPackages, SimilarityOptions{
+	first, err := CheckSimilarCode(t.Context(), firstPackages, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		embedder:            firstEmbedder,
@@ -37,7 +37,7 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		return nil
 	}}
 	linkedPackages := loadPackagesForTest(t, linked)
-	second, err := CheckSimilarCode(linkedPackages, SimilarityOptions{
+	second, err := CheckSimilarCode(t.Context(), linkedPackages, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		embedder:            linkedEmbedder,

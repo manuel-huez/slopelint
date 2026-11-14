@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -21,6 +22,7 @@ type similarityTestDescriber struct {
 }
 
 func (describer *similarityTestDescriber) describe(
+	_ context.Context,
 	requests []similarityDescriptionRequest,
 	accept func([]similarityDescription) error,
 ) error {
@@ -128,6 +130,7 @@ func requireSimilarityTextFields(
 type similarityPartialTestDescriber struct{}
 
 func (*similarityPartialTestDescriber) describe(
+	_ context.Context,
 	requests []similarityDescriptionRequest,
 	accept func([]similarityDescription) error,
 ) error {
@@ -157,6 +160,7 @@ func TestSimilarityDescriptionsCacheSeparateProductionAndTestShapes(t *testing.T
 	}
 
 	digest, err := populateSimilarityDescriptions(
+		t.Context(),
 		blocks,
 		similarityDescriptionRuntime{describer: describer, enabled: true},
 		cacheRoot,
@@ -196,6 +200,7 @@ func TestSimilarityDescriptionsCacheSeparateProductionAndTestShapes(t *testing.T
 	}
 
 	reloadedDigest, err := populateSimilarityDescriptions(
+		t.Context(),
 		reloaded,
 		similarityDescriptionRuntime{describer: describer, enabled: true},
 		cacheRoot,
@@ -220,6 +225,7 @@ func TestSimilarityDescriptionsPersistCompletedBatchesBeforeFailure(t *testing.T
 	}
 
 	_, err := populateSimilarityDescriptions(
+		t.Context(),
 		blocks,
 		similarityDescriptionRuntime{
 			describer: new(similarityPartialTestDescriber),
@@ -235,6 +241,7 @@ func TestSimilarityDescriptionsPersistCompletedBatchesBeforeFailure(t *testing.T
 	retry := new(similarityTestDescriber)
 
 	digest, err := populateSimilarityDescriptions(
+		t.Context(),
 		blocks,
 		similarityDescriptionRuntime{describer: retry, enabled: true},
 		cacheRoot,
@@ -309,7 +316,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		embedder:        embedder,
 	}
 
-	issues, err := CheckSimilarCode(loadPackagesForTest(t, tmp), options)
+	issues, err := CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "description calls", describer.calls, 2)
@@ -334,7 +341,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	}
 
 	options.AcceptedPairIDs = nil
-	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), options)
+	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "hot description calls", describer.calls, 2)
@@ -344,7 +351,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	// and descriptions, preserving reviewed content-bound acceptances.
 	cacheRoot := storeSimilarityCacheWithOlderPolicy(t, cacheDir, tmp, stamp)
 
-	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), options)
+	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
 	requireNoSimilarityIssues(t, issues, err)
 	requireSimilarityCount(t, "policy change description calls", describer.calls, 2)
 	requireSimilarityCount(t, "policy change embedding batches", embedder.calls, 2)
@@ -361,7 +368,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	withoutCodex := options
 	withoutCodex.describer = nil
 	withoutCodex.descriptionDisabled = true
-	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), withoutCodex)
+	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), withoutCodex)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "embedding batches without Codex", embedder.calls, 2)
@@ -371,13 +378,14 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	writeFile(t, filepath.Join(tmp, similarityTestFilename), renamed)
 
 	if _, err := CheckSimilarCode(
+		t.Context(),
 		loadPackagesForTest(t, tmp),
 		SimilarityOptions{CI: true},
 	); err == nil {
 		t.Fatal("CI accepted stale source attestation after rename")
 	}
 
-	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), options)
+	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
 	requireSingleSimilarityIssue(t, issues, err)
 	requireSimilarityCount(t, "description requests after rename", describer.requests, 4)
 	requireSimilarityCount(t, "source embedding batches after rename", embedder.calls, 3)
@@ -419,7 +427,7 @@ func third(values []int) int {
 		}
 	}}
 
-	issues, err := CheckSimilarCode(loadPackagesForTest(t, tmp), SimilarityOptions{
+	issues, err := CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled:    true,
 		cacheDir:        cacheDir,
 		AcceptedPairIDs: []string{similarityAcceptAllID},
@@ -448,7 +456,7 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 
 		return []float32{float32(sourceScore), float32(math.Sqrt(1 - sourceScore*sourceScore))}
 	}}
-	issues, err := CheckSimilarCode(loadPackagesForTest(t, tmp), SimilarityOptions{
+	issues, err := CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		embedder:            embedder,
@@ -456,7 +464,7 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 	})
 	requireNoSimilarityIssues(t, issues, err)
 
-	issues, err = CheckSimilarCode(loadPackagesForTest(t, tmp), SimilarityOptions{
+	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
 		describer:    new(similarityTestDescriber),
@@ -574,6 +582,7 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 
 	root := t.TempDir()
 	if _, err := populateSimilarityDescriptions(
+		t.Context(),
 		[]*similarityBlock{before},
 		runtime,
 		root,
@@ -583,6 +592,7 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 	}
 
 	if err := populateSimilarityDetails(
+		t.Context(),
 		[]*similarityBlock{before},
 		runtime,
 		root,
@@ -639,6 +649,7 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 
 			runtime := similarityDescriptionRuntime{enabled: true, describer: describer}
 			if _, err := populateSimilarityDescriptions(
+				t.Context(),
 				[]*similarityBlock{after},
 				runtime,
 				root,
@@ -648,6 +659,7 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 			}
 
 			if err := populateSimilarityDetails(
+				t.Context(),
 				[]*similarityBlock{after},
 				runtime,
 				root,

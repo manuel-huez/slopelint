@@ -55,6 +55,7 @@ func TestLlamaServerSimilarityIntegration(t *testing.T) {
 	)
 
 	issues, err := CheckSimilarCode(
+		t.Context(),
 		loadPackagesForTest(t, module),
 		SimilarityOptions{
 			CacheEnabled:        true,

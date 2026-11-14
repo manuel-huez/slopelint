@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -14,6 +15,7 @@ import (
 )
 
 func populateSimilarityScanVectors(
+	ctx context.Context,
 	scanBlocks []*similarityBlock,
 	descriptionBlocks []*similarityBlock,
 	allBlocks []*similarityBlock,
@@ -45,8 +47,12 @@ func populateSimilarityScanVectors(
 
 	// Queue at most one delivery per changed block plus restored metadata. These
 	// pointers already belong to the scan; source inference must not stall Codex.
+	// The buffer also lets embedding stop reading without blocking Codex workers.
 	ready := make(chan []*similarityBlock, len(descriptionBlocks)+1)
 	descriptionRuntime.ready = func(blocks []*similarityBlock) { ready <- blocks }
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	var descriptionErr error
 
@@ -58,6 +64,7 @@ func populateSimilarityScanVectors(
 		}
 
 		_, descriptionErr = populateSimilarityDescriptions(
+			ctx,
 			descriptionBlocks, descriptionRuntime, cacheRoot, opts.CacheEnabled,
 		)
 		if descriptionErr == nil {
@@ -66,12 +73,21 @@ func populateSimilarityScanVectors(
 	}()
 
 	vectors.Source, err = embeddings.populate(scanBlocks, similaritySourceVector)
+	if err == nil {
+		vectors.Description, err = embeddings.populateDescriptions(scanBlocks, ready)
+	}
+
 	if err != nil {
-		// Drain even on failure so producers can finish persisting valid records.
+		// A failed scan cannot use more descriptions: stop Codex spend now and
+		// wait for workers to exit. Accepted batches are already cached.
+		cancel()
+
 		for range ready {
 		}
-	} else {
-		vectors.Description, err = embeddings.populateDescriptions(scanBlocks, ready)
+
+		if errors.Is(descriptionErr, context.Canceled) {
+			descriptionErr = nil
+		}
 	}
 
 	err = errors.Join(err, descriptionErr)
@@ -158,22 +174,15 @@ func (runtime *similarityEmbeddingRuntime) populateDescriptions(
 	byKey := make(map[string]*similarityVectorInput)
 	byBlock := make(map[*similarityBlock][]*similarityVectorInput, len(blocks))
 
-	var err error
 	for batch := range ready {
-		if err != nil {
-			continue
-		}
-
 		blockInputs, inputs := similarityVectorInputs(batch, similarityDescriptionVector, byKey)
-		err = runtime.populateInputs(inputs)
+		if err := runtime.populateInputs(inputs); err != nil {
+			return similarityVectorMatrix{}, err
+		}
 
 		for index, block := range batch {
 			byBlock[block] = blockInputs[index]
 		}
-	}
-
-	if err != nil {
-		return similarityVectorMatrix{}, err
 	}
 
 	// Deduplicate across deliveries, then pack once in scan order. Completion

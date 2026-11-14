@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -397,7 +398,7 @@ func TestSimilarityCodexPersistsPartialResponseBeforeRetry(t *testing.T) {
 
 	var ids []string
 
-	err := describer.describeBatch(batch, func(records []similarityDescription) error {
+	err := describer.describeBatch(t.Context(), batch, func(records []similarityDescription) error {
 		accepted.Store(true)
 
 		for _, record := range records {
@@ -427,7 +428,7 @@ func TestSimilarityCodexStopsOnAcceptanceFailure(t *testing.T) {
 	)
 	want := errors.New("cache write failed")
 
-	err := describer.describeBatch(similarityDescriptionBatch{
+	err := describer.describeBatch(t.Context(), similarityDescriptionBatch{
 		kind: similarityDescriptionProduction,
 		requests: []similarityDescriptionRequest{
 			{ID: similarityCompletedRecordID},
@@ -490,7 +491,11 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 
 	done := make(chan error, 1)
 
-	go func() { done <- describer.describe(requests, func([]similarityDescription) error { return nil }) }()
+	go func() {
+		done <- describer.describe(
+			t.Context(), requests, func([]similarityDescription) error { return nil },
+		)
+	}()
 
 	for range similarityDescriptionWorkers {
 		select {
@@ -509,5 +514,60 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 
 	if peak.Load() != int32(similarityDescriptionWorkers) {
 		t.Fatalf("unbounded request concurrency: %d", peak.Load())
+	}
+}
+
+func TestSimilarityCodexStopsWhenCanceled(t *testing.T) {
+	started := make(chan struct{}, similarityDescriptionWorkers+1)
+	release := make(chan struct{})
+
+	describer := similarityCodexForTest(
+		t,
+		func([]similarityCodexInput) ([]similarityDescription, error) {
+			started <- struct{}{}
+
+			<-release
+
+			return nil, errors.New("canceled Codex process kept running")
+		},
+	)
+	// Cleanups run in reverse order: release handlers before the server closes.
+	t.Cleanup(func() { close(release) })
+
+	requests := make(
+		[]similarityDescriptionRequest,
+		(similarityDescriptionWorkers+1)*similarityDescriptionBatchBlocks,
+	)
+	for index := range requests {
+		requests[index] = similarityDescriptionRequest{
+			ID:   strconv.Itoa(index),
+			Kind: similarityDescriptionProduction,
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() {
+		done <- describer.describe(ctx, requests, func([]similarityDescription) error { return nil })
+	}()
+
+	for range similarityDescriptionWorkers {
+		<-started
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("describe error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel did not stop running Codex processes")
+	}
+
+	if len(started) != 0 {
+		t.Fatal("queued Codex batch started after cancel")
 	}
 }

@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"go/types"
@@ -15,6 +16,7 @@ import (
 // LintRepository resolves patterns, replays valid cached analysis before type-checking,
 // and runs semantic similarity when requested.
 func LintRepository(
+	ctx context.Context,
 	patterns []string,
 	dir string,
 	opts Options,
@@ -58,7 +60,7 @@ func LintRepository(
 		// embedding server. Similarity parses its own syntax and shares no state
 		// with structural lint, so both run at once and join before persistence.
 		similarityRun.Go(func() {
-			issues, similarityErr = CheckSimilarCode(similarityPkgs, *similarity)
+			issues, similarityErr = CheckSimilarCode(ctx, similarityPkgs, *similarity)
 		})
 	}
 

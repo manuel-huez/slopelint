@@ -61,6 +61,9 @@ When authenticated Codex CLI can access `gpt-6-luna`, it describes eligible
 functions and adds detail to findings. **Uncached source is sent to the configured
 Codex service.** Set `SLOPELINT_CODEX_DESCRIPTIONS=off` to disable this channel.
 For local-only source processing, also use a local embedding server.
+Codex work stops when the run fails or gets SIGINT/SIGTERM (exit 130); only
+records accepted before the stop stay cached. Each embedding request times out
+after 3 minutes with an error naming the URL.
 
 Review findings against source: similarity does not prove equivalent behavior.
 Each match has a stable `sim-...` pair ID. Accept reviewed intentional pairs:
@@ -95,16 +98,16 @@ Use the pinned [Jina GGUF](https://registry.ollama.ai/v2/unclemusclez/jina-embed
 llama-server --model /path/to/jina-embeddings-v2-base-code.gguf \
   --alias jina-embeddings-v2-base-code --embedding --pooling mean \
   --ctx-size 8192 --batch-size 2048 --ubatch-size 2048 --parallel 4 \
-  --host 127.0.0.1 --port 8080 --sleep-idle-seconds 300
+  --host 127.0.0.1 --port 18080 --sleep-idle-seconds 300
 
-SLOPELINT_LLAMA_URL=http://127.0.0.1:8080 slopelint ./...
+slopelint ./...  # default SLOPELINT_LLAMA_URL
 ```
 
 ### Environment and cache
 
 | Variable | Values / default |
 | --- | --- |
-| `SLOPELINT_LLAMA_URL` | Embedding server URL; default `http://127.0.0.1:8080` |
+| `SLOPELINT_LLAMA_URL` | Embedding server URL; default `http://127.0.0.1:18080` |
 | `SLOPELINT_SIMILARITY` | `local`, `ci`, or `off`; auto-selects `ci` when `CI`, `WORKERS_CI`, or `CF_PAGES` is truthy, otherwise `local` |
 | `SLOPELINT_SIMILARITY_ACCEPT` | Comma-separated reviewed pair IDs, or `all` |
 | `SLOPELINT_CODEX_DESCRIPTIONS` | `auto` (default) or `off` |

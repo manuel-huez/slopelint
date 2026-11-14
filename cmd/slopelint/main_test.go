@@ -54,7 +54,7 @@ func TestRunStandaloneRequiresPackagePattern(t *testing.T) {
 
 	var stderr strings.Builder
 
-	if code := runStandalone(nil, io.Discard, &stderr); code != exitUsage {
+	if code := runStandalone(t.Context(), nil, io.Discard, &stderr); code != exitUsage {
 		t.Fatalf("runStandalone exit = %d, want %d", code, exitUsage)
 	}
 
@@ -68,7 +68,7 @@ func TestRunStandalonePrintsVersionWithoutPackages(t *testing.T) {
 
 	var stdout strings.Builder
 
-	if code := runStandalone([]string{"-version"}, &stdout, io.Discard); code != 0 {
+	if code := runStandalone(t.Context(), []string{"-version"}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("runStandalone exit = %d, want 0", code)
 	}
 
@@ -82,7 +82,12 @@ func TestRunStandaloneChecksCurrentPackage(t *testing.T) {
 
 	var stderr strings.Builder
 
-	if code := runStandalone([]string{cacheDisabled, "."}, io.Discard, &stderr); code != 0 {
+	if code := runStandalone(
+		t.Context(),
+		[]string{cacheDisabled, "."},
+		io.Discard,
+		&stderr,
+	); code != 0 {
 		t.Fatalf("runStandalone exit = %d, want 0:\n%s", code, stderr.String())
 	}
 }
@@ -95,7 +100,7 @@ func TestRunStandaloneWritesRepositoryJSON(t *testing.T) {
 		stderr strings.Builder
 	)
 
-	code := runStandalone([]string{cacheDisabled, jsonFlag, "."}, &stdout, &stderr)
+	code := runStandalone(t.Context(), []string{cacheDisabled, jsonFlag, "."}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("runStandalone exit = %d, want 0:\n%s", code, stderr.String())
 	}

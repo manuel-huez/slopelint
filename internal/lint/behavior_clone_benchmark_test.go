@@ -30,7 +30,13 @@ func Transform(input int) int {
 	b.ResetTimer()
 
 	for b.Loop() {
-		issues, err := LintRepository([]string{"./..."}, dir, Options{MaxStates: 32}, nil)
+		issues, err := LintRepository(
+			b.Context(),
+			[]string{"./..."},
+			dir,
+			Options{MaxStates: 32},
+			nil,
+		)
 		if err != nil {
 			b.Fatal(err)
 		}

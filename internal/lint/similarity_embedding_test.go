@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -433,6 +434,32 @@ func TestHTTPSimilarityEmbedderReportsConnectionFailure(t *testing.T) {
 	}
 }
 
+func TestHTTPSimilarityEmbedderTimesOutSilentServer(t *testing.T) {
+	t.Parallel()
+
+	// The server accepts the request but never answers, like a hung llama-server.
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+
+	embedder, err := newHTTPSimilarityEmbedder(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	embedder.timeout = 50 * time.Millisecond
+
+	_, err = embedder.embed([]string{"silent"})
+	if err == nil ||
+		!strings.Contains(err.Error(), "timed out after 50ms") ||
+		!strings.Contains(err.Error(), server.URL+similarityEmbeddingsPath) {
+		t.Fatalf("silent server error = %v", err)
+	}
+}
+
 func TestSimilarityDescriptionVectorsStreamInScanOrder(t *testing.T) {
 	t.Parallel()
 
@@ -479,6 +506,7 @@ type similarityStreamingTestDescriber struct {
 }
 
 func (describer similarityStreamingTestDescriber) describe(
+	ctx context.Context,
 	requests []similarityDescriptionRequest,
 	accept func([]similarityDescription) error,
 ) error {
@@ -494,6 +522,8 @@ func (describer similarityStreamingTestDescriber) describe(
 
 	select {
 	case <-describer.embedded:
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-time.After(5 * time.Second):
 		return errors.New("signature embedding waited for all descriptions")
 	}
@@ -538,6 +568,7 @@ func TestSimilarityScanEmbedsBeforeDescriptionsFinish(t *testing.T) {
 			}
 
 			vectors, digest, err := populateSimilarityScanVectors(
+				t.Context(),
 				blocks, blocks, blocks, runtime, t.TempDir(),
 				SimilarityOptions{embedder: embedder, CacheEnabled: cacheEnabled},
 			)
@@ -573,28 +604,30 @@ func (embedder *similarityFailureTestEmbedder) embed(inputs []string) ([][]float
 
 func (*similarityFailureTestEmbedder) close() error { return nil }
 
-func TestSimilarityScanDrainsDescriptionsAfterEmbeddingFailure(t *testing.T) {
+func TestSimilarityScanStopsDescriptionsAfterEmbeddingFailure(t *testing.T) {
 	t.Parallel()
 
 	for _, failAt := range []int{1, 2} {
 		t.Run(strconv.Itoa(failAt), func(t *testing.T) {
-			// Both source and signature failures must wait for completed cache work.
+			// Source and signature failures must stop Codex work, not wait for every
+			// remaining description, and must keep records accepted before the stop.
 			blocks := make([]*similarityBlock, similarityDescriptionWorkers+2)
 			for index := range blocks {
 				key := strconv.Itoa(index)
 				blocks[index] = &similarityBlock{Identity: key, Content: key, ContentHash: key}
 			}
 
-			embedded := make(chan struct{})
-			close(embedded)
+			// A nil embedded channel holds the describer after its first record
+			// until the scan cancels it.
 			runtime := similarityDescriptionRuntime{
-				describer: similarityStreamingTestDescriber{embedded: embedded}, enabled: true,
+				describer: similarityStreamingTestDescriber{}, enabled: true,
 			}
 			cacheRoot := t.TempDir()
 			done := make(chan error, 1)
 
 			go func() {
 				_, _, err := populateSimilarityScanVectors(
+					t.Context(),
 					blocks,
 					blocks,
 					blocks,
@@ -610,10 +643,10 @@ func TestSimilarityScanDrainsDescriptionsAfterEmbeddingFailure(t *testing.T) {
 
 			select {
 			case err := <-done:
-				if err == nil || !strings.Contains(err.Error(), "planned embedding failure") {
+				if err == nil || err.Error() != "planned embedding failure" {
 					t.Fatalf("scan error = %v", err)
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("embedding failure blocked description producer")
 			}
 
@@ -623,8 +656,8 @@ func TestSimilarityScanDrainsDescriptionsAfterEmbeddingFailure(t *testing.T) {
 			)
 
 			missing, _ := loadCachedSimilarityDescriptions(inputs, keys, cacheRoot, true)
-			if len(missing) != 0 {
-				t.Fatalf("lost %d completed signatures", len(missing))
+			if len(missing) != len(blocks)-1 {
+				t.Fatalf("cached %d signatures, want only the first", len(blocks)-len(missing))
 			}
 		})
 	}
@@ -645,6 +678,7 @@ func TestSimilarityScanReusesCachedAndRestoredDescriptions(t *testing.T) {
 	}}
 
 	want, wantDigest, err := populateSimilarityScanVectors(
+		t.Context(),
 		blocks,
 		blocks,
 		blocks,
@@ -662,6 +696,7 @@ func TestSimilarityScanReusesCachedAndRestoredDescriptions(t *testing.T) {
 	runtime.describer = describer
 
 	got, digest, err := populateSimilarityScanVectors(
+		t.Context(),
 		blocks,
 		blocks[:1],
 		blocks,
@@ -694,6 +729,7 @@ func TestSimilarityScanRejectsIncompleteDescriptionStream(t *testing.T) {
 	}
 
 	vectors, digest, err := populateSimilarityScanVectors(
+		t.Context(),
 		blocks,
 		blocks,
 		blocks,
@@ -739,8 +775,15 @@ func TestSimilarityScanDoesNotStallDescriptionsDuringSourceInference(t *testing.
 		}
 	}}
 
-	_, _, err := populateSimilarityScanVectors(blocks, blocks, blocks, runtime, t.TempDir(),
-		SimilarityOptions{embedder: embedder})
+	_, _, err := populateSimilarityScanVectors(
+		t.Context(),
+		blocks,
+		blocks,
+		blocks,
+		runtime,
+		t.TempDir(),
+		SimilarityOptions{embedder: embedder},
+	)
 	if err != nil {
 		t.Fatalf("source inference stalled description production: %v", err)
 	}

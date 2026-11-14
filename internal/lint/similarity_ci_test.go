@@ -23,7 +23,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
-	issues, err := CheckSimilarCode(pkgs, SimilarityOptions{
+	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
 		CacheEnabled:        true,
 		cacheDir:            cacheDir,
 		embedder:            embedder,
@@ -48,7 +48,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 
 	pkgs = loadPackagesForTest(t, tmp)
 
-	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{descriptionDisabled: true})
+	issues, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{descriptionDisabled: true})
 	if err != nil {
 		t.Fatalf("stamped local check: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 		t.Fatalf("stamped local issues: %v", issues)
 	}
 
-	issues, err = CheckSimilarCode(pkgs, SimilarityOptions{CI: true})
+	issues, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{CI: true})
 	if err != nil {
 		t.Fatalf("CI check: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 	)
 	pkgs = loadPackagesForTest(t, tmp)
 
-	_, err = CheckSimilarCode(pkgs, SimilarityOptions{CI: true})
+	_, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{CI: true})
 	if err == nil || !strings.Contains(err.Error(), "is stale") {
 		t.Fatalf("stale CI check error = %v", err)
 	}
@@ -100,7 +100,11 @@ func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) 
 
 	writeFile(t, filepath.Join(tmp, similarityStampName), string(encoded))
 
-	if _, err := CheckSimilarCode(pkgs, SimilarityOptions{descriptionDisabled: true}); err != nil {
+	if _, err := CheckSimilarCode(
+		t.Context(),
+		pkgs,
+		SimilarityOptions{descriptionDisabled: true},
+	); err != nil {
 		t.Fatalf("refresh stamp: %v", err)
 	}
 
@@ -120,6 +124,7 @@ func TestLintRepositoryCIMissingStampFailsBeforeGoList(t *testing.T) {
 	forbidGoCommand(t)
 
 	_, err := LintRepository(
+		t.Context(),
 		[]string{allPackagesPattern},
 		tmp,
 		Options{CacheEnabled: true, cacheDir: t.TempDir()},
@@ -161,6 +166,7 @@ func TestLintRepositoryCIStaleStampFailsBeforeGoList(t *testing.T) {
 	forbidGoCommand(t)
 
 	_, err = LintRepository(
+		t.Context(),
 		[]string{allPackagesPattern},
 		tmp,
 		Options{CacheEnabled: true, cacheDir: t.TempDir()},
@@ -186,6 +192,7 @@ func TestLintRepositoryCIValidStampStillRunsStructuralLint(t *testing.T) {
 	}
 
 	issues, err := LintRepository(
+		t.Context(),
 		[]string{allPackagesPattern},
 		tmp,
 		Options{CacheEnabled: true, cacheDir: t.TempDir()},
@@ -212,6 +219,7 @@ func TestLintRepositoryCIRejectsStampWithoutRepositoryDigest(t *testing.T) {
 	writeFile(t, filepath.Join(tmp, similarityStampName), string(data))
 
 	_, err = LintRepository(
+		t.Context(),
 		[]string{allPackagesPattern},
 		tmp,
 		Options{CacheEnabled: true, cacheDir: t.TempDir()},

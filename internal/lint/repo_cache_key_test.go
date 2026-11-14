@@ -180,6 +180,7 @@ func TestLintRepositoryCacheTracksIgnoredGoFiles(t *testing.T) {
 
 			cacheOpts := Options{MaxStates: 32, CacheEnabled: true, cacheDir: cacheDir}
 			if _, err := LintRepository(
+				t.Context(),
 				[]string{allPackagesPattern},
 				tmp,
 				cacheOpts,
@@ -202,6 +203,7 @@ func TestLintRepositoryCacheTracksIgnoredGoFiles(t *testing.T) {
 			}
 
 			cached, err := LintRepository(
+				t.Context(),
 				[]string{allPackagesPattern},
 				tmp,
 				cacheOpts,
@@ -212,6 +214,7 @@ func TestLintRepositoryCacheTracksIgnoredGoFiles(t *testing.T) {
 			}
 
 			fresh, err := LintRepository(
+				t.Context(),
 				[]string{allPackagesPattern},
 				tmp,
 				Options{MaxStates: 32},

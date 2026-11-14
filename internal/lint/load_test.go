@@ -148,6 +148,7 @@ func TestRepositoryTestSupportRoleTracksImportersAndCache(t *testing.T) {
 			hits = nil
 
 			issues, err := LintRepository(
+				t.Context(),
 				[]string{step.pattern},
 				filepath.Join(dir, step.subdir),
 				opts,
@@ -219,7 +220,7 @@ func Must(err error) {
 `)
 	opts := Options{CacheEnabled: true, cacheDir: t.TempDir()}
 
-	issues, err := LintRepository(nil, dir, opts, nil)
+	issues, err := LintRepository(t.Context(), nil, dir, opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +254,7 @@ func Must(err error) {
 	}
 
 	for range 2 {
-		issues, err = LintRepository(nil, dir, opts, nil)
+		issues, err = LintRepository(t.Context(), nil, dir, opts, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,7 +278,7 @@ func Must(err error) {
 		t.Fatal(err)
 	}
 
-	issues, err = LintRepository(nil, dir, opts, nil)
+	issues, err = LintRepository(t.Context(), nil, dir, opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

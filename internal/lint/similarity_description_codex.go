@@ -199,6 +199,7 @@ type similarityCodexResponse struct {
 }
 
 func (describer *codexSimilarityDescriber) describe(
+	ctx context.Context,
 	requests []similarityDescriptionRequest,
 	accept func([]similarityDescription) error,
 ) error {
@@ -217,17 +218,28 @@ func (describer *codexSimilarityDescriber) describe(
 	for range workerCount {
 		workers.Go(func() {
 			for index := range jobs {
-				errs[index] = describer.describeBatch(batches[index], accept)
+				errs[index] = describer.describeBatch(ctx, batches[index], accept)
 			}
 		})
 	}
 
+	// Stop handing out batches once the scan fails or the command is stopped.
+	// Cancellation also kills running Codex processes in executeBatch.
+queue:
 	for index := range batches {
-		jobs <- index
+		select {
+		case jobs <- index:
+		case <-ctx.Done():
+			break queue
+		}
 	}
 
 	close(jobs)
 	workers.Wait()
+
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("codex descriptions stopped: %w", err)
+	}
 
 	for index, err := range errs {
 		if err != nil {
@@ -319,6 +331,7 @@ func balanceSimilarityDescriptionBatches(
 }
 
 func (describer *codexSimilarityDescriber) describeBatch(
+	ctx context.Context,
 	batch similarityDescriptionBatch,
 	accept func([]similarityDescription) error,
 ) error {
@@ -327,8 +340,8 @@ func (describer *codexSimilarityDescriber) describeBatch(
 	remaining := batch
 	failedAttempts := 0
 
-	for len(remaining.requests) > 0 {
-		result, err := describer.runBatch(remaining)
+	for len(remaining.requests) > 0 && ctx.Err() == nil {
+		result, err := describer.runBatch(ctx, remaining)
 
 		// Persist every valid subset before retrying missing records. A slow or
 		// failed retry must not discard completed inference work.
@@ -377,6 +390,7 @@ func (describer *codexSimilarityDescriber) describeBatch(
 }
 
 func (describer *codexSimilarityDescriber) runBatch(
+	ctx context.Context,
 	batch similarityDescriptionBatch,
 ) ([]similarityDescription, error) {
 	prompt, schema, err := similarityDescriptionPromptAndSchema(batch)
@@ -384,7 +398,7 @@ func (describer *codexSimilarityDescriber) runBatch(
 		return nil, err
 	}
 
-	data, err := describer.executeBatch(prompt, schema)
+	data, err := describer.executeBatch(ctx, prompt, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +406,10 @@ func (describer *codexSimilarityDescriber) runBatch(
 	return decodeSimilarityDescriptionBatch(data, batch)
 }
 
-func (describer *codexSimilarityDescriber) executeBatch(prompt, schema string) ([]byte, error) {
+func (describer *codexSimilarityDescriber) executeBatch(
+	ctx context.Context,
+	prompt, schema string,
+) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "slopelint-codex-description-*")
 	if err != nil {
 		return nil, err
@@ -411,7 +428,7 @@ func (describer *codexSimilarityDescriber) executeBatch(prompt, schema string) (
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), similarityDescriptionTimeout)
+	ctx, cancel := context.WithTimeout(ctx, similarityDescriptionTimeout)
 	defer cancel()
 
 	command := exec.CommandContext(
@@ -440,8 +457,12 @@ func (describer *codexSimilarityDescriber) executeBatch(prompt, schema string) (
 	command.Stderr = io.Discard
 
 	if err := command.Run(); err != nil {
-		if ctx.Err() != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("codex CLI timed out after %s", similarityDescriptionTimeout)
+		}
+
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 
 		return nil, fmt.Errorf("codex CLI failed: %w", err)

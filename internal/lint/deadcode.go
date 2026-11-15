@@ -48,5 +48,6 @@ func (l *linter) deadCodePackage() *deadcodecheck.Package {
 		ProductionDecls: l.index.productionDecls,
 		ProductionFuncs: l.index.productionFuncs,
 		GeneratedDecls:  generated,
+		TrimmedDirs:     l.pkg.trimmedDirs,
 	}
 }

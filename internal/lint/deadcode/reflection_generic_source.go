@@ -11,11 +11,11 @@ import (
 
 func sourceGenericDecodeTypeParamDecodes(
 	fn *types.Func,
-	fset *token.FileSet,
+	pkg *Package,
 ) ([]reflectedTypeParamUse, bool) {
 	scan, ok := sourceGenericCodecScanFor(
 		fn,
-		fset,
+		pkg,
 		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
 			return codec.decodeFuncs
 		},
@@ -55,7 +55,7 @@ type sourceGenericCodecScan struct {
 
 func sourceGenericCodecScanFor(
 	fn *types.Func,
-	fset *token.FileSet,
+	pkg *Package,
 	funcs func(reflectedPackageCodec) map[string]reflectedCodecFunc,
 ) (sourceGenericCodecScan, bool) {
 	sig, ok := genericFallbackSignature(fn)
@@ -63,7 +63,7 @@ func sourceGenericCodecScanFor(
 		return sourceGenericCodecScan{}, false
 	}
 
-	file, decl, ok := sourceFuncFileDecl(fn, fset)
+	file, decl, ok := sourceFuncFileDecl(fn, pkg)
 	if !ok {
 		return sourceGenericCodecScan{}, false
 	}
@@ -90,13 +90,13 @@ func (scan sourceGenericCodecScan) callArg(
 
 func sourceFuncFileDecl(
 	fn *types.Func,
-	fset *token.FileSet,
+	pkg *Package,
 ) (*ast.File, *ast.FuncDecl, bool) {
-	if fset == nil {
+	if pkg == nil || pkg.FSet == nil {
 		return nil, nil, false
 	}
 
-	filename := fset.Position(fn.Pos()).Filename
+	filename := pkg.sourceFilename(pkg.FSet.Position(fn.Pos()).Filename)
 	if filename == "" {
 		return nil, nil, false
 	}
@@ -108,7 +108,7 @@ func sourceFuncFileDecl(
 		return nil, nil, false
 	}
 
-	decl := sourceFuncDecl(file, fileFSet, fn, fset)
+	decl := sourceFuncDecl(file, fileFSet, fn, pkg.FSet)
 	if decl == nil || decl.Body == nil {
 		return nil, nil, false
 	}

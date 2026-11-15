@@ -2,7 +2,6 @@ package deadcode
 
 import (
 	"go/ast"
-	"go/token"
 	"go/types"
 	"strings"
 )
@@ -24,7 +23,7 @@ func (graph deadCodeGraph) reflectedGenericDecodeTypes(
 	// Source inspection wins; name fallback is only for external generic codecs.
 	decodes, inspected := graph.reflectedDecodeTypeParamDecodes(fn)
 	if !inspected {
-		decodes = fallbackGenericDecodeTypeParamDecodes(fn, typeArgs.Len(), l.pkg.FSet)
+		decodes = fallbackGenericDecodeTypeParamDecodes(fn, typeArgs.Len(), l.pkg)
 	}
 
 	return reflectedGenericTargetsForTypeArgs(typeArgs, decodes)
@@ -46,7 +45,7 @@ func (graph deadCodeGraph) reflectedGenericMarshalTypes(
 
 	marshals, inspected := graph.reflectedMarshalTypeParamUses(fn)
 	if !inspected {
-		marshals = fallbackGenericMarshalTypeParamUses(fn, l.pkg.FSet)
+		marshals = fallbackGenericMarshalTypeParamUses(fn, l.pkg)
 	}
 
 	replacements := reflectedTypeParamReplacements(fn, typeArgs)
@@ -66,9 +65,9 @@ func (graph deadCodeGraph) reflectedGenericMarshalTypes(
 func fallbackGenericDecodeTypeParamDecodes(
 	fn *types.Func,
 	count int,
-	fset *token.FileSet,
+	pkg *Package,
 ) []reflectedTypeParamUse {
-	uses, inspected := sourceGenericDecodeTypeParamDecodes(fn, fset)
+	uses, inspected := sourceGenericDecodeTypeParamDecodes(fn, pkg)
 	if inspected {
 		return dedupeComparable(uses, reflectedDedupeMinLen)
 	}
@@ -116,9 +115,9 @@ func nameFallbackGenericDecodeTypeParamDecodes(
 
 func fallbackGenericMarshalTypeParamUses(
 	fn *types.Func,
-	fset *token.FileSet,
+	pkg *Package,
 ) []reflectedMarshalTypeParamUse {
-	uses := sourceGenericMarshalTypeParamUses(fn, fset)
+	uses := sourceGenericMarshalTypeParamUses(fn, pkg)
 	if len(uses) == 0 {
 		return nil
 	}
@@ -128,11 +127,11 @@ func fallbackGenericMarshalTypeParamUses(
 
 func sourceGenericMarshalTypeParamUses(
 	fn *types.Func,
-	fset *token.FileSet,
+	pkg *Package,
 ) []reflectedMarshalTypeParamUse {
 	scan, ok := sourceGenericCodecScanFor(
 		fn,
-		fset,
+		pkg,
 		func(codec reflectedPackageCodec) map[string]reflectedCodecFunc {
 			return codec.marshalFuncs
 		},
@@ -533,7 +532,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 
 	decodes, inspected := graph.reflectedDecodeTypeParamDecodesSeen(callee, funcsSeen)
 	if !inspected {
-		decodes = fallbackGenericDecodeTypeParamDecodes(callee, typeArgs.Len(), pkg.FSet)
+		decodes = fallbackGenericDecodeTypeParamDecodes(callee, typeArgs.Len(), pkg)
 	}
 
 	for _, decode := range decodes {
@@ -633,7 +632,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamMarshals(
 
 	marshals, inspected := graph.reflectedMarshalTypeParamUsesSeen(callee, funcsSeen)
 	if !inspected {
-		marshals = fallbackGenericMarshalTypeParamUses(callee, pkg.FSet)
+		marshals = fallbackGenericMarshalTypeParamUses(callee, pkg)
 	}
 
 	replacements := reflectedTypeParamReplacements(callee, typeArgs)

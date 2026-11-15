@@ -17,4 +17,6 @@ type LoadedPackage struct {
 	TypesInfo  *types.Info
 	repoFiles  []string
 	testOnly   bool
+	// trimmedDirs maps -trimpath export-data directories to package dirs.
+	trimmedDirs map[string]string
 }

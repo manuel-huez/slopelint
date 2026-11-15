@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
 )
 
 const (
@@ -31,6 +32,22 @@ type Package struct {
 	// GeneratedDecls holds production decls from generated files. They are
 	// never reported, and what they use stays live.
 	GeneratedDecls map[ast.Decl]struct{}
+	// TrimmedDirs maps -trimpath directories in export-data positions to
+	// package directories on disk. Nil when positions are already absolute.
+	TrimmedDirs map[string]string
+}
+
+// sourceFilename maps a -trimpath position filename to its file on disk.
+func (pkg *Package) sourceFilename(filename string) string {
+	if filename == "" || filepath.IsAbs(filename) {
+		return filename
+	}
+
+	if dir, ok := pkg.TrimmedDirs[filepath.Dir(filename)]; ok {
+		return filepath.Join(dir, filepath.Base(filename))
+	}
+
+	return filename
 }
 
 type packageLinter struct {

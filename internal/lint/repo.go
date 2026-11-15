@@ -188,7 +188,7 @@ func lintPackageTargets(
 		return nil, err
 	}
 
-	loadContext := &packageLoadContext{byImportPath: byImportPath}
+	loadContext := newPackageLoadContext(byImportPath)
 
 	typeDigests, err := prepareRepoPackageCache(
 		inputs,

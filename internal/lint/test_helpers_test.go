@@ -216,7 +216,7 @@ func loadPackagesForTest(t *testing.T, dir string) []*LoadedPackage {
 		t.Fatalf("resolve packages: %v", err)
 	}
 
-	loadContext := &packageLoadContext{byImportPath: byImportPath}
+	loadContext := newPackageLoadContext(byImportPath)
 
 	pkgs := make([]*LoadedPackage, len(targets))
 

@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-func TestRepoDeadCodeKeepsExternalGoccyJSONGenericMarshalWrapperFields(t *testing.T) {
-	// Trimmed export-data paths must still resolve the dependency's generic body.
-	t.Setenv("GOFLAGS", "-trimpath")
-
+func TestRepoDeadCodeKeepsExternalGenericMarshalWrapperFieldsWithTrimpath(t *testing.T) {
+	// -trimpath rewrites export-data positions to module paths; the
+	// dependency's generic wrapper body must still resolve from disk.
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -44,14 +43,24 @@ func Encode[T any](value T) ([]byte, error) {
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeJSONCodecPayloadSave(t, tmp)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+	messages := make(map[string]string, 2)
 
-	if strings.Contains(joined, wantFieldPayloadName) {
+	for _, goflags := range []string{"-trimpath=false", "-trimpath"} {
+		t.Setenv("GOFLAGS", goflags)
+		messages[goflags] = joinMessages(lintInDir(t, tmp))
+	}
+
+	trimmed := messages["-trimpath"]
+	if trimmed != messages["-trimpath=false"] {
 		t.Fatalf(
-			"external goccy JSON generic marshal wrapper field reported dead, got:\n%s",
-			joined,
+			"-trimpath changed dead-code findings:\nuntrimmed:\n%s\ntrimmed:\n%s",
+			messages["-trimpath=false"],
+			trimmed,
 		)
+	}
+
+	if strings.Contains(trimmed, wantFieldPayloadName) {
+		t.Fatalf("external generic marshal wrapper field reported dead, got:\n%s", trimmed)
 	}
 }
 

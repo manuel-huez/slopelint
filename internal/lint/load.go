@@ -35,9 +35,10 @@ type packageMeta struct {
 	XTestImports    []string `json:"XTestImports"`
 	Match           []string `json:"Match"`
 	Module          *struct {
-		Path string `json:"Path"`
-		Dir  string `json:"Dir"`
-		Main bool   `json:"Main"`
+		Path    string `json:"Path"`
+		Version string `json:"Version"`
+		Dir     string `json:"Dir"`
+		Main    bool   `json:"Main"`
 	} `json:"Module"`
 	Error *struct {
 		Err string `json:"Err"`
@@ -119,9 +120,6 @@ func goList(patterns []string, dir string) ([]*packageMeta, error) {
 		[]string{
 			"list",
 			"-buildvcs=false",
-			// Dead-code checks parse dependency source from export-data positions;
-			// a GOFLAGS -trimpath would turn those into unresolvable module paths.
-			"-trimpath=false",
 			"-deps",
 			"-test",
 			"-export",
@@ -225,6 +223,28 @@ func matchedPackageTargets(
 
 type packageLoadContext struct {
 	byImportPath map[string]*packageMeta
+	trimmedDirs  map[string]string
+}
+
+func newPackageLoadContext(byImportPath map[string]*packageMeta) *packageLoadContext {
+	// A GOFLAGS -trimpath rewrites each package directory in export-data
+	// positions. Mirror cmd/go's rule (module@version + import path suffix, else
+	// import path) so dead-code checks can read dependency source from disk.
+	trimmedDirs := make(map[string]string, len(byImportPath))
+
+	for _, meta := range byImportPath {
+		importPath, _, _ := strings.Cut(meta.ImportPath, " ")
+
+		trimmed := importPath
+		if module := meta.Module; module != nil && module.Version != "" {
+			trimmed = module.Path + "@" + module.Version +
+				strings.TrimPrefix(importPath, module.Path)
+		}
+
+		trimmedDirs[filepath.FromSlash(trimmed)] = meta.Dir
+	}
+
+	return &packageLoadContext{byImportPath: byImportPath, trimmedDirs: trimmedDirs}
 }
 
 func (loadContext *packageLoadContext) importer(fset *token.FileSet) types.Importer {
@@ -368,15 +388,16 @@ func loadOne(meta *packageMeta, loadContext *packageLoadContext) (*LoadedPackage
 	files = packageAnalysisFiles(files, fset, meta.Dir)
 
 	return &LoadedPackage{
-		ImportPath: importPath,
-		Name:       meta.Name,
-		Dir:        meta.Dir,
-		repoFiles:  repoFiles,
-		testOnly:   meta.testOnly,
-		FSet:       fset,
-		Files:      files,
-		TypesPkg:   typesPkg,
-		TypesInfo:  info,
+		ImportPath:  importPath,
+		Name:        meta.Name,
+		Dir:         meta.Dir,
+		repoFiles:   repoFiles,
+		testOnly:    meta.testOnly,
+		trimmedDirs: loadContext.trimmedDirs,
+		FSet:        fset,
+		Files:       files,
+		TypesPkg:    typesPkg,
+		TypesInfo:   info,
 	}, nil
 }
 

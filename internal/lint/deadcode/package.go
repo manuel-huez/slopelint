@@ -28,6 +28,9 @@ type Package struct {
 	TypesInfo       *types.Info
 	ProductionDecls []ast.Decl
 	ProductionFuncs []*ast.FuncDecl
+	// GeneratedDecls holds production decls from generated files. They are
+	// never reported, and what they use stays live.
+	GeneratedDecls map[ast.Decl]struct{}
 }
 
 type packageLinter struct {

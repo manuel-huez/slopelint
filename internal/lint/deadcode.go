@@ -1,6 +1,10 @@
 package lint
 
-import deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
+import (
+	"go/ast"
+
+	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
+)
 
 func (l *linter) checkDeadPrivateDecls() {
 	for _, finding := range deadcodecheck.Private(l.deadCodePackage()) {
@@ -25,6 +29,16 @@ func repoDeadCodeIssues(pkgs []*deadcodecheck.Package) []Issue {
 }
 
 func (l *linter) deadCodePackage() *deadcodecheck.Package {
+	generated := make(map[ast.Decl]struct{})
+
+	for _, file := range l.index.productionFiles {
+		if ast.IsGenerated(file) {
+			for _, decl := range file.Decls {
+				generated[decl] = struct{}{}
+			}
+		}
+	}
+
 	return &deadcodecheck.Package{
 		ImportPath:      l.pkg.ImportPath,
 		Name:            l.pkg.Name,
@@ -33,5 +47,6 @@ func (l *linter) deadCodePackage() *deadcodecheck.Package {
 		TypesInfo:       l.pkg.TypesInfo,
 		ProductionDecls: l.index.productionDecls,
 		ProductionFuncs: l.index.productionFuncs,
+		GeneratedDecls:  generated,
 	}
 }

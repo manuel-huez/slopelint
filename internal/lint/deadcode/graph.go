@@ -124,6 +124,11 @@ func (graph *deadCodeGraph) registerPackage(pkg *Package) {
 
 func (graph *deadCodeGraph) addPackageDecls(l *packageLinter, mode deadCodeMode) {
 	l.forEachProductionDecl(func(decl ast.Decl) {
+		if _, ok := l.pkg.GeneratedDecls[decl]; ok {
+			graph.addRootUses(l, decl)
+			return
+		}
+
 		graph.addDecl(l, decl, mode)
 	})
 }

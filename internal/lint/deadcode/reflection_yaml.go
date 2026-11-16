@@ -5,15 +5,11 @@ import (
 	"go/types"
 )
 
-func (graph deadCodeGraph) addReflectedYAMLMarshalReturnUses(
-	out map[string]struct{},
-	hook *types.Func,
-	typ types.Type,
-	tag string,
-	call *ast.CallExpr,
-	seen map[string]struct{},
-) {
-	if tag != reflectedYAMLTag || hook == nil || hook.Name() != reflectedMarshalYAMLHook {
+// yamlMarshalReturnUses follows a MarshalYAML hook body: the receiver fields
+// it returns are marshaled by YAML, so they stay live.
+func (walk reflectedUseWalk) yamlMarshalReturnUses(hook *types.Func, typ types.Type) {
+	if walk.codec.tag != reflectedYAMLTag || hook == nil ||
+		hook.Name() != reflectedMarshalYAMLHook {
 		return
 	}
 
@@ -22,7 +18,7 @@ func (graph deadCodeGraph) addReflectedYAMLMarshalReturnUses(
 		return
 	}
 
-	hookL := graph.packageLinterForFunc(hook)
+	hookL := walk.graph.packageLinterForFunc(hook)
 	if hookL == nil {
 		return
 	}
@@ -32,110 +28,59 @@ func (graph deadCodeGraph) addReflectedYAMLMarshalReturnUses(
 		return
 	}
 
-	graph.addReflectedYAMLMarshalReturnDeclUses(
-		hookL,
-		out,
-		decl,
-		receiver,
-		call,
-		seen,
-		make(map[string]struct{}),
-	)
+	walk.l = hookL
+	walk.codec = reflectedCodecUseForTag(reflectedYAMLTag)
+
+	yamlMarshalReturnScan{
+		walk:      walk,
+		receiver:  receiver,
+		funcsSeen: make(map[string]struct{}),
+	}.declUses(decl)
 }
 
-func (graph deadCodeGraph) addReflectedYAMLMarshalReturnExprUses(
-	l *packageLinter,
-	out map[string]struct{},
-	expr ast.Expr,
-	receiver *types.Named,
-	fn *ast.FuncDecl,
-	call *ast.CallExpr,
-	seen map[string]struct{},
-	funcsSeen map[string]struct{},
-) {
-	if graph.addReflectedYAMLMarshalReturnCallUses(
-		l,
-		out,
-		expr,
-		receiver,
-		call,
-		seen,
-		funcsSeen,
-	) {
+func (scan yamlMarshalReturnScan) declUses(decl *ast.FuncDecl) {
+	scan.decl = decl
+	scan.namedResult = yamlMarshalRepresentationResult(scan.walk.l.pkg.TypesInfo, decl)
+	scan.block(emptyYAMLMarshalReturnState(), decl.Body.List)
+}
+
+func (scan yamlMarshalReturnScan) returnExprUses(expr ast.Expr) {
+	if scan.returnCallUses(expr) {
 		return
 	}
 
-	graph.addReflectedYAMLMarshalReturnTypeUses(
-		l,
-		out,
-		reflectedValueType(l.pkg.TypesInfo, expr),
-		receiver,
-		fn,
-		call,
-		seen,
-	)
+	scan.returnTypeUses(reflectedValueType(scan.walk.l.pkg.TypesInfo, expr))
 }
 
-func (graph deadCodeGraph) addReflectedYAMLMarshalReturnCallUses(
-	l *packageLinter,
-	out map[string]struct{},
-	expr ast.Expr,
-	receiver *types.Named,
-	call *ast.CallExpr,
-	seen map[string]struct{},
-	funcsSeen map[string]struct{},
-) bool {
+func (scan yamlMarshalReturnScan) returnCallUses(expr ast.Expr) bool {
 	returnCall, ok := unparenReflectedExpr(expr).(*ast.CallExpr)
 	if !ok {
 		return false
 	}
 
-	fn := calledFunc(l.pkg.TypesInfo, returnCall)
+	fn := calledFunc(scan.walk.l.pkg.TypesInfo, returnCall)
 	if fn == nil {
 		return false
 	}
 
-	decl := l.reflectedFuncDeclForFunc(fn)
+	decl := scan.walk.l.reflectedFuncDeclForFunc(fn)
 	if decl == nil || decl.Body == nil {
 		return false
 	}
 
 	key := deadCodeObjectKey(fn)
 	if key != "" {
-		if _, ok := funcsSeen[key]; ok {
+		if _, ok := scan.funcsSeen[key]; ok {
 			return true
 		}
 
-		funcsSeen[key] = struct{}{}
-		defer delete(funcsSeen, key)
+		scan.funcsSeen[key] = struct{}{}
+		defer delete(scan.funcsSeen, key)
 	}
 
-	graph.addReflectedYAMLMarshalReturnDeclUses(l, out, decl, receiver, call, seen, funcsSeen)
+	scan.declUses(decl)
 
 	return true
-}
-
-func (graph deadCodeGraph) addReflectedYAMLMarshalReturnDeclUses(
-	l *packageLinter,
-	out map[string]struct{},
-	decl *ast.FuncDecl,
-	receiver *types.Named,
-	call *ast.CallExpr,
-	seen map[string]struct{},
-	funcsSeen map[string]struct{},
-) {
-	scan := yamlMarshalReturnScan{
-		graph:       graph,
-		l:           l,
-		out:         out,
-		decl:        decl,
-		receiver:    receiver,
-		call:        call,
-		seen:        seen,
-		funcsSeen:   funcsSeen,
-		namedResult: yamlMarshalRepresentationResult(l.pkg.TypesInfo, decl),
-	}
-	scan.block(emptyYAMLMarshalReturnState(), decl.Body.List)
 }
 
 type yamlMarshalReturnState struct {
@@ -143,14 +88,12 @@ type yamlMarshalReturnState struct {
 	slices map[fmtStringerVarRef][]ast.Expr
 }
 
+// yamlMarshalReturnScan walks one MarshalYAML-reachable function body. walk
+// uses the hook package linter and the YAML codec.
 type yamlMarshalReturnScan struct {
-	graph       deadCodeGraph
-	l           *packageLinter
-	out         map[string]struct{}
+	walk        reflectedUseWalk
 	decl        *ast.FuncDecl
 	receiver    *types.Named
-	call        *ast.CallExpr
-	seen        map[string]struct{}
 	funcsSeen   map[string]struct{}
 	namedResult *types.Var
 }
@@ -288,7 +231,7 @@ func (scan yamlMarshalReturnScan) setValueState(
 	expr ast.Expr,
 	exprs []ast.Expr,
 ) {
-	ref, ok := fmtStringerVarForExpr(scan.l.pkg.TypesInfo, expr)
+	ref, ok := fmtStringerVarForExpr(scan.walk.l.pkg.TypesInfo, expr)
 	if !ok {
 		return
 	}
@@ -314,7 +257,7 @@ func (scan yamlMarshalReturnScan) updateAssignState(
 	snapshot := cloneYAMLMarshalReturnState(state)
 
 	for index, lhs := range left {
-		ref, ok := fmtStringerVarForExpr(scan.l.pkg.TypesInfo, lhs)
+		ref, ok := fmtStringerVarForExpr(scan.walk.l.pkg.TypesInfo, lhs)
 		if !ok {
 			continue
 		}
@@ -344,21 +287,12 @@ func (scan yamlMarshalReturnScan) returnStmt(
 	stmt *ast.ReturnStmt,
 ) {
 	for _, expr := range yamlMarshalReturnExprs(
-		scan.l.pkg.TypesInfo,
+		scan.walk.l.pkg.TypesInfo,
 		scan.namedResult,
 		state,
 		stmt,
 	) {
-		scan.graph.addReflectedYAMLMarshalReturnExprUses(
-			scan.l,
-			scan.out,
-			expr,
-			scan.receiver,
-			scan.decl,
-			scan.call,
-			scan.seen,
-			scan.funcsSeen,
-		)
+		scan.returnExprUses(expr)
 	}
 }
 
@@ -383,14 +317,14 @@ func (scan yamlMarshalReturnScan) exprsForState(
 	state yamlMarshalReturnState,
 	expr ast.Expr,
 ) []ast.Expr {
-	return yamlMarshalExprsForState(scan.l.pkg.TypesInfo, state, expr)
+	return yamlMarshalExprsForState(scan.walk.l.pkg.TypesInfo, state, expr)
 }
 
 func (scan yamlMarshalReturnScan) sliceExprsForState(
 	state yamlMarshalReturnState,
 	expr ast.Expr,
 ) ([]ast.Expr, bool) {
-	if ref, ok := fmtStringerVarForExpr(scan.l.pkg.TypesInfo, expr); ok {
+	if ref, ok := fmtStringerVarForExpr(scan.walk.l.pkg.TypesInfo, expr); ok {
 		exprs, ok := state.slices[ref]
 
 		return exprs, ok
@@ -398,7 +332,7 @@ func (scan yamlMarshalReturnScan) sliceExprsForState(
 
 	switch expr := unparenReflectedExpr(expr).(type) {
 	case *ast.CompositeLit:
-		if !yamlMarshalSliceType(scan.l.pkg.TypesInfo.TypeOf(expr)) {
+		if !yamlMarshalSliceType(scan.walk.l.pkg.TypesInfo.TypeOf(expr)) {
 			return nil, false
 		}
 
@@ -426,7 +360,7 @@ func (scan yamlMarshalReturnScan) appendSliceExprsForState(
 	state yamlMarshalReturnState,
 	call *ast.CallExpr,
 ) ([]ast.Expr, bool) {
-	if !fmtStringerAppendCall(scan.l.pkg.TypesInfo, call) {
+	if !fmtStringerAppendCall(scan.walk.l.pkg.TypesInfo, call) {
 		return nil, false
 	}
 
@@ -566,28 +500,20 @@ func yamlMarshalRepresentationResult(info *types.Info, decl *ast.FuncDecl) *type
 	return obj
 }
 
-func (graph deadCodeGraph) addReflectedYAMLMarshalReturnTypeUses(
-	l *packageLinter,
-	out map[string]struct{},
-	typ types.Type,
-	receiver *types.Named,
-	fn *ast.FuncDecl,
-	call *ast.CallExpr,
-	seen map[string]struct{},
-) {
+func (scan yamlMarshalReturnScan) returnTypeUses(typ types.Type) {
 	if typ == nil {
 		return
 	}
 
 	if elem, ok := reflectedSequentialContainerElem(typ); ok {
-		graph.addReflectedYAMLMarshalReturnTypeUses(l, out, elem, receiver, fn, call, seen)
+		scan.returnTypeUses(elem)
 
 		return
 	}
 
 	if key, elem, ok := reflectedMapTypes(typ); ok {
-		graph.addReflectedYAMLMarshalReturnTypeUses(l, out, key, receiver, fn, call, seen)
-		graph.addReflectedYAMLMarshalReturnTypeUses(l, out, elem, receiver, fn, call, seen)
+		scan.returnTypeUses(key)
+		scan.returnTypeUses(elem)
 
 		return
 	}
@@ -597,19 +523,14 @@ func (graph deadCodeGraph) addReflectedYAMLMarshalReturnTypeUses(
 		return
 	}
 
-	target := l.reflectedAliasTargetNamedForFunc(named, fn)
-	if !sameNamedType(receiver, target) {
+	target := scan.walk.l.reflectedAliasTargetNamedForFunc(named, scan.decl)
+	if !sameNamedType(scan.receiver, target) {
 		return
 	}
 
-	graph.addReflectedStructFieldsWithOwners(
-		l,
-		out,
-		[]*types.Named{receiver},
+	scan.walk.structFieldsWithOwners(
+		[]*types.Named{scan.receiver},
 		structType,
-		reflectedCodecUseForTag(reflectedYAMLTag),
-		call,
-		seen,
 		reflectedMarshalStructFields,
 		reflectedMarshalUnaddressable,
 	)

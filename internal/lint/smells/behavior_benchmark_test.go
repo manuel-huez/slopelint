@@ -21,16 +21,14 @@ func BenchmarkExactBehaviorMatches(b *testing.B) {
 		}
 
 		pos := token.Pos(idx*10 + 1)
-		candidates = append(candidates, newBehaviorCandidate(
-			nil,
-			key,
-			fmt.Sprintf("fn%d", idx),
-			pos,
-			pos+5,
-			behaviorCandidateFunction,
-			10,
-			0,
-		))
+		candidates = append(candidates, newBehaviorCandidate(behaviorCandidate{
+			key:    key,
+			name:   fmt.Sprintf("fn%d", idx),
+			pos:    pos,
+			end:    pos + 5,
+			kind:   behaviorCandidateFunction,
+			weight: 10,
+		}))
 	}
 
 	b.ReportAllocs()
@@ -49,16 +47,14 @@ func BenchmarkExactBehaviorMatchesDenseCloneClass(b *testing.B) {
 	candidates := make([]behaviorCandidate, 0, candidateCount)
 	for idx := range candidateCount {
 		pos := token.Pos(idx*10 + 1)
-		candidates = append(candidates, newBehaviorCandidate(
-			nil,
-			"function|same-behavior",
-			fmt.Sprintf("fn%d", idx),
-			pos,
-			pos+5,
-			behaviorCandidateFunction,
-			10,
-			0,
-		))
+		candidates = append(candidates, newBehaviorCandidate(behaviorCandidate{
+			key:    "function|same-behavior",
+			name:   fmt.Sprintf("fn%d", idx),
+			pos:    pos,
+			end:    pos + 5,
+			kind:   behaviorCandidateFunction,
+			weight: 10,
+		}))
 	}
 
 	b.ReportAllocs()
@@ -92,16 +88,14 @@ func FuzzExactBehaviorMatches(f *testing.F) {
 			}
 
 			pos := token.Pos(idx*10 + 1)
-			candidates = append(candidates, newBehaviorCandidate(
-				nil,
-				fmt.Sprintf("function|%d", key),
-				fmt.Sprintf("fn%d", idx),
-				pos,
-				pos+5,
-				behaviorCandidateFunction,
-				10,
-				0,
-			))
+			candidates = append(candidates, newBehaviorCandidate(behaviorCandidate{
+				key:    fmt.Sprintf("function|%d", key),
+				name:   fmt.Sprintf("fn%d", idx),
+				pos:    pos,
+				end:    pos + 5,
+				kind:   behaviorCandidateFunction,
+				weight: 10,
+			}))
 		}
 
 		if matches := exactBehaviorMatches(candidates); len(matches) != expected {

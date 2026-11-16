@@ -52,54 +52,59 @@ func (l *Runner) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
 				return true
 			}
 
-			key := l.render(call)
-			deps := l.normalizationDependencies(call)
-			index := normalizationOccurrenceIndex(occurrences, key, deps)
-
-			if index < 0 {
-				occurrences = append(occurrences, normalizationOccurrence{
-					key:     key,
-					deps:    deps,
-					lastEnd: call.End(),
-					count:   1,
-				})
-
-				return false
-			}
-
-			occurrence := &occurrences[index]
-			// Binding once is safe only while every input object keeps the same value.
-			if l.normalizationDependenciesMayChange(
-				body,
-				occurrence.lastEnd,
-				call.Pos(),
-				deps,
-			) {
-				occurrence.lastEnd = call.End()
-				occurrence.count = 1
-
-				return false
-			}
-
-			occurrence.count++
-			occurrence.lastEnd = call.End()
-
-			if occurrence.count == repeatedNormalizationReportCount {
-				l.report(
-					call.Pos(),
-					"normalization_ceremony",
-					fmt.Sprintf(
-						`%q is computed multiple times in this function; bind normalized value once`,
-						key,
-					),
-				)
-			}
+			occurrences = l.recordNormalizationCall(body, occurrences, call)
 
 			return false
 		default:
 			return true
 		}
 	})
+}
+
+// recordNormalizationCall counts one normalization call and reports the
+// repeat once the same inputs reach the report count.
+func (l *Runner) recordNormalizationCall(
+	body *ast.BlockStmt,
+	occurrences []normalizationOccurrence,
+	call *ast.CallExpr,
+) []normalizationOccurrence {
+	key := l.render(call)
+	deps := l.normalizationDependencies(call)
+	index := normalizationOccurrenceIndex(occurrences, key, deps)
+
+	if index < 0 {
+		return append(occurrences, normalizationOccurrence{
+			key:     key,
+			deps:    deps,
+			lastEnd: call.End(),
+			count:   1,
+		})
+	}
+
+	occurrence := &occurrences[index]
+	// Binding once is safe only while every input object keeps the same value.
+	if l.normalizationDependenciesMayChange(body, occurrence.lastEnd, call.Pos(), deps) {
+		occurrence.lastEnd = call.End()
+		occurrence.count = 1
+
+		return occurrences
+	}
+
+	occurrence.count++
+	occurrence.lastEnd = call.End()
+
+	if occurrence.count == repeatedNormalizationReportCount {
+		l.report(
+			call.Pos(),
+			"normalization_ceremony",
+			fmt.Sprintf(
+				`%q is computed multiple times in this function; bind normalized value once`,
+				key,
+			),
+		)
+	}
+
+	return occurrences
 }
 
 func (l *Runner) normalizationDependencies(call *ast.CallExpr) map[types.Object]struct{} {

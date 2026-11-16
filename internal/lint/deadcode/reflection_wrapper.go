@@ -115,7 +115,7 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 		}
 	}
 
-	pkg, decl, paramIndexes, ok := graph.reflectedWrapperFunc(fn)
+	source, ok := graph.reflectedWrapperFunc(fn)
 	if !ok {
 		graph.cacheReflectedWrapperMiss(key, cache)
 
@@ -130,11 +130,11 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 	out := make([]reflectedWrapperArgUse, 0)
 	complete := true
 
-	inspectReflectedCalls(decl.Body, func(call *ast.CallExpr) {
+	inspectReflectedCalls(source.decl.Body, func(call *ast.CallExpr) {
 		if !graph.collectReflectedWrapperCall(
-			pkg,
+			source.pkg,
 			call,
-			paramIndexes,
+			source.paramIndexes,
 			funcsSeen,
 			kind,
 			&out,
@@ -190,30 +190,37 @@ func (graph deadCodeGraph) cacheReflectedWrapperUses(
 	}
 }
 
-func (graph deadCodeGraph) reflectedWrapperFunc(
-	fn *types.Func,
-) (*Package, *ast.FuncDecl, map[types.Object]int, bool) {
+// reflectedWrapperSource is a source function that may forward its
+// parameters to reflected codecs; paramIndexes maps parameter objects to
+// positions.
+type reflectedWrapperSource struct {
+	pkg          *Package
+	decl         *ast.FuncDecl
+	paramIndexes map[types.Object]int
+}
+
+func (graph deadCodeGraph) reflectedWrapperFunc(fn *types.Func) (reflectedWrapperSource, bool) {
 	pkg := graph.packageForFunc(fn)
 	if pkg == nil {
-		return nil, nil, nil, false
+		return reflectedWrapperSource{}, false
 	}
 
 	decl := graph.funcDeclForObject(pkg, fn)
 	if decl == nil || decl.Body == nil {
-		return nil, nil, nil, false
+		return reflectedWrapperSource{}, false
 	}
 
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok || sig == nil {
-		return nil, nil, nil, false
+		return reflectedWrapperSource{}, false
 	}
 
 	paramIndexes := sourceFuncParamObjectIndexes(pkg.TypesInfo, sig, decl)
 	if len(paramIndexes) == 0 {
-		return nil, nil, nil, false
+		return reflectedWrapperSource{}, false
 	}
 
-	return pkg, decl, paramIndexes, true
+	return reflectedWrapperSource{pkg: pkg, decl: decl, paramIndexes: paramIndexes}, true
 }
 
 func (graph deadCodeGraph) collectReflectedWrapperCall(

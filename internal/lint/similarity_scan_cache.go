@@ -332,37 +332,36 @@ func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
 		block.PackageDir == packageDir
 }
 
+// storeSimilarityScanCache stores scan.rawMatches under scan.cacheRoot for the
+// module and source digest in check.
 func storeSimilarityScanCache(
-	root string,
-	moduleRoot string,
-	sourceDigest string,
-	descriptionDigest string,
+	scan similarityScanResult,
+	check similarityCheck,
 	descriptions bool,
 	files []similarityCachedFile,
 	blocks []similarityCachedBlock,
-	matches []similarityMatch,
 	findings []similarityFinding,
 ) error {
 	cache := similarityScanCache{
 		Schema:           similarityScanCacheSchema,
 		SimilaritySchema: similaritySchema,
-		SourceDigest:     sourceDigest,
+		SourceDigest:     check.sourceDigest,
 		Model:            similarityModelName,
 		ModelDigest:      similarityModelDigest,
 		Descriptions:     descriptions,
 		Files:            files,
 		Blocks:           blocks,
-		Matches:          make([]similarityCachedMatch, 0, len(matches)),
+		Matches:          make([]similarityCachedMatch, 0, len(scan.rawMatches)),
 		Findings:         make([]similarityCachedFinding, 0, len(findings)),
 	}
 	if descriptions {
 		cache.DescriptionSchema = similarityDescriptionPromptSchema
 		cache.DescriptionModel = similarityDescriptionModel
 		cache.DescriptionEffort = similarityDescriptionEffort
-		cache.DescriptionDigest = descriptionDigest
+		cache.DescriptionDigest = scan.descriptionDigest
 	}
 
-	for _, match := range matches {
+	for _, match := range scan.rawMatches {
 		cache.Matches = append(cache.Matches, similarityCachedMatch{
 			ID:               match.ID,
 			Left:             match.Left.Identity,
@@ -379,7 +378,7 @@ func storeSimilarityScanCache(
 	for _, finding := range findings {
 		position := issuePosition(finding.issue)
 
-		relativePath, err := filepath.Rel(moduleRoot, position.Filename)
+		relativePath, err := filepath.Rel(check.root, position.Filename)
 		if err != nil {
 			return err
 		}
@@ -395,10 +394,10 @@ func storeSimilarityScanCache(
 	}
 
 	path := similarityScanCachePath(
-		root,
-		moduleRoot,
+		scan.cacheRoot,
+		check.root,
 		descriptions,
-		sourceDigest,
+		check.sourceDigest,
 	)
 	if err := writeSimilarityScanCache(path, cache); err != nil {
 		return err

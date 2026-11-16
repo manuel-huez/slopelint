@@ -213,16 +213,16 @@ func (l *Runner) blockBehaviorCandidate(
 		return behaviorCandidate{}, false
 	}
 
-	return newBehaviorCandidate(
-		l.pkg,
-		"block|"+key,
-		owner,
-		stmts[0].Pos(),
-		stmts[len(stmts)-1].End(),
-		behaviorCandidateBlock,
-		weight,
-		l.blockBehaviorEffects(stmts),
-	), true
+	return newBehaviorCandidate(behaviorCandidate{
+		pkg:     l.pkg,
+		key:     "block|" + key,
+		name:    owner,
+		pos:     stmts[0].Pos(),
+		end:     stmts[len(stmts)-1].End(),
+		kind:    behaviorCandidateBlock,
+		weight:  weight,
+		effects: l.blockBehaviorEffects(stmts),
+	}), true
 }
 
 func behaviorValidationWindow(stmts []ast.Stmt) bool {
@@ -248,20 +248,23 @@ func (l *Runner) normalizedBehaviorBlock(
 	block := &ast.BlockStmt{List: stmts}
 	defined := l.behaviorBlockDefinitions(block)
 
-	typesByPlaceholder, renamed, unsupported := l.renameBehaviorBlock(
-		block,
-		functionBindings,
-		typeKeys,
-		defined,
-	)
+	renamer := &behaviorBlockRenamer{
+		runner:           l,
+		functionBindings: functionBindings,
+		typeKeys:         typeKeys,
+		defined:          defined,
+		objects:          make(map[types.Object]string),
+	}
+
+	ast.Inspect(block, renamer.visit)
 
 	defer func() {
-		for _, item := range renamed {
+		for _, item := range renamer.renamed {
 			item.ident.Name = item.original
 		}
 	}()
 
-	if unsupported {
+	if renamer.unsupported {
 		return "", false
 	}
 
@@ -270,7 +273,7 @@ func (l *Runner) normalizedBehaviorBlock(
 		return "", false
 	}
 
-	return strings.Join(typesByPlaceholder, ",") + "|" + rendered.String(), true
+	return strings.Join(renamer.typesByPlaceholder, ",") + "|" + rendered.String(), true
 }
 
 func (l *Runner) behaviorBlockDefinitions(block *ast.BlockStmt) map[types.Object]struct{} {
@@ -297,90 +300,75 @@ type behaviorRenamedIdent struct {
 	original string
 }
 
-func (l *Runner) renameBehaviorBlock(
-	block *ast.BlockStmt,
-	functionBindings map[types.Object]string,
-	typeKeys *behaviorTypeEncoder,
-	defined map[types.Object]struct{},
-) ([]string, []behaviorRenamedIdent, bool) {
-	objects := make(map[types.Object]string)
-	nextDefined := 0
-	typesByPlaceholder := make([]string, 0)
-	renamed := make([]behaviorRenamedIdent, 0)
-	unsupported := false
-
-	ast.Inspect(block, func(node ast.Node) bool {
-		if call, isCall := node.(*ast.CallExpr); isCall &&
-			!l.behaviorBlockCallSupported(call, defined) {
-			unsupported = true
-			return false
-		}
-
-		id, isIdent := node.(*ast.Ident)
-		if !isIdent || id.Name == "_" {
-			return true
-		}
-
-		obj := l.pkg.TypesInfo.ObjectOf(id)
-		if obj == nil {
-			return true
-		}
-
-		placeholder, exists := objects[obj]
-		if !exists {
-			var objectKey string
-
-			placeholder, objectKey = l.behaviorIdentifierPlaceholder(
-				obj,
-				functionBindings,
-				typeKeys,
-				defined,
-				len(objects),
-				&nextDefined,
-			)
-			if placeholder == "" {
-				return true
-			}
-
-			objects[obj] = placeholder
-
-			typesByPlaceholder = append(typesByPlaceholder, objectKey)
-		}
-
-		renamed = append(renamed, behaviorRenamedIdent{ident: id, original: id.Name})
-		id.Name = placeholder
-
-		return true
-	})
-
-	return typesByPlaceholder, renamed, unsupported
+// behaviorBlockRenamer replaces block identifiers with stable placeholders in
+// place; callers restore renamed after rendering.
+type behaviorBlockRenamer struct {
+	runner             *Runner
+	functionBindings   map[types.Object]string
+	typeKeys           *behaviorTypeEncoder
+	defined            map[types.Object]struct{}
+	objects            map[types.Object]string
+	nextDefined        int
+	typesByPlaceholder []string
+	renamed            []behaviorRenamedIdent
+	unsupported        bool
 }
 
-func (l *Runner) behaviorIdentifierPlaceholder(
-	obj types.Object,
-	functionBindings map[types.Object]string,
-	typeKeys *behaviorTypeEncoder,
-	defined map[types.Object]struct{},
-	objectCount int,
-	nextDefined *int,
-) (string, string) {
+func (r *behaviorBlockRenamer) visit(node ast.Node) bool {
+	if call, isCall := node.(*ast.CallExpr); isCall &&
+		!r.runner.behaviorBlockCallSupported(call, r.defined) {
+		r.unsupported = true
+		return false
+	}
+
+	id, isIdent := node.(*ast.Ident)
+	if !isIdent || id.Name == "_" {
+		return true
+	}
+
+	obj := r.runner.pkg.TypesInfo.ObjectOf(id)
+	if obj == nil {
+		return true
+	}
+
+	placeholder, exists := r.objects[obj]
+	if !exists {
+		var objectKey string
+
+		placeholder, objectKey = r.placeholder(obj)
+		if placeholder == "" {
+			return true
+		}
+
+		r.objects[obj] = placeholder
+		r.typesByPlaceholder = append(r.typesByPlaceholder, objectKey)
+	}
+
+	r.renamed = append(r.renamed, behaviorRenamedIdent{ident: id, original: id.Name})
+	id.Name = placeholder
+
+	return true
+}
+
+// placeholder returns the placeholder name and its type or object key.
+func (r *behaviorBlockRenamer) placeholder(obj types.Object) (string, string) {
 	if !behaviorNormalizableObject(obj) {
-		objectKey, ok := l.behaviorCanonicalObjectKey(obj, typeKeys)
+		objectKey, ok := r.runner.behaviorCanonicalObjectKey(obj, r.typeKeys)
 		if !ok {
 			return "", ""
 		}
 
-		return "slopelintO" + strconv.Itoa(objectCount), objectKey
+		return "slopelintO" + strconv.Itoa(len(r.objects)), objectKey
 	}
 
-	if _, isDefined := defined[obj]; isDefined {
-		placeholder := "slopelintD" + strconv.Itoa(*nextDefined)
-		*nextDefined++
+	if _, isDefined := r.defined[obj]; isDefined {
+		placeholder := "slopelintD" + strconv.Itoa(r.nextDefined)
+		r.nextDefined++
 
-		return placeholder, typeKeys.typeKey(obj.Type())
+		return placeholder, r.typeKeys.typeKey(obj.Type())
 	}
 
-	return functionBindings[obj], typeKeys.typeKey(obj.Type())
+	return r.functionBindings[obj], r.typeKeys.typeKey(obj.Type())
 }
 
 func (l *Runner) behaviorBlockCallSupported(

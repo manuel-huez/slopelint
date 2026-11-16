@@ -182,27 +182,11 @@ func RunBehaviorRepo(pkgs []*Package) map[*Package][]Finding {
 	return findings
 }
 
-func newBehaviorCandidate(
-	pkg *Package,
-	key string,
-	name string,
-	pos token.Pos,
-	end token.Pos,
-	kind behaviorCandidateKind,
-	weight int,
-	effects behaviorEffects,
-) behaviorCandidate {
-	return behaviorCandidate{
-		pkg:     pkg,
-		key:     key,
-		digest:  sha256.Sum256([]byte(key)),
-		name:    name,
-		pos:     pos,
-		end:     end,
-		kind:    kind,
-		weight:  weight,
-		effects: effects,
-	}
+// newBehaviorCandidate fills the key digest that clone matching groups by.
+func newBehaviorCandidate(candidate behaviorCandidate) behaviorCandidate {
+	candidate.digest = sha256.Sum256([]byte(candidate.key))
+
+	return candidate
 }
 
 func exactBehaviorMatches(candidates []behaviorCandidate) []behaviorMatch {

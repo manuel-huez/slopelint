@@ -48,6 +48,22 @@ func (l *Runner) forEachProductionFunc(fn func(*ast.FuncDecl)) {
 	}
 }
 
+// forEachHandwrittenProductionFunc skips generated files, which
+// ProductionFuncs keeps for dead-code roots and behavior checks.
+func (l *Runner) forEachHandwrittenProductionFunc(fn func(*ast.FuncDecl)) {
+	for _, file := range l.pkg.ProductionFiles {
+		if ast.IsGenerated(file) {
+			continue
+		}
+
+		for _, decl := range file.Decls {
+			if funcDecl, ok := decl.(*ast.FuncDecl); ok {
+				fn(funcDecl)
+			}
+		}
+	}
+}
+
 func (l *Runner) forEachProductionTypeSpec(fn func(*ast.TypeSpec)) {
 	for idx := range l.pkg.ProductionTypes {
 		fn(l.pkg.ProductionTypes[idx])

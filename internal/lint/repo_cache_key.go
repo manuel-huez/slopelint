@@ -160,40 +160,31 @@ func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) 
 		resolvedDir = resolved
 	}
 
-	sourceRoot, objectFormat, commonDir, gitErr := repoAnalysisGitInfo(resolvedDir)
-
-	var identity string
-
-	if gitErr == nil {
-		identity = commonDir
-	} else {
-		sourceRoot, err = findGoModuleRoot(resolvedDir)
+	location, gitErr := repoAnalysisGitLocation(resolvedDir)
+	if gitErr != nil {
+		sourceRoot, err := findGoModuleRoot(resolvedDir)
 		if err != nil {
 			return repositoryCacheLocation{}, err
 		}
 
-		identity = sourceRoot
+		location = repositoryCacheLocation{sourceRoot: sourceRoot, identity: sourceRoot}
 	}
 
-	relativeDir, err := filepath.Rel(sourceRoot, resolvedDir)
+	relativeDir, err := filepath.Rel(location.sourceRoot, resolvedDir)
 	if err != nil || !filepath.IsLocal(relativeDir) {
 		return repositoryCacheLocation{}, errAnalysisCacheDisabled
 	}
 
-	relativeRoot, err := filepath.Rel(resolvedDir, sourceRoot)
+	relativeRoot, err := filepath.Rel(resolvedDir, location.sourceRoot)
 	if err != nil {
 		return repositoryCacheLocation{}, err
 	}
 
-	sourceRoot = filepath.Clean(filepath.Join(absoluteDir, relativeRoot))
+	location.sourceRoot = filepath.Clean(filepath.Join(absoluteDir, relativeRoot))
+	location.identity = filepath.Clean(location.identity)
+	location.relativeDir = filepath.ToSlash(relativeDir)
 
-	return repositoryCacheLocation{
-		sourceRoot:   sourceRoot,
-		identity:     filepath.Clean(identity),
-		relativeDir:  filepath.ToSlash(relativeDir),
-		objectFormat: objectFormat,
-		git:          gitErr == nil,
-	}, nil
+	return location, nil
 }
 
 type repoAnalysisSimilarityFingerprint struct {
@@ -379,7 +370,9 @@ func repoAnalysisLocalPatterns(patterns []string) bool {
 	return true
 }
 
-func repoAnalysisGitInfo(dir string) (string, string, string, error) {
+// repoAnalysisGitLocation returns the resolved git root, object format, and
+// common git directory as cache identity; relativeDir is left to the caller.
+func repoAnalysisGitLocation(dir string) (repositoryCacheLocation, error) {
 	const gitInfoFieldCount = 3
 
 	cmd := exec.Command(
@@ -393,12 +386,12 @@ func repoAnalysisGitInfo(dir string) (string, string, string, error) {
 
 	output, err := cmd.Output()
 	if err != nil {
-		return "", "", "", err
+		return repositoryCacheLocation{}, err
 	}
 
 	fields := bytes.Split(bytes.TrimSpace(output), []byte{'\n'})
 	if len(fields) != gitInfoFieldCount {
-		return "", "", "", errors.New(
+		return repositoryCacheLocation{}, errors.New(
 			"git did not return repository root, object format, and common directory",
 		)
 	}
@@ -414,7 +407,12 @@ func repoAnalysisGitInfo(dir string) (string, string, string, error) {
 		commonDir = resolved
 	}
 
-	return root, string(fields[1]), commonDir, nil
+	return repositoryCacheLocation{
+		sourceRoot:   root,
+		identity:     commonDir,
+		objectFormat: string(fields[1]),
+		git:          true,
+	}, nil
 }
 
 func repoAnalysisGitDigest(

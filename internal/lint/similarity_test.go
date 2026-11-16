@@ -843,7 +843,7 @@ func TestSimilarityPolicyChangeKeepsContentBoundAcceptances(t *testing.T) {
 	}}, false, "")
 	stamp.Schema--
 
-	got := carrySimilarityAcceptances(stamp, true, map[string]string{
+	got := carrySimilarityAcceptances(stamp, map[string]string{
 		left.Identity:  left.ContentHash,
 		right.Identity: right.ContentHash,
 	})

@@ -375,15 +375,8 @@ func (graph deadCodeGraph) invokedFuncParamIndexes(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
 ) map[int]struct{} {
-	pkg, decl, _, ok := graph.reflectedWrapperFunc(fn)
+	source, ok := graph.reflectedWrapperFunc(fn)
 	if !ok {
-		return nil
-	}
-
-	sig, _ := fn.Type().(*types.Signature)
-
-	paramIndexes := sourceFuncParamObjectIndexes(pkg.TypesInfo, sig, decl)
-	if len(paramIndexes) == 0 {
 		return nil
 	}
 
@@ -399,8 +392,8 @@ func (graph deadCodeGraph) invokedFuncParamIndexes(
 
 	out := make(map[int]struct{})
 
-	inspectReflectedCalls(decl.Body, func(call *ast.CallExpr) {
-		graph.collectInvokedFuncParamIndexes(pkg, call, paramIndexes, funcsSeen, out)
+	inspectReflectedCalls(source.decl.Body, func(call *ast.CallExpr) {
+		graph.collectInvokedFuncParamIndexes(source.pkg, call, source.paramIndexes, funcsSeen, out)
 	})
 
 	return out

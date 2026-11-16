@@ -18,18 +18,17 @@ func populateSimilarityScanVectors(
 	ctx context.Context,
 	scanBlocks []*similarityBlock,
 	descriptionBlocks []*similarityBlock,
-	allBlocks []*similarityBlock,
 	descriptionRuntime similarityDescriptionRuntime,
 	cacheRoot string,
 	opts SimilarityOptions,
-) (vectors similarityVectorMatrices, descriptionDigest string, err error) {
+) (vectors similarityVectorMatrices, err error) {
 	embeddings := newSimilarityEmbeddingRuntime(opts.embedder, cacheRoot, opts.CacheEnabled)
 
 	defer func() { err = errors.Join(err, embeddings.close()) }()
 
 	if !descriptionRuntime.enabled {
 		vectors.Source, err = embeddings.populate(scanBlocks, similaritySourceVector)
-		return vectors, "", err
+		return vectors, err
 	}
 
 	changed := make(map[*similarityBlock]struct{}, len(descriptionBlocks))
@@ -67,9 +66,6 @@ func populateSimilarityScanVectors(
 			ctx,
 			descriptionBlocks, descriptionRuntime, cacheRoot, opts.CacheEnabled,
 		)
-		if descriptionErr == nil {
-			descriptionDigest, descriptionErr = similarityDescriptionsDigest(allBlocks)
-		}
 	}()
 
 	vectors.Source, err = embeddings.populate(scanBlocks, similaritySourceVector)
@@ -92,10 +88,10 @@ func populateSimilarityScanVectors(
 
 	err = errors.Join(err, descriptionErr)
 	if err != nil {
-		return similarityVectorMatrices{}, "", err
+		return similarityVectorMatrices{}, err
 	}
 
-	return vectors, descriptionDigest, nil
+	return vectors, nil
 }
 
 func similarityEmbeddingInputs(content string) []string {

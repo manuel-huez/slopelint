@@ -74,26 +74,26 @@ func (l *Runner) functionBehaviorCandidatesFrom(
 			continue
 		}
 
-		key, effects, weight, ok := newBehaviorSSAEncoder(
+		encoded := newBehaviorSSAEncoder(
 			function.fn,
 			analysis.summaries,
 			analysis.aliases,
 			analysis.objectTargets,
 		).encode()
-		if !ok || weight < behaviorMinFunctionInstructions {
+		if !encoded.ok || encoded.weight < behaviorMinFunctionInstructions {
 			continue
 		}
 
-		candidates = append(candidates, newBehaviorCandidate(
-			l.pkg,
-			"function|"+key,
-			function.name,
-			function.pos.start,
-			function.pos.end,
-			behaviorCandidateFunction,
-			weight,
-			effects,
-		))
+		candidates = append(candidates, newBehaviorCandidate(behaviorCandidate{
+			pkg:     l.pkg,
+			key:     "function|" + encoded.text,
+			name:    function.name,
+			pos:     function.pos.start,
+			end:     function.pos.end,
+			kind:    behaviorCandidateFunction,
+			weight:  encoded.weight,
+			effects: encoded.effects,
+		}))
 	}
 
 	return candidates
@@ -434,84 +434,113 @@ func behaviorBlockOrder(fn *ssa.Function) []*ssa.BasicBlock {
 	return append(blocks, remaining...)
 }
 
-func (e *behaviorSSAEncoder) encode() (string, behaviorEffects, int, bool) {
+// behaviorSSAEncoding is one encoded instruction or function. weight counts
+// meaningful instructions; ok is false for unsupported SSA, which fails closed.
+type behaviorSSAEncoding struct {
+	text    string
+	effects behaviorEffects
+	weight  int
+	ok      bool
+}
+
+// behaviorSSAOperandOp returns a weight-1 encoding that fails closed when operand encoding failed.
+func behaviorSSAOperandOp(
+	text string,
+	effects behaviorEffects,
+	operandsOK bool,
+) behaviorSSAEncoding {
+	return behaviorSSAEncoding{text: text, effects: effects, weight: 1, ok: operandsOK}
+}
+
+func (e *behaviorSSAEncoder) encode() behaviorSSAEncoding {
 	var out strings.Builder
 	out.WriteString(e.typeKeys.signatureKey(e.fn.Signature))
 
-	var effects behaviorEffects
-
-	weight := 0
+	result := behaviorSSAEncoding{ok: true}
 
 	for _, block := range e.blocks {
 		fmt.Fprintf(&out, "\nb%d{", e.blockIDs[block])
 
 		for _, instruction := range block.Instrs {
-			encoded, instructionEffects, meaningful, ok := e.encodeInstruction(instruction)
-			if !ok {
-				return "", 0, 0, false
+			encoded := e.encodeInstruction(instruction)
+			if !encoded.ok {
+				return behaviorSSAEncoding{}
 			}
 
-			if encoded == "" {
+			if encoded.text == "" {
 				continue
 			}
 
-			out.WriteString(encoded)
+			out.WriteString(encoded.text)
 			out.WriteByte(';')
 
-			effects |= instructionEffects
-
-			if meaningful {
-				weight++
-			}
+			result.effects |= encoded.effects
+			result.weight += encoded.weight
 		}
 
 		out.WriteByte('}')
 	}
 
-	return out.String(), effects, weight, true
+	result.text = out.String()
+
+	return result
 }
 
-//nolint:cyclop,maintidx // SSA exposes an exhaustive type set; unknown types fail closed.
-func (e *behaviorSSAEncoder) encodeInstruction(
-	instruction ssa.Instruction,
-) (string, behaviorEffects, bool, bool) {
-	if _, isDebug := instruction.(*ssa.DebugRef); isDebug {
-		return "", 0, false, true
+func (e *behaviorSSAEncoder) encodeInstruction(instruction ssa.Instruction) behaviorSSAEncoding {
+	var encoded behaviorSSAEncoding
+
+	switch instruction.(type) {
+	case *ssa.DebugRef:
+		return behaviorSSAEncoding{ok: true}
+	case *ssa.Phi, *ssa.Call, *ssa.BinOp, *ssa.UnOp:
+		encoded = e.encodeComputeInstruction(instruction)
+	case *ssa.ChangeType, *ssa.Convert, *ssa.MultiConvert, *ssa.ChangeInterface,
+		*ssa.SliceToArrayPointer, *ssa.MakeInterface, *ssa.TypeAssert:
+		encoded = e.encodeConversionInstruction(instruction)
+	case *ssa.Alloc, *ssa.MakeClosure, *ssa.MakeMap, *ssa.MakeChan, *ssa.MakeSlice:
+		encoded = e.encodeAllocationInstruction(instruction)
+	case *ssa.Slice, *ssa.FieldAddr, *ssa.Field, *ssa.IndexAddr, *ssa.Index, *ssa.Lookup,
+		*ssa.Extract:
+		encoded = e.encodeAccessInstruction(instruction)
+	case *ssa.Select, *ssa.Range, *ssa.Next:
+		encoded = e.encodeIterationInstruction(instruction)
+	default:
+		encoded = e.encodeControlInstruction(instruction)
 	}
 
-	prefix := ""
 	if value, isValue := instruction.(ssa.Value); isValue {
-		prefix = e.valueIDs[value] + ":" + e.typeKeys.typeKey(value.Type()) + "="
+		encoded.text = e.valueIDs[value] + ":" + e.typeKeys.typeKey(
+			value.Type(),
+		) + "=" + encoded.text
 	}
 
-	operands := func(values ...ssa.Value) (string, bool) {
-		parts := make([]string, len(values))
-		for idx, value := range values {
-			encoded, ok := e.valueRef(value)
-			if !ok {
-				return "", false
-			}
+	return encoded
+}
 
-			parts[idx] = encoded
+func (e *behaviorSSAEncoder) operands(values ...ssa.Value) (string, bool) {
+	parts := make([]string, len(values))
+	for idx, value := range values {
+		encoded, ok := e.valueRef(value)
+		if !ok {
+			return "", false
 		}
 
-		return strings.Join(parts, ","), true
+		parts[idx] = encoded
 	}
 
+	return strings.Join(parts, ","), true
+}
+
+func (e *behaviorSSAEncoder) encodeComputeInstruction(
+	instruction ssa.Instruction,
+) behaviorSSAEncoding {
 	switch instruction := instruction.(type) {
-	case *ssa.Alloc:
-		effects := behaviorEffects(0)
-		if instruction.Heap {
-			effects = behaviorEffectAllocate
-		}
-
-		return prefix + fmt.Sprintf("alloc(heap=%t)", instruction.Heap), effects, true, true
 	case *ssa.Phi:
 		parts := make([]string, 0, len(instruction.Edges))
 		for idx, edge := range instruction.Edges {
 			value, ok := e.valueRef(edge)
 			if !ok || idx >= len(instruction.Block().Preds) {
-				return "", 0, false, false
+				return behaviorSSAEncoding{}
 			}
 
 			parts = append(
@@ -522,15 +551,19 @@ func (e *behaviorSSAEncoder) encodeInstruction(
 
 		sort.Strings(parts)
 
-		return prefix + "phi(" + strings.Join(parts, ",") + ")", 0, true, true
+		return behaviorSSAEncoding{
+			text:   "phi(" + strings.Join(parts, ",") + ")",
+			weight: 1,
+			ok:     true,
+		}
 	case *ssa.Call:
 		call, effects, ok := e.encodeCall(&instruction.Call)
-		return prefix + call, effects, true, ok
+		return behaviorSSAOperandOp(call, effects, ok)
 	case *ssa.BinOp:
-		args, ok := operands(instruction.X, instruction.Y)
-		return prefix + "bin(" + instruction.Op.String() + "," + args + ")", 0, true, ok
+		args, ok := e.operands(instruction.X, instruction.Y)
+		return behaviorSSAOperandOp("bin("+instruction.Op.String()+","+args+")", 0, ok)
 	case *ssa.UnOp:
-		arg, ok := operands(instruction.X)
+		arg, ok := e.operands(instruction.X)
 
 		effects := behaviorEffects(0)
 		if instruction.Op.String() == "*" && !behaviorLocalMemory(instruction.X) {
@@ -541,180 +574,245 @@ func (e *behaviorSSAEncoder) encodeInstruction(
 			effects |= behaviorEffectConcurrent
 		}
 
-		return prefix + fmt.Sprintf(
-			"unary(%s,ok=%t,%s)",
-			instruction.Op,
-			instruction.CommaOk,
-			arg,
-		), effects, true, ok
+		return behaviorSSAOperandOp(
+			fmt.Sprintf("unary(%s,ok=%t,%s)", instruction.Op, instruction.CommaOk, arg),
+			effects,
+			ok,
+		)
+	default:
+		return behaviorSSAEncoding{}
+	}
+}
+
+func (e *behaviorSSAEncoder) encodeConversionInstruction(
+	instruction ssa.Instruction,
+) behaviorSSAEncoding {
+	switch instruction := instruction.(type) {
 	case *ssa.ChangeType:
-		arg, ok := operands(instruction.X)
-		return prefix + "changetype(" + arg + ")", 0, true, ok
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("changetype("+arg+")", 0, ok)
 	case *ssa.Convert:
-		arg, ok := operands(instruction.X)
-		return prefix + "convert(" + arg + ")", 0, true, ok
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("convert("+arg+")", 0, ok)
 	case *ssa.MultiConvert:
-		arg, ok := operands(instruction.X)
-		return prefix + "multiconvert(" + arg + ")", 0, true, ok
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("multiconvert("+arg+")", 0, ok)
 	case *ssa.ChangeInterface:
-		arg, ok := operands(instruction.X)
-		return prefix + "changeinterface(" + arg + ")", 0, true, ok
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("changeinterface("+arg+")", 0, ok)
 	case *ssa.SliceToArrayPointer:
-		arg, ok := operands(instruction.X)
-		return prefix + "slicetoarray(" + arg + ")", behaviorEffectPanic, true, ok
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("slicetoarray("+arg+")", behaviorEffectPanic, ok)
 	case *ssa.MakeInterface:
-		arg, ok := operands(instruction.X)
-		return prefix + "makeinterface(" + arg + ")", 0, true, ok
-	case *ssa.MakeClosure:
-		values := append([]ssa.Value{instruction.Fn}, instruction.Bindings...)
-		args, ok := operands(values...)
-
-		return prefix + "closure(" + args + ")", behaviorEffectAllocate, true, ok
-	case *ssa.MakeMap:
-		arg, ok := operands(instruction.Reserve)
-		return prefix + "makemap(" + arg + ")", behaviorEffectAllocate, true, ok
-	case *ssa.MakeChan:
-		arg, ok := operands(instruction.Size)
-		return prefix + "makechan(" + arg + ")", behaviorEffectAllocate, true, ok
-	case *ssa.MakeSlice:
-		args, ok := operands(instruction.Len, instruction.Cap)
-		return prefix + "makeslice(" + args + ")", behaviorEffectAllocate, true, ok
-	case *ssa.Slice:
-		args, ok := operands(instruction.X, instruction.Low, instruction.High, instruction.Max)
-		return prefix + "slice(" + args + ")", behaviorEffectPanic, true, ok
-	case *ssa.FieldAddr:
-		arg, ok := operands(instruction.X)
-
-		effects := behaviorEffects(0)
-		if !behaviorLocalMemory(instruction.X) {
-			effects = behaviorEffectPanic
-		}
-
-		return prefix + fmt.Sprintf("fieldaddr(%d,%s)", instruction.Field, arg), effects, true, ok
-	case *ssa.Field:
-		arg, ok := operands(instruction.X)
-		return prefix + fmt.Sprintf("field(%d,%s)", instruction.Field, arg), 0, true, ok
-	case *ssa.IndexAddr:
-		args, ok := operands(instruction.X, instruction.Index)
-		return prefix + "indexaddr(" + args + ")", behaviorEffectPanic, true, ok
-	case *ssa.Index:
-		args, ok := operands(instruction.X, instruction.Index)
-		return prefix + "index(" + args + ")", behaviorEffectRead | behaviorEffectPanic, true, ok
-	case *ssa.Lookup:
-		args, ok := operands(instruction.X, instruction.Index)
-
-		return prefix + fmt.Sprintf(
-			"lookup(ok=%t,%s)",
-			instruction.CommaOk,
-			args,
-		), behaviorEffectRead, true, ok
-	case *ssa.Select:
-		parts := make([]string, 0, len(instruction.States))
-		for _, state := range instruction.States {
-			args, ok := operands(state.Chan, state.Send)
-			if !ok {
-				return "", 0, false, false
-			}
-
-			parts = append(parts, fmt.Sprintf("%d:%s", state.Dir, args))
-		}
-
-		return prefix + fmt.Sprintf(
-			"select(block=%t,%s)",
-			instruction.Blocking,
-			strings.Join(parts, "|"),
-		), behaviorEffectConcurrent, true, true
-	case *ssa.Range:
-		arg, ok := operands(instruction.X)
-		return prefix + "range(" + arg + ")", behaviorEffectRead, true, ok
-	case *ssa.Next:
-		arg, ok := operands(instruction.Iter)
-
-		return prefix + fmt.Sprintf(
-			"next(string=%t,%s)",
-			instruction.IsString,
-			arg,
-		), behaviorEffectRead, true, ok
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("makeinterface("+arg+")", 0, ok)
 	case *ssa.TypeAssert:
-		arg, ok := operands(instruction.X)
+		arg, ok := e.operands(instruction.X)
 
 		effects := behaviorEffects(0)
 		if !instruction.CommaOk {
 			effects = behaviorEffectPanic
 		}
 
-		return prefix + fmt.Sprintf(
+		return behaviorSSAOperandOp(fmt.Sprintf(
 			"assert(%s,ok=%t,%s)",
 			e.typeKeys.typeKey(instruction.AssertedType),
 			instruction.CommaOk,
 			arg,
-		), effects, true, ok
-	case *ssa.Extract:
-		arg, ok := operands(instruction.Tuple)
-		return prefix + fmt.Sprintf("extract(%d,%s)", instruction.Index, arg), 0, true, ok
+		), effects, ok)
 	default:
-		return e.encodeControlInstruction(instruction, operands)
+		return behaviorSSAEncoding{}
+	}
+}
+
+func (e *behaviorSSAEncoder) encodeAllocationInstruction(
+	instruction ssa.Instruction,
+) behaviorSSAEncoding {
+	switch instruction := instruction.(type) {
+	case *ssa.Alloc:
+		effects := behaviorEffects(0)
+		if instruction.Heap {
+			effects = behaviorEffectAllocate
+		}
+
+		return behaviorSSAEncoding{
+			text:    fmt.Sprintf("alloc(heap=%t)", instruction.Heap),
+			effects: effects,
+			weight:  1,
+			ok:      true,
+		}
+	case *ssa.MakeClosure:
+		args, ok := e.operands(append([]ssa.Value{instruction.Fn}, instruction.Bindings...)...)
+		return behaviorSSAOperandOp("closure("+args+")", behaviorEffectAllocate, ok)
+	case *ssa.MakeMap:
+		arg, ok := e.operands(instruction.Reserve)
+		return behaviorSSAOperandOp("makemap("+arg+")", behaviorEffectAllocate, ok)
+	case *ssa.MakeChan:
+		arg, ok := e.operands(instruction.Size)
+		return behaviorSSAOperandOp("makechan("+arg+")", behaviorEffectAllocate, ok)
+	case *ssa.MakeSlice:
+		args, ok := e.operands(instruction.Len, instruction.Cap)
+		return behaviorSSAOperandOp("makeslice("+args+")", behaviorEffectAllocate, ok)
+	default:
+		return behaviorSSAEncoding{}
+	}
+}
+
+func (e *behaviorSSAEncoder) encodeAccessInstruction(
+	instruction ssa.Instruction,
+) behaviorSSAEncoding {
+	switch instruction := instruction.(type) {
+	case *ssa.Slice:
+		args, ok := e.operands(instruction.X, instruction.Low, instruction.High, instruction.Max)
+		return behaviorSSAOperandOp("slice("+args+")", behaviorEffectPanic, ok)
+	case *ssa.FieldAddr:
+		arg, ok := e.operands(instruction.X)
+
+		effects := behaviorEffects(0)
+		if !behaviorLocalMemory(instruction.X) {
+			effects = behaviorEffectPanic
+		}
+
+		return behaviorSSAOperandOp(
+			fmt.Sprintf("fieldaddr(%d,%s)", instruction.Field, arg),
+			effects,
+			ok,
+		)
+	case *ssa.Field:
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp(fmt.Sprintf("field(%d,%s)", instruction.Field, arg), 0, ok)
+	case *ssa.IndexAddr:
+		args, ok := e.operands(instruction.X, instruction.Index)
+		return behaviorSSAOperandOp("indexaddr("+args+")", behaviorEffectPanic, ok)
+	case *ssa.Index:
+		args, ok := e.operands(instruction.X, instruction.Index)
+		return behaviorSSAOperandOp("index("+args+")", behaviorEffectRead|behaviorEffectPanic, ok)
+	case *ssa.Lookup:
+		args, ok := e.operands(instruction.X, instruction.Index)
+
+		return behaviorSSAOperandOp(
+			fmt.Sprintf("lookup(ok=%t,%s)", instruction.CommaOk, args),
+			behaviorEffectRead,
+			ok,
+		)
+	case *ssa.Extract:
+		arg, ok := e.operands(instruction.Tuple)
+		return behaviorSSAOperandOp(fmt.Sprintf("extract(%d,%s)", instruction.Index, arg), 0, ok)
+	default:
+		return behaviorSSAEncoding{}
+	}
+}
+
+func (e *behaviorSSAEncoder) encodeIterationInstruction(
+	instruction ssa.Instruction,
+) behaviorSSAEncoding {
+	switch instruction := instruction.(type) {
+	case *ssa.Select:
+		parts := make([]string, 0, len(instruction.States))
+		for _, state := range instruction.States {
+			args, ok := e.operands(state.Chan, state.Send)
+			if !ok {
+				return behaviorSSAEncoding{}
+			}
+
+			parts = append(parts, fmt.Sprintf("%d:%s", state.Dir, args))
+		}
+
+		return behaviorSSAEncoding{
+			text: fmt.Sprintf(
+				"select(block=%t,%s)",
+				instruction.Blocking,
+				strings.Join(parts, "|"),
+			),
+			effects: behaviorEffectConcurrent,
+			weight:  1,
+			ok:      true,
+		}
+	case *ssa.Range:
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("range("+arg+")", behaviorEffectRead, ok)
+	case *ssa.Next:
+		arg, ok := e.operands(instruction.Iter)
+
+		return behaviorSSAOperandOp(
+			fmt.Sprintf("next(string=%t,%s)", instruction.IsString, arg),
+			behaviorEffectRead,
+			ok,
+		)
+	default:
+		return behaviorSSAEncoding{}
 	}
 }
 
 //nolint:cyclop // Control instructions use the same exhaustive, fail-closed dispatch.
 func (e *behaviorSSAEncoder) encodeControlInstruction(
 	instruction ssa.Instruction,
-	operands func(...ssa.Value) (string, bool),
-) (string, behaviorEffects, bool, bool) {
+) behaviorSSAEncoding {
 	switch instruction := instruction.(type) {
 	case *ssa.Jump:
 		if len(instruction.Block().Succs) != 1 {
-			return "", 0, false, false
+			return behaviorSSAEncoding{}
 		}
 
-		return fmt.Sprintf("jump(b%d)", e.blockIDs[instruction.Block().Succs[0]]), 0, false, true
+		// Jumps keep block shape but do not count as meaningful work.
+		return behaviorSSAEncoding{
+			text: fmt.Sprintf("jump(b%d)", e.blockIDs[instruction.Block().Succs[0]]),
+			ok:   true,
+		}
 	case *ssa.If:
-		cond, ok := operands(instruction.Cond)
+		cond, ok := e.operands(instruction.Cond)
 		if len(instruction.Block().Succs) != behaviorConditionalSuccessors {
-			return "", 0, false, false
+			return behaviorSSAEncoding{}
 		}
 
-		return fmt.Sprintf(
+		return behaviorSSAOperandOp(fmt.Sprintf(
 			"if(%s,b%d,b%d)",
 			cond,
 			e.blockIDs[instruction.Block().Succs[0]],
 			e.blockIDs[instruction.Block().Succs[1]],
-		), 0, true, ok
+		), 0, ok)
 	case *ssa.Return:
-		args, ok := operands(instruction.Results...)
-		return "return(" + args + ")", 0, true, ok
+		args, ok := e.operands(instruction.Results...)
+		return behaviorSSAOperandOp("return("+args+")", 0, ok)
 	case *ssa.RunDefers:
-		return "rundefers", behaviorEffectDefer, true, true
+		return behaviorSSAEncoding{
+			text:    "rundefers",
+			effects: behaviorEffectDefer,
+			weight:  1,
+			ok:      true,
+		}
 	case *ssa.Panic:
-		arg, ok := operands(instruction.X)
-		return "panic(" + arg + ")", behaviorEffectPanic, true, ok
+		arg, ok := e.operands(instruction.X)
+		return behaviorSSAOperandOp("panic("+arg+")", behaviorEffectPanic, ok)
 	case *ssa.Go:
 		call, callEffects, ok := e.encodeCall(&instruction.Call)
-		return "go(" + call + ")", callEffects | behaviorEffectConcurrent, true, ok
+		return behaviorSSAOperandOp("go("+call+")", callEffects|behaviorEffectConcurrent, ok)
 	case *ssa.Defer:
 		call, callEffects, ok := e.encodeCall(&instruction.Call)
 		stack, stackOK := e.valueRef(instruction.DeferStack)
 
-		return "defer(" + call + "," + stack + ")", callEffects | behaviorEffectDefer,
-			true, ok && stackOK
+		return behaviorSSAOperandOp(
+			"defer("+call+","+stack+")",
+			callEffects|behaviorEffectDefer,
+			ok && stackOK,
+		)
 	case *ssa.Send:
-		args, ok := operands(instruction.Chan, instruction.X)
-		return "send(" + args + ")", behaviorEffectConcurrent, true, ok
+		args, ok := e.operands(instruction.Chan, instruction.X)
+		return behaviorSSAOperandOp("send("+args+")", behaviorEffectConcurrent, ok)
 	case *ssa.Store:
-		args, ok := operands(instruction.Addr, instruction.Val)
+		args, ok := e.operands(instruction.Addr, instruction.Val)
 
 		effects := behaviorEffects(0)
 		if !behaviorLocalMemory(instruction.Addr) {
 			effects = behaviorEffectWrite
 		}
 
-		return "store(" + args + ")", effects, true, ok
+		return behaviorSSAOperandOp("store("+args+")", effects, ok)
 	case *ssa.MapUpdate:
-		args, ok := operands(instruction.Map, instruction.Key, instruction.Value)
-		return "mapupdate(" + args + ")", behaviorEffectWrite, true, ok
+		args, ok := e.operands(instruction.Map, instruction.Key, instruction.Value)
+		return behaviorSSAOperandOp("mapupdate("+args+")", behaviorEffectWrite, ok)
 	default:
-		return "", 0, false, false
+		return behaviorSSAEncoding{}
 	}
 }
 

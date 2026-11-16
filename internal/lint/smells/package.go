@@ -58,6 +58,8 @@ func RunDefault(pkg *Package) []Finding {
 	r.checkUnusedPrivateParams()
 	r.checkDeclarationGrouping()
 	r.checkOversizedOwnerFiles()
+	r.checkFunctionSizeLimits()
+	r.checkSwallowedErrors()
 	r.checkUnnamedLargeTableTests()
 	r.checkRepeatedTestFixtures()
 	r.checkConstValueTests()

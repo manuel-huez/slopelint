@@ -293,39 +293,38 @@ func fmtStringerFormattedArgIndexes(
 	argIndex := firstArg
 
 	for index := 0; index < len(format); {
-		verb, sharp, valueArgIndex, nextArgIndex, ok := nextFmtDirective(
-			format,
-			&index,
-			argIndex,
-		)
+		directive, ok := nextFmtDirective(format, &index, argIndex)
 		if !ok {
 			index++
 			continue
 		}
 
-		if fmtVerbUsesStringer(verb, sharp) {
-			out[valueArgIndex] = struct{}{}
+		if fmtVerbUsesStringer(directive.verb, directive.sharp) {
+			out[directive.argIndex] = struct{}{}
 		}
 
-		argIndex = nextArgIndex
+		argIndex = directive.argIndex + 1
 		index++
 	}
 
 	return out
 }
 
-func nextFmtDirective(
-	format string,
-	index *int,
-	argIndex int,
-) (byte, bool, int, int, bool) {
+// fmtDirective is one fmt verb and the operand index it formats.
+type fmtDirective struct {
+	verb     byte
+	sharp    bool
+	argIndex int
+}
+
+func nextFmtDirective(format string, index *int, argIndex int) (fmtDirective, bool) {
 	if format[*index] != '%' {
-		return 0, false, argIndex, argIndex, false
+		return fmtDirective{}, false
 	}
 
 	*index++
 	if *index >= len(format) || format[*index] == '%' {
-		return 0, false, argIndex, argIndex, false
+		return fmtDirective{}, false
 	}
 
 	sharp := false
@@ -344,10 +343,10 @@ func nextFmtDirective(
 	}
 
 	if *index >= len(format) {
-		return 0, false, argIndex, argIndex, false
+		return fmtDirective{}, false
 	}
 
-	return format[*index], sharp, argIndex, argIndex + 1, true
+	return fmtDirective{verb: format[*index], sharp: sharp, argIndex: argIndex}, true
 }
 
 func formatHasExplicitIndexes(format string) bool {

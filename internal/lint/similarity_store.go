@@ -274,12 +274,9 @@ func (stamp similarityStamp) covers(sourceDigest string, descriptionsEnabled boo
 		(!descriptionsEnabled || stamp.DescriptionModel != "")
 }
 
-func verifySimilarityStamp(
-	stamp similarityStamp,
-	exists bool,
-	sourceDigest string,
-) error {
-	if !exists {
+// verifySimilarityStamp checks a committed stamp; a missing one has Schema 0.
+func verifySimilarityStamp(stamp similarityStamp, sourceDigest string) error {
+	if stamp.Schema == 0 {
 		return fmt.Errorf(
 			"%s is missing; run slopelint locally and commit the generated stamp",
 			similarityStampName,
@@ -416,10 +413,9 @@ func similarityVectorPath(root, key string) string {
 
 func carrySimilarityAcceptances(
 	stamp similarityStamp,
-	exists bool,
 	current map[string]string,
 ) []similarityAcceptance {
-	if !exists {
+	if stamp.Schema == 0 {
 		return nil
 	}
 

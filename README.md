@@ -129,9 +129,11 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Loop performance traps | `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` |
 | Wrappers, repeated normalization, and comments that restate names | `trivial_wrapper`, `normalization_ceremony`, `serialization_ceremony`, `comment_noise` |
 | Repeated function or block behavior | `behavior_clone`, `semantic_duplicate` |
-| Overbuilt APIs and signatures | `abstraction_overkill`, `api_overkill`, `result_wrapper`, `generic_naming`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple`, `prod_must_panic`, `sentinel_error_break` |
+| Overbuilt APIs and signatures | `abstraction_overkill`, `api_overkill`, `result_wrapper`, `generic_naming`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple` |
+| Error panics, sentinel breaks, and errors dropped by error-returning functions | `prod_must_panic`, `sentinel_error_break`, `swallowed_error` |
 | Unreachable declarations | `dead_code` |
-| Declaration grouping and owner files over 1,000 lines | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes`, `oversized_owner_file` |
+| Declaration grouping | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` |
+| Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list` |
 | Test structure and support code | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_support_filename` |
 | Invalid contracts and stale suppressions | `invalid_contract`, `stale_complexity_suppression` |
 

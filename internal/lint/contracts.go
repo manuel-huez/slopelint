@@ -128,12 +128,23 @@ func parseGuardContract(text string, bindings map[string]contractBinding) (guard
 		return guardContract{}, false
 	}
 
-	left, right, wantEq, ok := splitContractBody(body)
-	if !ok {
+	// "!=" wins when both appear, so `a != "=="` keeps its literal.
+	op, wantEq := "!=", false
+
+	opIndex := strings.Index(body, op)
+	if opIndex < 0 {
+		op, wantEq = "==", true
+		opIndex = strings.Index(body, op)
+	}
+
+	if opIndex < 0 {
 		return guardContract{}, false
 	}
 
-	parts := strings.Split(left, ".")
+	// Empty sides fail below: no binding has an empty name or scalar text.
+	right := strings.TrimSpace(body[opIndex+len(op):])
+
+	parts := strings.Split(strings.TrimSpace(body[:opIndex]), ".")
 	if len(parts) == 0 || parts[0] == "" {
 		return guardContract{}, false
 	}
@@ -173,32 +184,6 @@ func trimContractPrefix(text string) (string, bool) {
 	}
 
 	return "", false
-}
-
-func splitContractBody(body string) (string, string, bool, bool) {
-	for _, op := range []struct {
-		text   string
-		wantEq bool
-	}{
-		{text: "!=", wantEq: false},
-		{text: "==", wantEq: true},
-	} {
-		idx := strings.Index(body, op.text)
-		if idx < 0 {
-			continue
-		}
-
-		left := strings.TrimSpace(body[:idx])
-
-		right := strings.TrimSpace(body[idx+len(op.text):])
-		if left == "" || right == "" {
-			return "", "", false, false
-		}
-
-		return left, right, op.wantEq, true
-	}
-
-	return "", "", false, false
 }
 
 func parseContractScalar(text string) (scalar, bool) {

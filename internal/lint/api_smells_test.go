@@ -531,3 +531,151 @@ func parse(value string) string {
 		t.Fatalf("unexpected stale-complexity-suppression finding, got:\n%s", joined)
 	}
 }
+
+func TestDetectsSwallowedErrors(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "os"
+
+func load(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+
+	return nil
+}
+
+func loadAll(paths []string) error {
+	for _, path := range paths {
+		_, statErr := os.Stat(path)
+		if statErr != nil {
+			continue
+		}
+	}
+
+	return nil
+}
+
+func visit(paths []string) {
+	check := func(path string) error {
+		if _, litErr := os.Stat(path); litErr != nil {
+			return nil
+		}
+
+		return nil
+	}
+
+	for _, path := range paths {
+		_ = check(path)
+	}
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
+
+	for _, name := range []string{"err", "statErr", "litErr"} {
+		want := `error "` + name + `" is checked and dropped in a function that returns error; return, wrap, or record it, or return false to state the ok-bool contract`
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected swallowed-error finding for %s, got:\n%s", name, joined)
+		}
+	}
+}
+
+func TestSkipsHandledErrors(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import (
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+)
+
+var errMissing = errors.New("missing")
+
+func wrapped(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+
+	return nil
+}
+
+func logged(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		log.Printf("stat: %v", err)
+	}
+
+	return nil
+}
+
+func parse(value string) (error, bool) {
+	if _, err := strconv.Atoi(value); err != nil {
+		return nil, false
+	}
+
+	return nil, true
+}
+
+func fallback(value string) int {
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+
+	return parsed
+}
+
+func usedLater(path string) error {
+	_, err := os.Stat(path)
+	if err != nil {
+		log.Print("stat failed")
+	}
+
+	return err
+}
+
+func named(path string) (err error) {
+	if _, err = os.Stat(path); err != nil {
+		return
+	}
+
+	return nil
+}
+
+func background(path string) error {
+	go func() {
+		if _, err := os.Stat(path); err != nil {
+			return
+		}
+	}()
+
+	return nil
+}
+
+func replaced(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return errMissing
+	}
+
+	return nil
+}
+
+func must(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		panic("missing " + path)
+	}
+
+	return nil
+}
+`)
+
+	issues := lintInDir(t, tmp)
+	if hasIssueKind(issues, "swallowed_error") {
+		t.Fatalf("unexpected swallowed_error finding, got:\n%s", joinMessages(issues))
+	}
+}

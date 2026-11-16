@@ -182,15 +182,11 @@ func (l *linter) prepareSwitchClauseStates(
 	clause *ast.CaseClause,
 	remaining []state,
 	carriedFallthrough []state,
-) ([]state, []state, bool, bool) {
-	hasExplicitCase := len(clause.List) > 0
+) (caseStates []state, nextRemaining []state, skip bool) {
+	caseStates = append([]state{}, carriedFallthrough...)
 
-	caseStates := append([]state{}, carriedFallthrough...)
-
-	if !hasExplicitCase {
-		caseStates = append(caseStates, remaining...)
-
-		return caseStates, remaining, false, true
+	if len(clause.List) == 0 {
+		return append(caseStates, remaining...), remaining, false
 	}
 
 	if len(remaining) == 0 && len(carriedFallthrough) == 0 {
@@ -203,11 +199,11 @@ func (l *linter) prepareSwitchClauseStates(
 			),
 		)
 
-		return nil, remaining, true, false
+		return nil, remaining, true
 	}
 
 	if len(remaining) == 0 {
-		return caseStates, remaining, false, false
+		return caseStates, remaining, false
 	}
 
 	tri, because := l.truthAcrossCase(remaining, stmt.Tag, clause.List)
@@ -220,7 +216,7 @@ func (l *linter) prepareSwitchClauseStates(
 		l.refineStatesCase(remaining, stmt.Tag, clause.List, true)...,
 	)
 
-	return caseStates, l.refineStatesCase(remaining, stmt.Tag, clause.List, false), false, false
+	return caseStates, l.refineStatesCase(remaining, stmt.Tag, clause.List, false), false
 }
 
 func (l *linter) execSwitchStmtWithLabel(
@@ -247,14 +243,14 @@ func (l *linter) execSwitchStmtWithLabel(
 	for _, raw := range stmt.Body.List {
 		clause := raw.(*ast.CaseClause)
 
-		caseStates, nextRemaining, skipClause, isDefault := l.prepareSwitchClauseStates(
+		caseStates, nextRemaining, skipClause := l.prepareSwitchClauseStates(
 			stmt,
 			clause,
 			remaining,
 			carriedFallthrough,
 		)
 
-		if isDefault {
+		if len(clause.List) == 0 {
 			defaultSeen = true
 		}
 

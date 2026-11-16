@@ -567,17 +567,19 @@ func TestSimilarityScanEmbedsBeforeDescriptionsFinish(t *testing.T) {
 				describer: similarityStreamingTestDescriber{embedded: embedded}, enabled: true,
 			}
 
-			vectors, digest, err := populateSimilarityScanVectors(
+			vectors, err := populateSimilarityScanVectors(
 				t.Context(),
-				blocks, blocks, blocks, runtime, t.TempDir(),
+				blocks, blocks, runtime, t.TempDir(),
 				SimilarityOptions{embedder: embedder, CacheEnabled: cacheEnabled},
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if digest == "" || len(vectors.Description.Values) != 2*vectors.Description.Dimensions {
-				t.Fatalf("incomplete scan: digest=%q, vectors=%+v", digest, vectors)
+			_, digestErr := similarityDescriptionsDigest(blocks)
+			if digestErr != nil ||
+				len(vectors.Description.Values) != 2*vectors.Description.Dimensions {
+				t.Fatalf("incomplete scan: digest error=%v, vectors=%+v", digestErr, vectors)
 			}
 		})
 	}
@@ -626,9 +628,8 @@ func TestSimilarityScanStopsDescriptionsAfterEmbeddingFailure(t *testing.T) {
 			done := make(chan error, 1)
 
 			go func() {
-				_, _, err := populateSimilarityScanVectors(
+				_, err := populateSimilarityScanVectors(
 					t.Context(),
-					blocks,
 					blocks,
 					blocks,
 					runtime,
@@ -677,9 +678,8 @@ func TestSimilarityScanReusesCachedAndRestoredDescriptions(t *testing.T) {
 		return []float32{1, float32(len(input))}
 	}}
 
-	want, wantDigest, err := populateSimilarityScanVectors(
+	want, err := populateSimilarityScanVectors(
 		t.Context(),
-		blocks,
 		blocks,
 		blocks,
 		runtime,
@@ -690,20 +690,29 @@ func TestSimilarityScanReusesCachedAndRestoredDescriptions(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	wantDigest, err := similarityDescriptionsDigest(blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	blocks[0].Description = ""
 	blocks[0].DescriptionHash = ""
 	describer = new(similarityTestDescriber)
 	runtime.describer = describer
 
-	got, digest, err := populateSimilarityScanVectors(
+	got, err := populateSimilarityScanVectors(
 		t.Context(),
 		blocks,
 		blocks[:1],
-		blocks,
 		runtime,
 		cacheRoot,
 		SimilarityOptions{embedder: &similarityFailureTestEmbedder{failAt: 1}, CacheEnabled: true},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	digest, err := similarityDescriptionsDigest(blocks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -728,9 +737,8 @@ func TestSimilarityScanRejectsIncompleteDescriptionStream(t *testing.T) {
 		enabled:   true,
 	}
 
-	vectors, digest, err := populateSimilarityScanVectors(
+	vectors, err := populateSimilarityScanVectors(
 		t.Context(),
-		blocks,
 		blocks,
 		blocks,
 		runtime,
@@ -741,7 +749,7 @@ func TestSimilarityScanRejectsIncompleteDescriptionStream(t *testing.T) {
 		t.Fatalf("incomplete stream error = %v", err)
 	}
 
-	if digest != "" || len(vectors.Description.Values) != 0 || len(vectors.Source.Values) != 0 {
+	if len(vectors.Description.Values) != 0 || len(vectors.Source.Values) != 0 {
 		t.Fatal("incomplete stream published a scan result")
 	}
 }
@@ -775,9 +783,8 @@ func TestSimilarityScanDoesNotStallDescriptionsDuringSourceInference(t *testing.
 		}
 	}}
 
-	_, _, err := populateSimilarityScanVectors(
+	_, err := populateSimilarityScanVectors(
 		t.Context(),
-		blocks,
 		blocks,
 		blocks,
 		runtime,

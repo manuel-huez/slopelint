@@ -27,16 +27,16 @@ func behaviorCalleeSummaries(
 	// Tarjan emits a caller-to-callee graph in dependency-first component order.
 	for _, component := range behaviorStrongComponents(functions, edges) {
 		if len(component) == 1 && !behaviorHasEdge(edges, component[0], component[0]) {
-			key, effects, _, ok := newBehaviorSSAEncoder(
+			encoded := newBehaviorSSAEncoder(
 				component[0],
 				summaries,
 				aliases,
 				objectTargets,
 			).encode()
-			if ok {
+			if encoded.ok {
 				summaries[component[0]] = behaviorSummary{
-					digest:  behaviorKeyDigest(key),
-					effects: effects,
+					digest:  behaviorKeyDigest(encoded.text),
+					effects: encoded.effects,
 				}
 			}
 
@@ -217,19 +217,19 @@ func behaviorSummarizeRecursiveComponent(
 
 	refs := behaviorRecursiveRefs(summaries, classes, effects)
 	for _, fn := range component {
-		key, finalEffects, _, ok := newBehaviorSSAEncoder(
+		encoded := newBehaviorSSAEncoder(
 			fn,
 			refs,
 			aliases,
 			objectTargets,
 		).encode()
-		if !ok {
+		if !encoded.ok {
 			return
 		}
 
 		summaries[fn] = behaviorSummary{
-			digest:  behaviorKeyDigest(key),
-			effects: finalEffects,
+			digest:  behaviorKeyDigest(encoded.text),
+			effects: encoded.effects,
 		}
 	}
 }
@@ -247,17 +247,17 @@ func behaviorRefineRecursiveClasses(
 	for {
 		refs := behaviorRecursiveRefs(summaries, classes, emptyEffects)
 		for _, fn := range component {
-			key, _, _, ok := newBehaviorSSAEncoder(
+			encoded := newBehaviorSSAEncoder(
 				fn,
 				refs,
 				aliases,
 				objectTargets,
 			).encode()
-			if !ok {
+			if !encoded.ok {
 				return nil, false
 			}
 
-			keys[fn] = classes[fn] + "|" + key
+			keys[fn] = classes[fn] + "|" + encoded.text
 		}
 
 		next, nextCount := behaviorClasses(component, keys)
@@ -285,18 +285,18 @@ func behaviorRefineRecursiveEffects(
 		changed := false
 
 		for _, fn := range component {
-			_, next, _, ok := newBehaviorSSAEncoder(
+			encoded := newBehaviorSSAEncoder(
 				fn,
 				refs,
 				aliases,
 				objectTargets,
 			).encode()
-			if !ok {
+			if !encoded.ok {
 				return nil, false
 			}
 
-			if next != effects[fn] {
-				effects[fn] = next
+			if encoded.effects != effects[fn] {
+				effects[fn] = encoded.effects
 				changed = true
 			}
 		}

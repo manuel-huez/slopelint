@@ -52,6 +52,143 @@ func (l *Runner) isPanicWithError(call *ast.CallExpr) bool {
 	return isErrorType(l.pkg.TypesInfo.TypeOf(call.Args[0]))
 }
 
+func (l *Runner) checkSwallowedErrors() {
+	l.forEachHandwrittenProductionFunc(func(fn *ast.FuncDecl) {
+		l.checkSwallowedErrorsIn(fn.Type, fn.Body)
+	})
+}
+
+// checkSwallowedErrorsIn checks one function scope. Only functions that can
+// return an error are judged; others have chosen a fallback contract. Nested
+// literals are their own scope.
+func (l *Runner) checkSwallowedErrorsIn(fnType *ast.FuncType, body *ast.BlockStmt) {
+	if body == nil {
+		return
+	}
+
+	returnsError := fnType.Results != nil && slices.ContainsFunc(
+		fnType.Results.List,
+		func(field *ast.Field) bool { return isErrorType(l.pkg.TypesInfo.TypeOf(field.Type)) },
+	)
+
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.FuncLit:
+			l.checkSwallowedErrorsIn(node.Type, node.Body)
+			return false
+		case *ast.IfStmt:
+			errObj := l.nonNilErrorCheck(node.Cond)
+			if returnsError && errObj != nil && !l.errorOutlivesIf(fnType, body, node, errObj) &&
+				l.blockDiscardsError(node.Body) {
+				l.report(node.Pos(), "swallowed_error", fmt.Sprintf(
+					"error %q is checked and dropped in a function that returns error; return, wrap, or record it, or return false to state the ok-bool contract",
+					errObj.Name(),
+				))
+			}
+		}
+
+		return true
+	})
+}
+
+// errorOutlivesIf reports whether a named result or a later use still carries
+// the error, as in `err = f(); if err != nil { break }; return err`.
+func (l *Runner) errorOutlivesIf(
+	fnType *ast.FuncType,
+	body *ast.BlockStmt,
+	ifStmt *ast.IfStmt,
+	errObj types.Object,
+) bool {
+	if fnType.Results != nil &&
+		slices.ContainsFunc(fnType.Results.List, func(field *ast.Field) bool {
+			return slices.ContainsFunc(field.Names, func(name *ast.Ident) bool {
+				return l.pkg.TypesInfo.ObjectOf(name) == errObj
+			})
+		}) {
+		return true
+	}
+
+	used := false
+
+	inspectNodesBetween(body, ifStmt.End(), body.End(), func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		used = used || ok && l.pkg.TypesInfo.ObjectOf(ident) == errObj
+
+		return !used
+	})
+
+	return used
+}
+
+// nonNilErrorCheck returns the error variable of an exact `err != nil` condition.
+func (l *Runner) nonNilErrorCheck(cond ast.Expr) types.Object {
+	binary, ok := ast.Unparen(cond).(*ast.BinaryExpr)
+	if !ok || binary.Op != token.NEQ || !l.pkg.TypesInfo.Types[binary.Y].IsNil() {
+		return nil
+	}
+
+	obj, ok := l.identObject(binary.X).(*types.Var)
+	if !ok || !isErrorType(obj.Type()) {
+		return nil
+	}
+
+	return obj
+}
+
+// blockDiscardsError reports whether the block has no error value, stop call,
+// or `return ..., false` contract. Any use of the checked error is itself an
+// error value. Nested function literals run later or elsewhere, so they do not
+// count.
+func (l *Runner) blockDiscardsError(block *ast.BlockStmt) bool {
+	falseObj := types.Universe.Lookup(boolFalseText)
+	discards := true
+
+	ast.Inspect(block, func(node ast.Node) bool {
+		if !discards {
+			return false
+		}
+
+		switch node := node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			last := len(node.Results) - 1
+			discards = last < 0 || l.identObject(node.Results[last]) != falseObj
+		case *ast.CallExpr:
+			discards = !l.isBuiltinCall(node, panicText) && !l.isProcessStopCall(node) &&
+				!l.isErrorValue(node)
+		case ast.Expr:
+			discards = !l.isErrorValue(node)
+		}
+
+		return discards
+	})
+
+	return discards
+}
+
+func (l *Runner) isErrorValue(expr ast.Expr) bool {
+	value, ok := l.pkg.TypesInfo.Types[expr]
+
+	return ok && value.IsValue() && !value.IsNil() && isErrorType(value.Type)
+}
+
+func (l *Runner) isProcessStopCall(call *ast.CallExpr) bool {
+	fn, _, ok := l.calledFunc(call)
+	if !ok || fn.Pkg() == nil {
+		return false
+	}
+
+	switch fn.Pkg().Path() {
+	case "os":
+		return fn.Name() == "Exit"
+	case "log":
+		return strings.HasPrefix(fn.Name(), "Fatal")
+	default:
+		return false
+	}
+}
+
 const (
 	errorsPkgPath    = "errors"
 	errorsIsFuncName = "Is"

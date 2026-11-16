@@ -127,7 +127,7 @@ func preflightSimilarityCI(dir string, opts *SimilarityOptions) error {
 			)
 		}
 
-		return verifySimilarityStamp(stamp, exists, stamp.SourceDigest)
+		return verifySimilarityStamp(stamp, stamp.SourceDigest)
 	}
 
 	digest, err := similarityRepositoryDigest(root)

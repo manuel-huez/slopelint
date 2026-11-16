@@ -75,10 +75,6 @@ func lenCompareFromNonNegative(limit int64, op token.Token) (bool, bool) {
 		if limit < 0 {
 			return true, true
 		}
-
-		if limit >= 0 {
-			return false, false
-		}
 	case token.GEQ:
 		if limit <= 0 {
 			return true, true
@@ -217,7 +213,7 @@ func lenRefinementForCompare(limit int64, op token.Token, wantTrue bool) lenRefi
 	return lenRefineUnknown
 }
 
-func (l *linter) refineLenCompare(
+func refineLenCompare(
 	st state,
 	sym symbol,
 	op token.Token,
@@ -229,33 +225,33 @@ func (l *linter) refineLenCompare(
 	case lenRefineUnknown:
 		return state{}, false, false
 	case lenRefineExactZero:
-		return l.refineLenToExactZero(st, sym, pos)
+		return refineLenToExactZero(st, sym, pos)
 	case lenRefineNotZero:
-		return l.refineLenToNotZero(st, sym, pos)
+		return refineLenToNotZero(st, sym, pos)
 	}
 
 	return state{}, false, false
 }
 
-func (l *linter) refineLenToExactZero(st state, sym symbol, pos token.Pos) (state, bool, bool) {
+func refineLenToExactZero(st state, sym symbol, pos token.Pos) (state, bool, bool) {
 	value := scalar{kind: scalarInt, text: zeroIntText}
-	next, ok := l.setExact(
+	next, ok := setExact(
 		st,
 		sym,
 		value,
-		evidence{pos: pos, text: l.relationText(sym, "==", value)},
+		evidence{pos: pos, text: relationText(sym, "==", value)},
 	)
 
 	return next, true, ok
 }
 
-func (l *linter) refineLenToNotZero(st state, sym symbol, pos token.Pos) (state, bool, bool) {
+func refineLenToNotZero(st state, sym symbol, pos token.Pos) (state, bool, bool) {
 	value := scalar{kind: scalarInt, text: zeroIntText}
-	next, ok := l.addNot(
+	next, ok := addNot(
 		st,
 		sym,
 		value,
-		evidence{pos: pos, text: l.relationText(sym, "!=", value)},
+		evidence{pos: pos, text: relationText(sym, "!=", value)},
 	)
 
 	return next, true, ok

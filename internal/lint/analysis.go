@@ -66,42 +66,32 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 	}
 
 	l := newLinter(pkg, opts)
-	l.externalSummary = func(obj *types.Func) (callSummary, bool) {
+	l.run(func(obj *types.Func) (callSummary, bool) {
 		fact := new(callSummaryFact)
 		if !pass.ImportObjectFact(obj.Origin(), fact) {
 			return callSummary{}, false
 		}
 
 		return callSummaryFromFact(fact), true
+	})
+
+	for _, fn := range l.funcs {
+		pass.ExportObjectFact(fn.obj.Origin(), callSummaryFactFromSummary(l.calls.exported(fn)))
 	}
 
-	l.run()
-	l.exportAnalysisFacts(pass)
-	sortIssues(l.issues)
+	sortIssues(l.sink.issues)
 
 	if cache != nil {
 		// Cache persistence is best-effort; analysis results remain valid without it.
-		_ = cache.store(pass, l, l.issues)
+		_ = cache.store(pass, l, l.sink.issues)
 
 		maybePruneCaches(opts.cacheDir)
 	}
 
 	// Vettool mode has no code review, so dropped-error candidates never report.
-	issues, _ := splitCodeReviewCandidates(l.issues)
+	issues, _ := splitCodeReviewCandidates(l.sink.issues)
 
 	return issues, nil
-}
-
-func (l *linter) exportAnalysisFacts(pass *analysis.Pass) {
-	for _, fn := range l.collectSummarizableFuncs() {
-		obj, ok := l.pkg.TypesInfo.ObjectOf(fn.decl.Name).(*types.Func)
-		if !ok || obj == nil {
-			continue
-		}
-
-		summary := l.summaryWithExplicit(fn.key, l.inferredFacts[fn.key])
-		pass.ExportObjectFact(obj.Origin(), callSummaryFactFromSummary(summary))
-	}
 }
 
 func callSummaryFactFromSummary(summary callSummary) *callSummaryFact {

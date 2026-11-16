@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 )
 
 const (
@@ -12,13 +13,15 @@ const (
 	funcLitLineLimit   = 40
 	funcParamLimit     = 6
 	funcResultLimit    = 3
+	typeMethodLimit    = 40
 )
 
 // sizeLimitDeleteFirst leads size advice: removing unneeded code often fixes
 // the size, and splitting first would spread dead code across new owners.
 const sizeLimitDeleteFirst = "first delete code that is no longer needed (legacy compatibility layers, redundant checks, defensive code for cases that cannot happen)"
 
-// sizeLimitCheck reports oversized files, functions, literals, and signatures.
+// sizeLimitCheck reports oversized files, functions, literals, signatures,
+// and method sets.
 type sizeLimitCheck struct {
 	ruleEnv
 }
@@ -89,6 +92,47 @@ func (l sizeLimitCheck) checkFunction(fn *ast.FuncDecl) {
 
 		return true
 	})
+}
+
+func (l sizeLimitCheck) checkReceivers() {
+	methods := make(map[*types.TypeName]int)
+	files := make(map[*types.TypeName]map[*token.File]struct{})
+
+	l.forEachHandwrittenProductionFunc(func(fn *ast.FuncDecl) {
+		recv := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func).Signature().Recv()
+		if recv == nil {
+			return
+		}
+
+		typ := types.Unalias(recv.Type())
+		if ptr, ok := typ.(*types.Pointer); ok {
+			typ = types.Unalias(ptr.Elem())
+		}
+
+		// Origin maps generic receivers such as Set[T] to their base type.
+		owner := typ.(*types.Named).Origin().Obj()
+		methods[owner]++
+
+		if files[owner] == nil {
+			files[owner] = make(map[*token.File]struct{})
+		}
+
+		files[owner][l.pkg.FSet.File(fn.Pos())] = struct{}{}
+	})
+
+	for _, spec := range l.pkg.ProductionTypes {
+		owner, _ := l.pkg.TypesInfo.Defs[spec.Name].(*types.TypeName)
+		if methods[owner] <= typeMethodLimit {
+			continue
+		}
+
+		l.report(spec.Name.Pos(), "god_receiver", fmt.Sprintf(
+			"type %q has %d methods across %d files; "+sizeLimitDeleteFirst+", then split the rest by responsibility so each new type owns its own state; moving methods to functions that take the type as a parameter is not a fix",
+			spec.Name.Name,
+			methods[owner],
+			len(files[owner]),
+		))
+	}
 }
 
 func nodeLineSpan(fset *token.FileSet, node ast.Node) int {

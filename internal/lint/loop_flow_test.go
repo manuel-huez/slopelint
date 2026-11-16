@@ -1,7 +1,6 @@
 package lint
 
 import (
-	"go/ast"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,8 +106,6 @@ func f(values []int) {
 `)
 
 	pkg := loadOnePackageForTest(t, tmp)
-	l := newLinter(pkg, Options{MaxStates: 32})
-	l.collectLocalFuncLits()
 
 	rangeStmt := firstRangeStmt(pkg.Files)
 	if rangeStmt == nil {
@@ -120,7 +117,12 @@ func f(values []int) {
 		t.Fatal("expected firstErr object")
 	}
 
-	invalidations := l.loopInvalidationsForLoop(rangeStmt.Body.List, nil)
+	q := &exprQuery{
+		info:          pkg.TypesInfo,
+		localFuncLits: collectLocalFuncLits(pkg.Files, pkg.TypesInfo),
+	}
+
+	invalidations := loopInvalidations(q, rangeStmt.Body.List, nil)
 	if invalidations[symbolForObject(firstErrObj).key] != invalidateFullPrefix {
 		t.Fatalf(
 			"expected local helper closure write to invalidate firstErr, got %#v",
@@ -192,25 +194,11 @@ func f(values []int) error {
 }
 `)
 
-	pkg := loadOnePackageForTest(t, tmp)
-	l := newLinter(pkg, Options{MaxStates: 32})
-	l.collectLocalFuncLits()
+	issues := lintInDir(t, tmp)
+	joined := joinMessages(issues)
 
-	fn := namedFuncDecl(pkg.Files, "f")
-	if fn == nil || fn.Body == nil || len(fn.Body.List) < 4 {
-		t.Fatal("expected function body with range loop and trailing if")
-	}
-
-	res := l.execBlock(fn.Body.List[:3], []state{newState()})
-
-	cond := fn.Body.List[3].(*ast.IfStmt).Cond
-	if tri, _ := l.truthAcross(res.next, cond); tri == triFalse {
-		hashes := make([]string, 0, len(res.next))
-		for _, st := range res.next {
-			hashes = append(hashes, st.hash())
-		}
-
-		t.Fatalf("range exit states kept firstErr nil exact: %#v", hashes)
+	if strings.Contains(joined, `condition "firstErr != nil" is always false here`) {
+		t.Fatalf("range exit states kept firstErr nil exact, got:\n%s", joined)
 	}
 }
 

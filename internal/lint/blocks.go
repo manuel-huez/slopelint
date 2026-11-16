@@ -4,34 +4,34 @@ import (
 	"go/ast"
 )
 
-func (l *linter) execBlock(stmts []ast.Stmt, states []state) flowResult {
-	res := flowResult{next: l.normalizeStates(states)}
+func (w *pathWalker) execBlock(stmts []ast.Stmt, states []state) flowResult {
+	res := flowResult{next: w.budget.normalize(states)}
 	for _, stmt := range stmts {
 		if len(res.next) == 0 {
 			break
 		}
 
-		step := l.execStmt(stmt, res.next)
+		step := w.execStmt(stmt, res.next)
 		res.next = step.next
 		res.breaks = append(res.breaks, step.breaks...)
 		res.continues = append(res.continues, step.continues...)
 		res.fallthroughs = append(res.fallthroughs, step.fallthroughs...)
-		res.labeledBreaks = l.mergeLabeledStates(res.labeledBreaks, step.labeledBreaks)
-		res.labeledContinues = l.mergeLabeledStates(res.labeledContinues, step.labeledContinues)
+		res.labeledBreaks = mergeLabeledStates(res.labeledBreaks, step.labeledBreaks)
+		res.labeledContinues = mergeLabeledStates(res.labeledContinues, step.labeledContinues)
 		res.returns = append(res.returns, step.returns...)
 	}
 
-	res.next = l.normalizeStates(res.next)
-	res.breaks = l.normalizeStates(res.breaks)
-	res.continues = l.normalizeStates(res.continues)
-	res.fallthroughs = l.normalizeStates(res.fallthroughs)
-	res.labeledBreaks = l.normalizeLabeledStates(res.labeledBreaks)
-	res.labeledContinues = l.normalizeLabeledStates(res.labeledContinues)
+	res.next = w.budget.normalize(res.next)
+	res.breaks = w.budget.normalize(res.breaks)
+	res.continues = w.budget.normalize(res.continues)
+	res.fallthroughs = w.budget.normalize(res.fallthroughs)
+	res.labeledBreaks = w.budget.normalizeLabeled(res.labeledBreaks)
+	res.labeledContinues = w.budget.normalizeLabeled(res.labeledContinues)
 
 	return res
 }
 
-func (l *linter) mergeLabeledStates(dst, src map[string][]state) map[string][]state {
+func mergeLabeledStates(dst, src map[string][]state) map[string][]state {
 	if len(src) == 0 {
 		return dst
 	}
@@ -45,28 +45,6 @@ func (l *linter) mergeLabeledStates(dst, src map[string][]state) map[string][]st
 	}
 
 	return dst
-}
-
-func (l *linter) normalizeLabeledStates(in map[string][]state) map[string][]state {
-	if len(in) == 0 {
-		return nil
-	}
-
-	out := make(map[string][]state, len(in))
-	for label, states := range in {
-		normalized := l.normalizeStates(states)
-		if len(normalized) == 0 {
-			continue
-		}
-
-		out[label] = normalized
-	}
-
-	if len(out) == 0 {
-		return nil
-	}
-
-	return out
 }
 
 func consumeLabeledStates(in map[string][]state, label string) []state {
@@ -88,22 +66,22 @@ type clauseFlow struct {
 	labeledContinues map[string][]state
 }
 
-func (flow *clauseFlow) add(l *linter, label string, res flowResult) {
+func (flow *clauseFlow) add(label string, res flowResult) {
 	flow.next = append(flow.next, consumeLabeledStates(res.labeledBreaks, label)...)
 	flow.next = append(flow.next, res.next...)
 	flow.next = append(flow.next, res.breaks...)
 	flow.continues = append(flow.continues, res.continues...)
 	flow.returns = append(flow.returns, res.returns...)
-	flow.labeledBreaks = l.mergeLabeledStates(flow.labeledBreaks, res.labeledBreaks)
-	flow.labeledContinues = l.mergeLabeledStates(flow.labeledContinues, res.labeledContinues)
+	flow.labeledBreaks = mergeLabeledStates(flow.labeledBreaks, res.labeledBreaks)
+	flow.labeledContinues = mergeLabeledStates(flow.labeledContinues, res.labeledContinues)
 }
 
-func (flow clauseFlow) result(l *linter) flowResult {
+func (flow clauseFlow) result(budget stateBudget) flowResult {
 	return flowResult{
-		next:             l.normalizeStates(flow.next),
-		continues:        l.normalizeStates(flow.continues),
-		labeledBreaks:    l.normalizeLabeledStates(flow.labeledBreaks),
-		labeledContinues: l.normalizeLabeledStates(flow.labeledContinues),
+		next:             budget.normalize(flow.next),
+		continues:        budget.normalize(flow.continues),
+		labeledBreaks:    budget.normalizeLabeled(flow.labeledBreaks),
+		labeledContinues: budget.normalizeLabeled(flow.labeledContinues),
 		returns:          flow.returns,
 	}
 }

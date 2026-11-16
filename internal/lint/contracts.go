@@ -31,67 +31,39 @@ type contractBinding struct {
 	variadic bool
 }
 
-func (l *linter) collectContracts() {
-	if l.explicitFacts == nil {
-		l.explicitFacts = make(map[string][]guardContract)
-	}
+// collectContracts returns explicit contracts by function key and reports
+// prefixed comments that do not parse.
+func collectContracts(pkg *LoadedPackage, sink *issueSink) map[string][]guardContract {
+	explicit := make(map[string][]guardContract)
 
-	l.forEachDocumentedFunc(func(fn *ast.FuncDecl) {
-		obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-		if !ok || obj == nil {
-			return
-		}
-
-		bindings := contractBindingsForFunc(fn)
-		if len(bindings) == 0 {
-			return
-		}
-
-		key := funcObjectKey(obj)
-
-		for _, comment := range fn.Doc.List {
-			contract, ok := parseGuardContract(comment.Text, bindings)
-			if !ok {
-				continue
-			}
-
-			l.explicitFacts[key] = append(l.explicitFacts[key], contract)
-		}
-	})
-}
-
-func (l *linter) checkContractComments() {
-	l.forEachDocumentedFunc(func(fn *ast.FuncDecl) {
-		bindings := contractBindingsForFunc(fn)
-		for _, comment := range fn.Doc.List {
-			if _, prefixed := trimContractPrefix(comment.Text); !prefixed {
-				continue
-			}
-
-			if _, ok := parseGuardContract(comment.Text, bindings); ok {
-				continue
-			}
-
-			l.report(
-				comment.Pos(),
-				"invalid_contract",
-				fmt.Sprintf("invalid %s contract %q", contractPrefix, comment.Text),
-			)
-		}
-	})
-}
-
-func (l *linter) forEachDocumentedFunc(visit func(*ast.FuncDecl)) {
-	for _, file := range l.pkg.Files {
+	for _, file := range pkg.Files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Doc == nil {
 				continue
 			}
 
-			visit(fn)
+			key := funcObjectKey(pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func))
+			bindings := contractBindingsForFunc(fn)
+
+			for _, comment := range fn.Doc.List {
+				if contract, ok := parseGuardContract(comment.Text, bindings); ok {
+					explicit[key] = append(explicit[key], contract)
+					continue
+				}
+
+				if _, prefixed := trimContractPrefix(comment.Text); prefixed {
+					sink.report(
+						comment.Pos(),
+						"invalid_contract",
+						fmt.Sprintf("invalid %s contract %q", contractPrefix, comment.Text),
+					)
+				}
+			}
 		}
 	}
+
+	return explicit
 }
 
 func contractBindingsForFunc(fn *ast.FuncDecl) map[string]contractBinding {
@@ -216,7 +188,7 @@ func funcObjectKey(obj *types.Func) string {
 	return pkgPath + "|" + obj.FullName()
 }
 
-func (l *linter) contractEvidenceText(
+func (q *exprQuery) contractEvidenceText(
 	sym symbol,
 	contract guardContract,
 	call *ast.CallExpr,
@@ -228,31 +200,31 @@ func (l *linter) contractEvidenceText(
 
 	return fmt.Sprintf(
 		"%s ensures %s %s %s",
-		l.render(call.Fun),
+		q.render(call.Fun),
 		sym.name,
 		op,
 		contract.value.String(),
 	)
 }
 
-func (l *linter) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
+func (q *exprQuery) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
-		obj, ok := l.pkg.TypesInfo.ObjectOf(fun).(*types.Func)
-		if !ok || obj == nil {
+		obj, ok := q.info.ObjectOf(fun).(*types.Func)
+		if !ok {
 			return nil, "", false
 		}
 
 		return obj, funcObjectKey(obj), true
 	case *ast.SelectorExpr:
-		if sel := l.pkg.TypesInfo.Selections[fun]; sel != nil {
-			if obj, ok := sel.Obj().(*types.Func); ok && obj != nil {
+		if sel := q.info.Selections[fun]; sel != nil {
+			if obj, ok := sel.Obj().(*types.Func); ok {
 				return obj, funcObjectKey(obj), true
 			}
 		}
 
-		obj, ok := l.pkg.TypesInfo.ObjectOf(fun.Sel).(*types.Func)
-		if !ok || obj == nil {
+		obj, ok := q.info.ObjectOf(fun.Sel).(*types.Func)
+		if !ok {
 			return nil, "", false
 		}
 
@@ -262,7 +234,10 @@ func (l *linter) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
 	}
 }
 
-func (l *linter) symbolForContractTarget(call *ast.CallExpr, target contractTarget) (symbol, bool) {
+func (q *exprQuery) symbolForContractTarget(
+	call *ast.CallExpr,
+	target contractTarget,
+) (symbol, bool) {
 	var baseExpr ast.Expr
 
 	if target.recv {
@@ -284,15 +259,15 @@ func (l *linter) symbolForContractTarget(call *ast.CallExpr, target contractTarg
 		baseExpr = call.Args[target.param]
 	}
 
-	base, ok := l.symbolOf(baseExpr)
+	base, ok := q.symbolOf(baseExpr)
 	if !ok {
 		return symbol{}, false
 	}
 
-	return l.symbolForPath(base, target.path)
+	return q.symbolForPath(base, target.path)
 }
 
-func (l *linter) symbolForPath(base symbol, path []string) (symbol, bool) {
+func (q *exprQuery) symbolForPath(base symbol, path []string) (symbol, bool) {
 	current := base
 
 	for _, field := range path {
@@ -301,7 +276,7 @@ func (l *linter) symbolForPath(base symbol, path []string) (symbol, bool) {
 			continue
 		}
 
-		fieldType, ok := l.lookupFieldType(current.typ, field)
+		fieldType, ok := q.lookupFieldType(current.typ, field)
 		if !ok {
 			return symbol{}, false
 		}
@@ -312,8 +287,8 @@ func (l *linter) symbolForPath(base symbol, path []string) (symbol, bool) {
 	return current, true
 }
 
-func (l *linter) lookupFieldType(t types.Type, name string) (types.Type, bool) {
-	obj, _, _ := types.LookupFieldOrMethod(t, true, l.pkg.TypesPkg, name)
+func (q *exprQuery) lookupFieldType(t types.Type, name string) (types.Type, bool) {
+	obj, _, _ := types.LookupFieldOrMethod(t, true, q.typesPkg, name)
 
 	field, ok := obj.(*types.Var)
 	if !ok || !field.IsField() {

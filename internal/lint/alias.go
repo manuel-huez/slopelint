@@ -89,10 +89,6 @@ func removeAliasPrefix(st *state, prefix string, descendantsOnly bool) {
 }
 
 func intersectAliases(states []state) map[string]map[string]struct{} {
-	if len(states) == 0 {
-		return nil
-	}
-
 	shared := aliasEdgeSet(states[0])
 	for i := 1; i < len(states); i++ {
 		other := aliasEdgeSet(states[i])

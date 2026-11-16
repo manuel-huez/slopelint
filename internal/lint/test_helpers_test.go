@@ -291,19 +291,6 @@ func firstRangeStmt(files []*ast.File) *ast.RangeStmt {
 	return out
 }
 
-func namedFuncDecl(files []*ast.File, name string) *ast.FuncDecl {
-	for _, file := range files {
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if ok && fn.Name.Name == name {
-				return fn
-			}
-		}
-	}
-
-	return nil
-}
-
 func namedObject(files []*ast.File, info *types.Info, name string) *types.Var {
 	for _, file := range files {
 		var out *types.Var

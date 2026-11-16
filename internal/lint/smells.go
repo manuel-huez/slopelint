@@ -1,20 +1,26 @@
 package lint
 
-import smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
+import (
+	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
+)
 
-func (l *linter) scanDefaultSmells() {
-	l.addSmellFindings(smellcheck.RunDefault(l.smellsPackage()))
-}
+// scanPackageChecks runs the package-wide smell and dead-code checks after the
+// per-function walk, so their findings follow path findings in report order.
+func (l *linter) scanPackageChecks() {
+	pkg := l.smellsPackage()
+	l.addSmellFindings(smellcheck.RunDefault(pkg))
 
-func (l *linter) scanPackageSmells() {
 	if !l.skipBehaviorClones {
-		l.addSmellFindings(smellcheck.RunBehaviorPackage(l.smellsPackage()))
+		l.addSmellFindings(smellcheck.RunBehaviorPackage(pkg))
 	}
 
-	l.addSmellFindings(smellcheck.RunPackage(l.smellsPackage()))
+	l.addSmellFindings(smellcheck.RunPackage(pkg))
 
 	if !l.skipDeadCode {
-		l.checkDeadPrivateDecls()
+		for _, finding := range deadcodecheck.Private(l.deadCodePackage()) {
+			l.sink.report(finding.Pos, finding.Kind, finding.Message)
+		}
 	}
 }
 
@@ -35,6 +41,6 @@ func (l *linter) smellsPackage() *smellcheck.Package {
 
 func (l *linter) addSmellFindings(findings []smellcheck.Finding) {
 	for _, finding := range findings {
-		l.report(finding.Pos, finding.Kind, finding.Message)
+		l.sink.report(finding.Pos, finding.Kind, finding.Message)
 	}
 }

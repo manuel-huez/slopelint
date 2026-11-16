@@ -23,34 +23,40 @@ const (
 
 type prefixInvalidations map[string]prefixInvalidation
 
-func (l *linter) loopInvalidationsForLoop(
-	body []ast.Stmt,
-	post ast.Stmt,
-) prefixInvalidations {
-	out := make(prefixInvalidations)
-	seen := make(map[*ast.FuncLit]struct{})
+// loopWrites collects every prefix a loop body may write. Facts about them do
+// not hold at the start of a later iteration, so loops drop them on entry.
+type loopWrites struct {
+	q    *exprQuery
+	out  prefixInvalidations
+	seen map[*ast.FuncLit]struct{}
+}
+
+func loopInvalidations(q *exprQuery, body []ast.Stmt, post ast.Stmt) prefixInvalidations {
+	writes := loopWrites{
+		q:    q,
+		out:  make(prefixInvalidations),
+		seen: make(map[*ast.FuncLit]struct{}),
+	}
 
 	for _, stmt := range body {
-		l.collectStmtInvalidations(stmt, out, seen)
+		writes.stmt(stmt)
 	}
 
 	if post != nil {
-		l.collectStmtInvalidations(post, out, seen)
+		writes.stmt(post)
 	}
 
-	if len(out) == 0 {
+	if len(writes.out) == 0 {
 		return nil
 	}
 
-	return out
+	return writes.out
 }
 
-func (l *linter) applyPrefixInvalidations(
-	states []state,
-	invalidations prefixInvalidations,
-) []state {
+// apply returns states without the invalidated facts; callers normalize.
+func (invalidations prefixInvalidations) apply(states []state) []state {
 	if len(states) == 0 || len(invalidations) == 0 {
-		return l.normalizeStates(states)
+		return states
 	}
 
 	out := make([]state, 0, len(states))
@@ -59,17 +65,17 @@ func (l *linter) applyPrefixInvalidations(
 
 		for prefix, mode := range invalidations {
 			if mode == invalidateFullPrefix {
-				l.invalidatePrefix(&st, prefix)
+				st.invalidatePrefix(prefix)
 				continue
 			}
 
-			l.invalidateDescendants(&st, prefix)
+			st.invalidateDescendants(prefix)
 		}
 
 		out = append(out, st)
 	}
 
-	return l.normalizeStates(out)
+	return out
 }
 
 func (invalidations prefixInvalidations) addFull(prefix string) {
@@ -88,193 +94,142 @@ func (invalidations prefixInvalidations) addDescendants(prefix string) {
 	invalidations[prefix] = invalidateDescendantsOnly
 }
 
-func (l *linter) collectStmtInvalidations(
-	stmt ast.Stmt,
-	invalidations prefixInvalidations,
-	seen map[*ast.FuncLit]struct{},
-) {
+func (w loopWrites) stmt(stmt ast.Stmt) {
 	ast.Inspect(stmt, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
 			return false
 		case *ast.AssignStmt:
 			for _, lhs := range n.Lhs {
-				l.collectLHSInvalidations(lhs, invalidations)
+				w.lhs(lhs)
 			}
 		case *ast.IncDecStmt:
-			l.collectLHSInvalidations(n.X, invalidations)
+			w.lhs(n.X)
 		case *ast.RangeStmt:
 			if n.Key != nil {
-				l.collectLHSInvalidations(n.Key, invalidations)
+				w.lhs(n.Key)
 			}
 
 			if n.Value != nil {
-				l.collectLHSInvalidations(n.Value, invalidations)
+				w.lhs(n.Value)
 			}
 		case *ast.CallExpr:
-			l.collectCallInvalidations(n, invalidations, seen)
+			w.call(n)
 		case *ast.SendStmt:
-			l.collectExprInvalidations(n.Chan, invalidations, seen)
-			l.collectExprInvalidations(n.Value, invalidations, seen)
+			w.expr(n.Chan)
+			w.expr(n.Value)
 		}
 
 		return true
 	})
 }
 
-func (l *linter) collectExprInvalidations(
-	expr ast.Expr,
-	invalidations prefixInvalidations,
-	seen map[*ast.FuncLit]struct{},
-) {
+func (w loopWrites) expr(expr ast.Expr) {
 	ast.Inspect(expr, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
 			return false
 		case *ast.CallExpr:
-			l.collectCallInvalidations(n, invalidations, seen)
+			w.call(n)
 		}
 
 		return true
 	})
 }
 
-func (l *linter) collectCallInvalidations(
-	call *ast.CallExpr,
-	invalidations prefixInvalidations,
-	seen map[*ast.FuncLit]struct{},
-) {
-	if call == nil {
+func (w loopWrites) call(call *ast.CallExpr) {
+	if tv, ok := w.q.info.Types[call.Fun]; ok && tv.IsType() {
 		return
 	}
 
-	if tv, ok := l.pkg.TypesInfo.Types[call.Fun]; ok && tv.IsType() {
-		return
-	}
-
-	addFull := func(expr ast.Expr) {
-		for root := range l.rootsInExpr(expr) {
-			invalidations.addFull(root)
-		}
-	}
-
-	addDescendants := func(expr ast.Expr) {
-		for root := range l.rootsInExpr(expr) {
-			invalidations.addDescendants(root)
-		}
-	}
-
-	l.collectCallTargetInvalidations(call, invalidations, seen, addDescendants)
-	l.collectCallArgInvalidations(call, invalidations, seen, addFull, addDescendants)
-	l.collectBuiltinCallInvalidations(call, addDescendants)
-}
-
-func (l *linter) collectCallTargetInvalidations(
-	call *ast.CallExpr,
-	invalidations prefixInvalidations,
-	seen map[*ast.FuncLit]struct{},
-	addDescendants func(ast.Expr),
-) {
 	if lit, ok := ast.Unparen(call.Fun).(*ast.FuncLit); ok {
-		l.collectFuncLitInvalidations(lit, invalidations, seen)
-	} else if lit, ok := l.localFuncLitForExpr(call.Fun); ok {
-		l.collectFuncLitInvalidations(lit, invalidations, seen)
+		w.funcLit(lit)
+	} else if lit, ok := w.q.localFuncLitForExpr(call.Fun); ok {
+		w.funcLit(lit)
 	}
 
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok {
-		return
+	if recv, ok := pointerMethodReceiver(w.q.info, call); ok {
+		w.addDescendants(recv)
 	}
 
-	if s := l.pkg.TypesInfo.Selections[sel]; s != nil &&
-		s.Kind() == types.MethodVal && isPointerLike(s.Recv()) {
-		addDescendants(sel.X)
+	w.callArgs(call.Args)
+
+	if isMutatingBuiltinCall(w.q.info, call) {
+		for _, arg := range call.Args {
+			w.addDescendants(arg)
+		}
 	}
 }
 
-func (l *linter) collectCallArgInvalidations(
-	call *ast.CallExpr,
-	invalidations prefixInvalidations,
-	seen map[*ast.FuncLit]struct{},
-	addFull func(ast.Expr),
-	addDescendants func(ast.Expr),
-) {
-	for _, arg := range call.Args {
+func (w loopWrites) callArgs(args []ast.Expr) {
+	for _, arg := range args {
 		if lit, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
-			l.collectFuncLitInvalidations(lit, invalidations, seen)
+			w.funcLit(lit)
 			continue
 		}
 
-		if lit, ok := l.localFuncLitForExpr(arg); ok {
-			l.collectFuncLitInvalidations(lit, invalidations, seen)
+		if lit, ok := w.q.localFuncLitForExpr(arg); ok {
+			w.funcLit(lit)
 			continue
 		}
 
 		if unary, ok := ast.Unparen(arg).(*ast.UnaryExpr); ok && unary.Op == token.AND {
-			addFull(unary.X)
+			for root := range w.q.rootsInExpr(unary.X) {
+				w.out.addFull(root)
+			}
+
 			continue
 		}
 
-		tv, ok := l.pkg.TypesInfo.Types[arg]
+		tv, ok := w.q.info.Types[arg]
 		if ok && isPointerLike(tv.Type) {
-			addDescendants(arg)
+			w.addDescendants(arg)
 		}
 	}
 }
 
-func (l *linter) collectBuiltinCallInvalidations(
-	call *ast.CallExpr,
-	addDescendants func(ast.Expr),
-) {
-	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
-	if !ok {
-		return
-	}
-
-	obj, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Builtin)
-	if !ok || obj == nil || !isMutatingBuiltin(obj.Name()) {
-		return
-	}
-
-	for _, arg := range call.Args {
-		addDescendants(arg)
+func (w loopWrites) addDescendants(expr ast.Expr) {
+	for root := range w.q.rootsInExpr(expr) {
+		w.out.addDescendants(root)
 	}
 }
 
-func (l *linter) collectFuncLitInvalidations(
-	lit *ast.FuncLit,
-	invalidations prefixInvalidations,
-	seen map[*ast.FuncLit]struct{},
-) {
-	if lit == nil || lit.Body == nil {
+func (w loopWrites) funcLit(lit *ast.FuncLit) {
+	if _, ok := w.seen[lit]; ok {
 		return
 	}
 
-	if _, ok := seen[lit]; ok {
-		return
-	}
-
-	seen[lit] = struct{}{}
+	w.seen[lit] = struct{}{}
 
 	for _, stmt := range lit.Body.List {
-		l.collectStmtInvalidations(stmt, invalidations, seen)
+		w.stmt(stmt)
 	}
 }
 
-func (l *linter) collectLHSInvalidations(lhs ast.Expr, invalidations prefixInvalidations) {
-	if sym, ok := l.symbolOf(lhs); ok {
-		invalidations.addFull(sym.key)
+func (w loopWrites) lhs(lhs ast.Expr) {
+	if sym, ok := w.q.symbolOf(lhs); ok {
+		w.out.addFull(sym.key)
 
 		return
 	}
 
-	for root := range l.rootsInExpr(lhs) {
-		invalidations.addFull(root)
+	for root := range w.q.rootsInExpr(lhs) {
+		w.out.addFull(root)
 	}
 }
 
-func isMutatingBuiltin(name string) bool {
-	switch name {
+func isMutatingBuiltinCall(info *types.Info, call *ast.CallExpr) bool {
+	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return false
+	}
+
+	builtin, ok := info.ObjectOf(id).(*types.Builtin)
+	if !ok {
+		return false
+	}
+
+	switch builtin.Name() {
 	case builtinCopy, builtinClear, builtinDelete, builtinAppend, builtinClose:
 		return true
 	default:

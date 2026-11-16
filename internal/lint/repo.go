@@ -440,7 +440,7 @@ func repoBehaviorIssues(
 
 	issues := make([]Issue, 0)
 	for _, l := range linters {
-		issues = append(issues, l.issues...)
+		issues = append(issues, l.sink.issues...)
 	}
 
 	storeRepoBehaviorCache(cache, files, issues)
@@ -614,7 +614,8 @@ func lintRepoPackage(
 
 	l := newLinter(pkg, opts)
 	dependencies := make(map[string]analysisCacheImportedFact)
-	l.externalSummary = func(obj *types.Func) (callSummary, bool) {
+
+	l.run(func(obj *types.Func) (callSummary, bool) {
 		if obj.Pkg() == nil || obj.Pkg().Path() == pkg.ImportPath {
 			return callSummary{}, false
 		}
@@ -630,22 +631,20 @@ func lintRepoPackage(
 		dependencies[key] = dependency
 
 		return summary, ok
-	}
-
-	l.run()
-	sortIssues(l.issues)
+	})
+	sortIssues(l.sink.issues)
 
 	result := repoPackageLintResult{
 		importPath: input.importPath,
 		cacheKey:   cacheKey,
-		issues:     l.issues,
+		issues:     l.sink.issues,
 		exports:    cachedExportsForLinter(l),
 		pkg:        pkg,
 	}
 	if cache != nil {
 		_ = cache.storeStandalone(
 			l,
-			l.issues,
+			l.sink.issues,
 			sortedAnalysisCacheDependencies(dependencies),
 		)
 	}

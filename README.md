@@ -169,7 +169,7 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Error panics and sentinel breaks | `prod_must_panic`, `sentinel_error_break` |
 | Unreachable declarations | `dead_code` |
 | Declaration grouping | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` |
-| Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list` |
+| Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results; types over 40 methods | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list`, `god_receiver` |
 | Test structure and support code | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_support_filename` |
 | Invalid contracts and stale suppressions | `invalid_contract`, `stale_complexity_suppression` |
 

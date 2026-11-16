@@ -1,19 +1,19 @@
 {
   "schema": 12,
-  "source_digest": "fac306cdaf446e41dc2a2598c62610335ee436974a10043a88aa4c85e9129cd3",
-  "repository_digest": "9669cd4be38a0969597ea944131c9fa406b4f7f32dee7f5f6de6b5bdad4f404d",
+  "source_digest": "dbf36cee2e85ce32b6811e16d83518bf902d05b8c556944026e5b9cdf1a68854",
+  "repository_digest": "90f66d0223d3d1ed8f58ff4e04d0527b6466e7edbfd946db761f9edd9f38246f",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "de3c2ff33cf5f82207e7b08dae72608748bcebbca4e83177dc9477b61a8d4b49",
+  "description_digest": "96307667c1d2d96d9a755ec63c695d53b5e90f081cb40d1ed013ba12baf3a277",
   "review": {
     "schema": 5,
     "model": "gpt-6.1-terra",
     "effort": "low"
   },
-  "checked_blocks": 1806,
+  "checked_blocks": 1790,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",
@@ -49,13 +49,6 @@
       "left_hash": "6373c2d55b02013d344a9edf692bf4af0a7f53293869881b79893580b315a46d",
       "right": "internal/lint/smells/names.go::isIsPredicateName",
       "right_hash": "6e9a888cc615912f9699fd450a6267b046d8628410b36c6a565c79f49c456644"
-    },
-    {
-      "id": "sim-ffebd02839150359",
-      "left": "internal/lint/truth.go::*linter.truthAnd",
-      "left_hash": "b7b342488e924294cf8548b036a478eb6339834ebbd74779eb9de325d234f272",
-      "right": "internal/lint/truth.go::*linter.truthOr",
-      "right_hash": "8e422e471331abc0315e97914e21dfe82c71f7079e2b66abd9f8f7e04e624a7b"
     }
   ]
 }

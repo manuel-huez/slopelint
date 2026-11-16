@@ -6,12 +6,6 @@ import (
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
 )
 
-func (l *linter) checkDeadPrivateDecls() {
-	for _, finding := range deadcodecheck.Private(l.deadCodePackage()) {
-		l.report(finding.Pos, finding.Kind, finding.Message)
-	}
-}
-
 func repoDeadCodeIssues(pkgs []*deadcodecheck.Package) []Issue {
 	findings := deadcodecheck.Repo(pkgs)
 	issues := make([]Issue, 0, len(findings))

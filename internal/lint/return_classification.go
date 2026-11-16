@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func (l *linter) classifyReturnStates(st state, results []ast.Expr) []returnState {
+func (c conditionEval) classifyReturnStates(st state, results []ast.Expr) []returnState {
 	if len(results) == 0 {
 		return []returnState{{state: st}}
 	}
@@ -16,12 +16,12 @@ func (l *linter) classifyReturnStates(st state, results []ast.Expr) []returnStat
 	for index, expr := range results {
 		next := make([]returnState, 0, len(current))
 		for _, ret := range current {
-			if states, ok := l.classifyBoolReturnStates(ret.state, expr); ok {
+			if states, ok := c.classifyBoolReturnStates(ret.state, expr); ok {
 				next = append(next, appendClassifiedReturnStates(ret.kinds, index, states)...)
 				continue
 			}
 
-			if states, ok := l.classifyNilReturnStates(ret.state, expr); ok {
+			if states, ok := c.classifyNilReturnStates(ret.state, expr); ok {
 				next = append(next, appendClassifiedReturnStates(ret.kinds, index, states)...)
 				continue
 			}
@@ -106,30 +106,33 @@ func returnKindsHash(kinds map[int]returnKind) string {
 	return sb.String()
 }
 
-func (l *linter) classifyBoolReturnStates(st state, expr ast.Expr) ([]classifiedReturn, bool) {
-	if !isBoolType(l.pkg.TypesInfo.TypeOf(expr)) {
+func (c conditionEval) classifyBoolReturnStates(
+	st state,
+	expr ast.Expr,
+) ([]classifiedReturn, bool) {
+	if !isBoolType(c.q.info.TypeOf(expr)) {
 		return nil, false
 	}
 
 	out := make([]classifiedReturn, 0, returnStateCapacity)
-	for _, next := range l.refineState(st, expr, true) {
+	for _, next := range c.refineState(st, expr, true) {
 		out = append(out, classifiedReturn{state: next, kind: returnBoolTrue})
 	}
 
-	for _, next := range l.refineState(st, expr, false) {
+	for _, next := range c.refineState(st, expr, false) {
 		out = append(out, classifiedReturn{state: next, kind: returnBoolFalse})
 	}
 
 	return out, true
 }
 
-func (l *linter) classifyNilReturnStates(st state, expr ast.Expr) ([]classifiedReturn, bool) {
-	if value, ok := l.scalarOf(expr); ok && value.kind == scalarNil {
+func (c conditionEval) classifyNilReturnStates(st state, expr ast.Expr) ([]classifiedReturn, bool) {
+	if value, ok := c.q.scalarOf(expr); ok && value.kind == scalarNil {
 		return []classifiedReturn{{state: st, kind: returnNil}}, true
 	}
 
 	nilExpr := &ast.Ident{Name: nilText}
-	if tri, _ := l.truthCompare(st, expr, nilExpr, true); tri == triTrue {
+	if tri, _ := c.truthCompare(st, expr, nilExpr, true); tri == triTrue {
 		return []classifiedReturn{{state: st, kind: returnNil}}, true
 	} else if tri == triFalse {
 		return []classifiedReturn{{state: st, kind: returnNonNil}}, true
@@ -137,7 +140,7 @@ func (l *linter) classifyNilReturnStates(st state, expr ast.Expr) ([]classifiedR
 
 	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if ok {
-		summary := l.summaryForCall(call)
+		summary := c.calls.forCall(call)
 
 		result, ok := summary.results[0]
 		if !ok {
@@ -154,19 +157,15 @@ func (l *linter) classifyNilReturnStates(st state, expr ast.Expr) ([]classifiedR
 		}
 
 		out := make([]classifiedReturn, 0, returnStateCapacity)
-		for _, next := range l.applySummaryContracts(st, call, nilContracts) {
+		for _, next := range c.calls.apply(st, call, nilContracts) {
 			out = append(out, classifiedReturn{state: next, kind: returnNil})
 		}
 
-		for _, next := range l.applySummaryContracts(st, call, nonNilContracts) {
+		for _, next := range c.calls.apply(st, call, nonNilContracts) {
 			out = append(out, classifiedReturn{state: next, kind: returnNonNil})
 		}
 
 		return out, true
-	}
-
-	if !isPointerLike(l.pkg.TypesInfo.TypeOf(expr)) {
-		return nil, false
 	}
 
 	return nil, false

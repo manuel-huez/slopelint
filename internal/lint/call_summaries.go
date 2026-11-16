@@ -37,6 +37,7 @@ type summaryBinding struct {
 
 type summarizableFunc struct {
 	decl        *ast.FuncDecl
+	obj         *types.Func
 	key         string
 	bindings    []summaryBinding
 	resultCount int
@@ -47,23 +48,33 @@ type classifiedReturn struct {
 	kind  returnKind
 }
 
-func (l *linter) inferCallSummaries() {
-	funcs := l.collectSummarizableFuncs()
-	l.inferredFacts = make(map[string]callSummary, len(funcs))
+// callFacts holds call summaries for one package: explicit contracts,
+// summaries inferred from function bodies, and imported summaries. Inference
+// fills inferred in place, so later functions in a pass see earlier results.
+type callFacts struct {
+	q        *exprQuery
+	budget   stateBudget
+	explicit map[string][]guardContract
+	inferred map[string]callSummary
+	external func(*types.Func) (callSummary, bool)
+}
 
-	maxPasses := len(funcs) + 1
+// inferCallSummaries iterates to a fixed point because a summary can depend on
+// summaries of functions declared later.
+func (l *linter) inferCallSummaries(walker *pathWalker) {
+	maxPasses := len(l.funcs) + 1
 	for range maxPasses {
 		changed := false
 
-		for _, fn := range funcs {
-			summary := l.summarizeFunc(fn)
+		for _, fn := range l.funcs {
+			summary := walker.summarize(fn)
 
-			prev := l.inferredFacts[fn.key]
+			prev := l.calls.inferred[fn.key]
 			if callSummaryEqual(prev, summary) {
 				continue
 			}
 
-			l.inferredFacts[fn.key] = summary
+			l.calls.inferred[fn.key] = summary
 			changed = true
 		}
 
@@ -73,33 +84,28 @@ func (l *linter) inferCallSummaries() {
 	}
 }
 
-func (l *linter) collectSummarizableFuncs() []summarizableFunc {
+func summarizableFuncs(pkg *LoadedPackage) []summarizableFunc {
 	out := make([]summarizableFunc, 0)
 
-	for _, file := range l.pkg.Files {
+	for _, file := range pkg.Files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
 				continue
 			}
 
-			obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-			if !ok || obj == nil {
-				continue
-			}
-
-			sig, _ := obj.Type().(*types.Signature)
-
-			bindings := l.summaryBindingsForFunc(fn)
+			bindings := summaryBindingsForFunc(pkg.TypesInfo, fn)
 			if len(bindings) == 0 {
 				continue
 			}
 
+			obj := pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
 			out = append(out, summarizableFunc{
 				decl:        fn,
+				obj:         obj,
 				key:         funcObjectKey(obj),
 				bindings:    bindings,
-				resultCount: signatureResultCount(sig),
+				resultCount: obj.Signature().Results().Len(),
 			})
 		}
 	}
@@ -107,15 +113,7 @@ func (l *linter) collectSummarizableFuncs() []summarizableFunc {
 	return out
 }
 
-func signatureResultCount(sig *types.Signature) int {
-	if sig == nil || sig.Results() == nil {
-		return 0
-	}
-
-	return sig.Results().Len()
-}
-
-func (l *linter) summaryBindingsForFunc(fn *ast.FuncDecl) []summaryBinding {
+func summaryBindingsForFunc(info *types.Info, fn *ast.FuncDecl) []summaryBinding {
 	out := make([]summaryBinding, 0)
 	appendFieldBindings := func(fields *ast.FieldList, recv bool) {
 		if fields == nil {
@@ -129,8 +127,8 @@ func (l *linter) summaryBindingsForFunc(fn *ast.FuncDecl) []summaryBinding {
 			variadic = !recv && variadic && fieldIndex == len(fields.List)-1
 
 			for _, name := range field.Names {
-				obj, ok := l.pkg.TypesInfo.ObjectOf(name).(*types.Var)
-				if !ok || obj == nil {
+				obj, ok := info.ObjectOf(name).(*types.Var)
+				if !ok {
 					if !recv {
 						paramIndex++
 					}
@@ -160,17 +158,14 @@ func (l *linter) summaryBindingsForFunc(fn *ast.FuncDecl) []summaryBinding {
 
 	return out
 }
-func (l *linter) summarizeFunc(fn summarizableFunc) callSummary {
+
+func (w *pathWalker) summarize(fn summarizableFunc) callSummary {
 	// Deferred writes run after return evaluation, so pre-defer facts are not call guarantees.
-	if l.hasUnsupportedJumps(fn.decl.Body) || functionHasDefer(fn.decl.Body) {
+	if hasUnsupportedJumps(fn.decl.Body) || functionHasDefer(fn.decl.Body) {
 		return callSummary{}
 	}
 
-	var res flowResult
-
-	l.withReportsSuppressed(func() {
-		res = l.execBlock(fn.decl.Body.List, []state{newState()})
-	})
+	res := w.execBlock(fn.decl.Body.List, []state{newState()})
 
 	returns := append([]returnState{}, res.returns...)
 	for _, st := range res.next {
@@ -182,15 +177,15 @@ func (l *linter) summarizeFunc(fn summarizableFunc) callSummary {
 	}
 
 	summary := callSummary{
-		always: l.summaryContractsForReturns(returns, fn.bindings, 0, returnUnspecified),
+		always: w.summaryContractsForReturns(returns, fn.bindings, 0, returnUnspecified),
 	}
 
 	for index := range fn.resultCount {
 		result := resultSummary{
-			whenTrue:   l.summaryContractsForReturns(returns, fn.bindings, index, returnBoolTrue),
-			whenFalse:  l.summaryContractsForReturns(returns, fn.bindings, index, returnBoolFalse),
-			whenNil:    l.summaryContractsForReturns(returns, fn.bindings, index, returnNil),
-			whenNonNil: l.summaryContractsForReturns(returns, fn.bindings, index, returnNonNil),
+			whenTrue:   w.summaryContractsForReturns(returns, fn.bindings, index, returnBoolTrue),
+			whenFalse:  w.summaryContractsForReturns(returns, fn.bindings, index, returnBoolFalse),
+			whenNil:    w.summaryContractsForReturns(returns, fn.bindings, index, returnNil),
+			whenNonNil: w.summaryContractsForReturns(returns, fn.bindings, index, returnNonNil),
 		}
 		if resultSummaryEmpty(result) {
 			continue
@@ -228,7 +223,7 @@ func functionHasDefer(body *ast.BlockStmt) bool {
 	return found
 }
 
-func (l *linter) summaryContractsForReturns(
+func (w *pathWalker) summaryContractsForReturns(
 	returns []returnState,
 	bindings []summaryBinding,
 	resultIndex int,
@@ -236,7 +231,7 @@ func (l *linter) summaryContractsForReturns(
 ) []guardContract {
 	states := make([]state, 0, len(returns))
 	for _, ret := range returns {
-		if kind != returnUnspecified && ret.kindAt(resultIndex) != kind {
+		if kind != returnUnspecified && ret.kinds[resultIndex] != kind {
 			continue
 		}
 
@@ -247,11 +242,11 @@ func (l *linter) summaryContractsForReturns(
 		return nil
 	}
 
-	states = l.normalizeStates(states)
+	states = w.budget.normalize(states)
 
 	merged := states[0]
 	if len(states) > 1 {
-		merged = l.mergeStates(states)
+		merged = mergeStates(states)
 	}
 
 	return normalizeGuardContracts(summaryContractsFromState(merged, bindings))
@@ -486,34 +481,47 @@ func (f fact) notValue(key string) scalar {
 	return scalar{kind: scalarKind(kind), text: parts[1]}
 }
 
-func (l *linter) summaryForCall(call *ast.CallExpr) callSummary {
-	obj, key, ok := l.calledFunc(call)
+func (c *callFacts) forCall(call *ast.CallExpr) callSummary {
+	obj, key, ok := c.q.calledFunc(call)
 	if !ok {
 		return callSummary{}
 	}
 
-	summary := l.inferredFacts[key]
+	summary := c.inferred[key]
 
-	if len(summary.always) == 0 &&
-		len(sortedSummaryResultIndices(summary.results)) == 0 &&
-		l.externalSummary != nil {
-		if external, ok := l.externalSummary(obj); ok {
+	if len(summary.always) == 0 && len(summary.results) == 0 {
+		if external, ok := c.external(obj); ok {
 			summary = external
 		}
 	}
 
-	return l.summaryWithExplicit(key, summary)
+	return c.withExplicit(key, summary)
 }
 
-func (l *linter) summaryWithExplicit(key string, summary callSummary) callSummary {
-	if explicit := l.explicitFacts[key]; len(explicit) != 0 {
+func (c *callFacts) exported(fn summarizableFunc) callSummary {
+	return c.withExplicit(fn.key, c.inferred[fn.key])
+}
+
+func (c *callFacts) withExplicit(key string, summary callSummary) callSummary {
+	if explicit := c.explicit[key]; len(explicit) != 0 {
 		summary.always = normalizeGuardContracts(append(summary.always, explicit...))
 	}
 
 	return normalizeCallSummary(summary)
 }
 
-func (l *linter) applySummaryContracts(
+// applyAlways applies the contracts call guarantees on every return; false
+// means they contradict st.
+func (c *callFacts) applyAlways(st state, call *ast.CallExpr) (state, bool) {
+	nextStates := c.apply(st, call, c.forCall(call).always)
+	if len(nextStates) == 0 {
+		return state{}, false
+	}
+
+	return nextStates[0], true
+}
+
+func (c *callFacts) apply(
 	st state,
 	call *ast.CallExpr,
 	contracts []guardContract,
@@ -521,16 +529,16 @@ func (l *linter) applySummaryContracts(
 	return applyContractSequence(
 		st,
 		contracts,
-		l.normalizeStates,
+		c.budget.normalize,
 		func(currentState state, contract guardContract) []state {
-			sym, ok := l.symbolForContractTarget(call, contract.target)
+			sym, ok := c.q.symbolForContractTarget(call, contract.target)
 			if !ok {
 				return []state{currentState}
 			}
 
 			ev := evidence{
 				pos:  call.Pos(),
-				text: l.contractEvidenceText(sym, contract, call),
+				text: c.q.contractEvidenceText(sym, contract, call),
 			}
 
 			var (
@@ -539,9 +547,9 @@ func (l *linter) applySummaryContracts(
 			)
 
 			if contract.wantEq {
-				next, ok2 = l.setExact(currentState, sym, contract.value, ev)
+				next, ok2 = setExact(currentState, sym, contract.value, ev)
 			} else {
-				next, ok2 = l.addNot(currentState, sym, contract.value, ev)
+				next, ok2 = addNot(currentState, sym, contract.value, ev)
 			}
 
 			if !ok2 {
@@ -552,12 +560,13 @@ func (l *linter) applySummaryContracts(
 		},
 	)
 }
-func (l *linter) refineCallExpr(st state, call *ast.CallExpr, wantTrue bool) ([]state, bool) {
-	if !isBoolType(l.pkg.TypesInfo.TypeOf(call)) {
+
+func (c *callFacts) refineCall(st state, call *ast.CallExpr, wantTrue bool) ([]state, bool) {
+	if !isBoolType(c.q.info.TypeOf(call)) {
 		return nil, false
 	}
 
-	summary := l.summaryForCall(call)
+	summary := c.forCall(call)
 
 	result, ok := summary.results[0]
 	if !ok {
@@ -571,30 +580,34 @@ func (l *linter) refineCallExpr(st state, call *ast.CallExpr, wantTrue bool) ([]
 		contracts = append(contracts, result.whenFalse...)
 	}
 
-	return l.applySummaryContracts(st, call, normalizeGuardContracts(contracts)), true
+	return c.apply(st, call, normalizeGuardContracts(contracts)), true
 }
 
-func (l *linter) refineCallScalar(
+func (c *callFacts) refineCallScalar(
 	st state,
 	left, right ast.Expr,
 	wantEq bool,
 ) ([]state, bool) {
-	call, scalar, ok := callScalar(left, right, l)
-	if !ok {
-		call, scalar, ok = callScalar(right, left, l)
-		if !ok {
+	call, ok := ast.Unparen(left).(*ast.CallExpr)
+	value, valueOK := c.q.scalarOf(right)
+
+	if !ok || !valueOK {
+		call, ok = ast.Unparen(right).(*ast.CallExpr)
+		value, valueOK = c.q.scalarOf(left)
+
+		if !ok || !valueOK {
 			return nil, false
 		}
 	}
 
-	summary := l.summaryForCall(call)
+	summary := c.forCall(call)
 
 	result, ok := summary.results[0]
 	if !ok {
 		return nil, false
 	}
 
-	selected, ok := result.contractsForScalar(scalar, wantEq)
+	selected, ok := result.contractsForScalar(value, wantEq)
 	if !ok {
 		return nil, false
 	}
@@ -602,7 +615,7 @@ func (l *linter) refineCallScalar(
 	contracts := append([]guardContract{}, summary.always...)
 	contracts = append(contracts, selected...)
 
-	return l.applySummaryContracts(st, call, normalizeGuardContracts(contracts)), true
+	return c.apply(st, call, normalizeGuardContracts(contracts)), true
 }
 
 func (result resultSummary) contractsForScalar(
@@ -636,18 +649,4 @@ func (result resultSummary) contractsForScalar(
 	}
 
 	return nil, false
-}
-
-func callScalar(callExpr, scalarExpr ast.Expr, l *linter) (*ast.CallExpr, scalar, bool) {
-	call, ok := ast.Unparen(callExpr).(*ast.CallExpr)
-	if !ok {
-		return nil, scalar{}, false
-	}
-
-	value, ok := l.scalarOf(scalarExpr)
-	if !ok {
-		return nil, scalar{}, false
-	}
-
-	return call, value, true
 }

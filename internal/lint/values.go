@@ -6,13 +6,13 @@ import (
 	"strings"
 )
 
-func (l *linter) symbolScalar(symExpr, scalarExpr ast.Expr) (symbol, scalar, bool) {
-	sym, ok := l.valueSymbolOf(symExpr)
+func (q *exprQuery) symbolScalar(symExpr, scalarExpr ast.Expr) (symbol, scalar, bool) {
+	sym, ok := q.valueSymbolOf(symExpr)
 	if !ok {
 		return symbol{}, scalar{}, false
 	}
 
-	value, ok := l.scalarOf(scalarExpr)
+	value, ok := q.scalarOf(scalarExpr)
 	if !ok {
 		return symbol{}, scalar{}, false
 	}
@@ -20,31 +20,27 @@ func (l *linter) symbolScalar(symExpr, scalarExpr ast.Expr) (symbol, scalar, boo
 	return sym, value, true
 }
 
-func (l *linter) valueSymbolOf(expr ast.Expr) (symbol, bool) {
-	if sym, ok := l.symbolOf(expr); ok {
+func (q *exprQuery) valueSymbolOf(expr ast.Expr) (symbol, bool) {
+	if sym, ok := q.symbolOf(expr); ok {
 		return sym, true
 	}
 
-	if sym, ok := l.lenSymbolOf(expr); ok {
+	if sym, ok := q.lenSymbolOf(expr); ok {
 		return sym, true
 	}
 
-	return l.predicateCallSymbolOf(expr)
+	return q.predicateCallSymbolOf(expr)
 }
 
-func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
+func (q *exprQuery) scalarOf(expr ast.Expr) (scalar, bool) {
 	expr = ast.Unparen(expr)
 	if id, ok := expr.(*ast.Ident); ok && id.Name == nilText {
 		return scalar{kind: scalarNil, text: nilText}, true
 	}
 
-	if l.isRuntimeTargetConstant(expr) {
-		return scalar{}, false
-	}
-
-	if tv, ok := l.pkg.TypesInfo.Types[expr]; ok {
+	if tv, ok := q.info.Types[expr]; ok {
 		if tv.Value != nil {
-			if l.containsRuntimeTargetConstant(expr) {
+			if q.containsRuntimeTargetConstant(expr) {
 				return scalar{}, false
 			}
 
@@ -59,21 +55,9 @@ func (l *linter) scalarOf(expr ast.Expr) (scalar, bool) {
 	return scalar{}, false
 }
 
-func (l *linter) isRuntimeTargetConstant(expr ast.Expr) bool {
-	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-
-	obj, ok := l.pkg.TypesInfo.Uses[sel.Sel].(*types.Const)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
-		return false
-	}
-
-	return obj.Name() == "GOOS" || obj.Name() == "GOARCH"
-}
-
-func (l *linter) containsRuntimeTargetConstant(expr ast.Expr) bool {
+// containsRuntimeTargetConstant reports runtime.GOOS or runtime.GOARCH in
+// expr. Their values depend on the build target, so they are not facts.
+func (q *exprQuery) containsRuntimeTargetConstant(expr ast.Expr) bool {
 	found := false
 
 	ast.Inspect(expr, func(n ast.Node) bool {
@@ -81,23 +65,22 @@ func (l *linter) containsRuntimeTargetConstant(expr ast.Expr) bool {
 			return false
 		}
 
-		expr, ok := n.(ast.Expr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
 
-		if l.isRuntimeTargetConstant(ast.Unparen(expr)) {
-			found = true
-			return false
-		}
+		obj, ok := q.info.Uses[sel.Sel].(*types.Const)
+		found = ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" &&
+			(obj.Name() == "GOOS" || obj.Name() == "GOARCH")
 
-		return true
+		return !found
 	})
 
 	return found
 }
 
-func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {
+func (q *exprQuery) lenSymbolOf(expr ast.Expr) (symbol, bool) {
 	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 1 {
 		return symbol{}, false
@@ -108,12 +91,11 @@ func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {
 		return symbol{}, false
 	}
 
-	obj, ok := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin)
-	if !ok || obj == nil || obj.Name() != "len" {
+	if _, ok := q.info.ObjectOf(id).(*types.Builtin); !ok {
 		return symbol{}, false
 	}
 
-	base, ok := l.symbolOf(call.Args[0])
+	base, ok := q.symbolOf(call.Args[0])
 	if !ok {
 		return symbol{}, false
 	}
@@ -121,23 +103,23 @@ func (l *linter) lenSymbolOf(expr ast.Expr) (symbol, bool) {
 	return lenSymbolForBase(base), true
 }
 
-func (l *linter) predicateCallSymbolOf(expr ast.Expr) (symbol, bool) {
+func (q *exprQuery) predicateCallSymbolOf(expr ast.Expr) (symbol, bool) {
 	call, ok := ast.Unparen(expr).(*ast.CallExpr)
-	if !ok || len(call.Args) != 0 || !isBoolType(l.pkg.TypesInfo.TypeOf(call)) {
+	if !ok || len(call.Args) != 0 || !isBoolType(q.info.TypeOf(call)) {
 		return symbol{}, false
 	}
 
-	obj, key, ok := l.calledFunc(call)
-	if !ok || obj == nil || !isIsPredicateName(obj.Name()) {
+	obj, key, ok := q.calledFunc(call)
+	if !ok || !isIsPredicateName(obj.Name()) {
 		return symbol{}, false
 	}
 
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || l.pkg.TypesInfo.Selections[sel] == nil {
+	if !ok || q.info.Selections[sel] == nil {
 		return symbol{}, false
 	}
 
-	receiver, ok := l.symbolOf(sel.X)
+	receiver, ok := q.symbolOf(sel.X)
 	if !ok {
 		return symbol{}, false
 	}
@@ -145,7 +127,7 @@ func (l *linter) predicateCallSymbolOf(expr ast.Expr) (symbol, bool) {
 	return symbol{
 		key:  receiver.key + "|" + predicatePathSegmentPrefix + strings.ReplaceAll(key, "|", "/"),
 		root: receiver.root,
-		name: l.render(call),
-		typ:  l.pkg.TypesInfo.TypeOf(call),
+		name: q.render(call),
+		typ:  q.info.TypeOf(call),
 	}, true
 }

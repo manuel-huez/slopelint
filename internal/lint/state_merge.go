@@ -4,22 +4,49 @@ import (
 	"strings"
 )
 
-func (l *linter) copyFacts(dst *state, lhs, rhs symbol, src state) {
-	for key, f := range src.facts {
-		if key == rhs.key || isSameOrChild(key, rhs.key) {
-			newKey := lhs.key + strings.TrimPrefix(key, rhs.key)
-			dst.facts[newKey] = f.clone()
-		}
-	}
-}
+// stateBudget is the most path states kept at one program point (-max-states).
+// More states merge into one, which keeps only facts all paths share.
+type stateBudget int
 
-func (l *linter) normalizeStates(states []state) []state {
+func (b stateBudget) normalize(states []state) []state {
 	out := dedupeStateSlice(states)
-	if len(out) <= l.maxStates {
+	if len(out) <= int(b) {
 		return out
 	}
 
-	return []state{l.mergeStates(out)}
+	return []state{mergeStates(out)}
+}
+
+func (b stateBudget) normalizeLabeled(in map[string][]state) map[string][]state {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string][]state, len(in))
+	for label, states := range in {
+		normalized := b.normalize(states)
+		if len(normalized) == 0 {
+			continue
+		}
+
+		out[label] = normalized
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+// copyFactsFrom copies src facts about rhs and its children to lhs.
+func (s *state) copyFactsFrom(src state, lhs, rhs symbol) {
+	for key, f := range src.facts {
+		if key == rhs.key || isSameOrChild(key, rhs.key) {
+			newKey := lhs.key + strings.TrimPrefix(key, rhs.key)
+			s.facts[newKey] = f.clone()
+		}
+	}
 }
 
 func dedupeStateSlice(states []state) []state {
@@ -45,11 +72,8 @@ func dedupeStateSlice(states []state) []state {
 	return out
 }
 
-func (l *linter) mergeStates(states []state) state {
-	if len(states) == 0 {
-		return newState()
-	}
-
+// mergeStates needs at least one state.
+func mergeStates(states []state) state {
 	out := states[0].clone()
 	for key, f := range out.facts {
 		merged := f.clone()
@@ -61,7 +85,7 @@ func (l *linter) mergeStates(states []state) state {
 				break
 			}
 
-			merged = l.joinFacts(merged, other)
+			merged = joinFacts(merged, other)
 			if merged.empty() {
 				break
 			}
@@ -75,12 +99,12 @@ func (l *linter) mergeStates(states []state) state {
 	}
 
 	out.aliases = intersectAliases(states)
-	out.bindings = l.intersectBindings(states)
+	out.bindings = intersectBindings(states)
 
 	return out
 }
 
-func (l *linter) joinFacts(a, b fact) fact {
+func joinFacts(a, b fact) fact {
 	out := fact{}
 
 	if a.exact != nil && b.exact != nil && a.exact.value == b.exact.value {
@@ -104,11 +128,7 @@ func (l *linter) joinFacts(a, b fact) fact {
 	return out
 }
 
-func (l *linter) intersectBindings(states []state) map[string]resultBinding {
-	if len(states) == 0 {
-		return nil
-	}
-
+func intersectBindings(states []state) map[string]resultBinding {
 	out := make(map[string]resultBinding)
 
 	for key, binding := range states[0].bindings {

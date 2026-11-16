@@ -15,18 +15,16 @@ import (
 )
 
 func cachedExportsForLinter(l *linter) []analysisCacheExport {
-	funcs := l.collectSummarizableFuncs()
-	if len(funcs) == 0 {
+	if len(l.funcs) == 0 {
 		return nil
 	}
 
-	out := make([]analysisCacheExport, 0, len(funcs))
+	out := make([]analysisCacheExport, 0, len(l.funcs))
 
-	for _, fn := range funcs {
-		summary := l.summaryWithExplicit(fn.key, l.inferredFacts[fn.key])
+	for _, fn := range l.funcs {
 		out = append(out, analysisCacheExport{
 			FuncKey: fn.key,
-			Fact:    *callSummaryFactFromSummary(summary),
+			Fact:    *callSummaryFactFromSummary(l.calls.exported(fn)),
 		})
 	}
 
@@ -281,17 +279,10 @@ func validCachedAnalysisIssue(cached analysisCacheIssue) bool {
 }
 
 func packageFuncObjects(pkg *LoadedPackage) map[string]*types.Func {
-	l := newLinter(pkg, Options{})
-
 	out := make(map[string]*types.Func)
 
-	for _, fn := range l.collectSummarizableFuncs() {
-		obj, ok := pkg.TypesInfo.ObjectOf(fn.decl.Name).(*types.Func)
-		if !ok || obj == nil {
-			continue
-		}
-
-		out[fn.key] = obj
+	for _, fn := range summarizableFuncs(pkg) {
+		out[fn.key] = fn.obj
 	}
 
 	return out

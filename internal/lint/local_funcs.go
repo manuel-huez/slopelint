@@ -5,125 +5,90 @@ import (
 	"go/types"
 )
 
-func (l *linter) collectLocalFuncLits() {
-	l.localFuncLits = make(map[types.Object]*ast.FuncLit)
-
-	ambiguous := make(map[types.Object]struct{})
-
-	for _, file := range l.pkg.Files {
-		l.collectLocalFuncLitsFromFile(file, ambiguous)
-	}
+// localFuncLitIndex maps function variables to the one literal they ever hold.
+// A variable assigned anything else, or two different literals, is ambiguous
+// and stays out of the map.
+type localFuncLitIndex struct {
+	info      *types.Info
+	lits      map[types.Object]*ast.FuncLit
+	ambiguous map[types.Object]struct{}
 }
 
-func (l *linter) collectLocalFuncLitsFromFile(
-	file *ast.File,
-	ambiguous map[types.Object]struct{},
-) {
-	ast.Inspect(file, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.AssignStmt:
-			l.recordLocalFuncLitPairs(n.Lhs, n.Rhs, ambiguous)
-		case *ast.ValueSpec:
-			names := make([]ast.Expr, 0, len(n.Names))
-			for _, name := range n.Names {
-				names = append(names, name)
+func collectLocalFuncLits(files []*ast.File, info *types.Info) map[types.Object]*ast.FuncLit {
+	index := localFuncLitIndex{
+		info:      info,
+		lits:      make(map[types.Object]*ast.FuncLit),
+		ambiguous: make(map[types.Object]struct{}),
+	}
+
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.AssignStmt:
+				index.recordPairs(n.Lhs, n.Rhs)
+			case *ast.ValueSpec:
+				names := make([]ast.Expr, 0, len(n.Names))
+				for _, name := range n.Names {
+					names = append(names, name)
+				}
+
+				index.recordPairs(names, n.Values)
 			}
 
-			l.recordLocalFuncLitPairs(names, n.Values, ambiguous)
-		}
+			return true
+		})
+	}
 
-		return true
-	})
+	return index.lits
 }
 
-func (l *linter) recordLocalFuncLitPairs(
-	lhs []ast.Expr,
-	rhs []ast.Expr,
-	ambiguous map[types.Object]struct{},
-) {
+func (index localFuncLitIndex) recordPairs(lhs []ast.Expr, rhs []ast.Expr) {
 	if len(lhs) != len(rhs) {
 		return
 	}
 
 	for idx := range lhs {
-		l.recordLocalFuncLit(lhs[idx], rhs[idx], ambiguous)
+		index.record(lhs[idx], rhs[idx])
 	}
 }
 
-func (l *linter) recordLocalFuncLit(
-	lhs ast.Expr,
-	rhs ast.Expr,
-	ambiguous map[types.Object]struct{},
-) {
-	obj, ok := l.funcVarForExpr(lhs)
+func (index localFuncLitIndex) record(lhs ast.Expr, rhs ast.Expr) {
+	name, ok := ast.Unparen(lhs).(*ast.Ident)
 	if !ok {
 		return
 	}
 
-	if _, ok := ambiguous[obj]; ok {
+	obj, ok := index.info.ObjectOf(name).(*types.Var)
+	if !ok {
+		return
+	}
+
+	if _, ok := types.Unalias(obj.Type()).Underlying().(*types.Signature); !ok {
+		return
+	}
+
+	if _, ok := index.ambiguous[obj]; ok {
 		return
 	}
 
 	lit, ok := ast.Unparen(rhs).(*ast.FuncLit)
-	if !ok {
-		l.markLocalFuncLitAmbiguous(obj, ambiguous)
+	if prev, seen := index.lits[obj]; !ok || (seen && prev != lit) {
+		index.ambiguous[obj] = struct{}{}
+		delete(index.lits, obj)
 
 		return
 	}
 
-	if prev, ok := l.localFuncLits[obj]; ok && prev != lit {
-		l.markLocalFuncLitAmbiguous(obj, ambiguous)
-
-		return
-	}
-
-	l.localFuncLits[obj] = lit
+	index.lits[obj] = lit
 }
 
-func (l *linter) funcVarForExpr(expr ast.Expr) (*types.Var, bool) {
-	name, ok := ast.Unparen(expr).(*ast.Ident)
-	if !ok {
-		return nil, false
-	}
-
-	obj, ok := l.pkg.TypesInfo.ObjectOf(name).(*types.Var)
-	if !ok || obj == nil || !isFuncTypedObject(obj) {
-		return nil, false
-	}
-
-	return obj, true
-}
-
-func (l *linter) markLocalFuncLitAmbiguous(
-	obj types.Object,
-	ambiguous map[types.Object]struct{},
-) {
-	ambiguous[obj] = struct{}{}
-	delete(l.localFuncLits, obj)
-}
-
-func (l *linter) localFuncLitForExpr(expr ast.Expr) (*ast.FuncLit, bool) {
+func (q *exprQuery) localFuncLitForExpr(expr ast.Expr) (*ast.FuncLit, bool) {
 	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok {
 		return nil, false
 	}
 
-	obj := l.pkg.TypesInfo.ObjectOf(ident)
-	if obj == nil {
-		return nil, false
-	}
-
-	lit, ok := l.localFuncLits[obj]
+	lit, ok := q.localFuncLits[q.info.ObjectOf(ident)]
 
 	return lit, ok
-}
-
-func isFuncTypedObject(obj types.Object) bool {
-	if obj == nil {
-		return false
-	}
-
-	_, ok := types.Unalias(obj.Type()).Underlying().(*types.Signature)
-
-	return ok
 }

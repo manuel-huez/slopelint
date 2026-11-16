@@ -2,7 +2,6 @@ package lint
 
 import (
 	"go/ast"
-	"go/token"
 	"slices"
 	"sort"
 	"strconv"
@@ -98,7 +97,7 @@ func bindingConditionContracts(binding resultBinding, kind returnKind) []boundCo
 	return nil
 }
 
-func (l *linter) applyBoundContracts(st state, contracts []boundContract) []state {
+func applyBoundContracts(st state, contracts []boundContract) []state {
 	return applyContractSequence(
 		st,
 		contracts,
@@ -115,9 +114,9 @@ func (l *linter) applyBoundContracts(st state, contracts []boundContract) []stat
 				root: contract.symKey,
 			}
 			if contract.wantEq {
-				next, ok = l.setExact(currentState, sym, contract.value, contract.why)
+				next, ok = setExact(currentState, sym, contract.value, contract.why)
 			} else {
-				next, ok = l.addNot(currentState, sym, contract.value, contract.why)
+				next, ok = addNot(currentState, sym, contract.value, contract.why)
 			}
 
 			if !ok {
@@ -190,16 +189,21 @@ func boundContractKey(contract boundContract) string {
 		strconv.Itoa(int(contract.why.pos))
 }
 
-func instantiateResultBinding(
-	l *linter,
+// bindingForCall instantiates the conditional contracts of one call result
+// on the call's argument symbols.
+func (c *callFacts) bindingForCall(
 	call *ast.CallExpr,
-	result resultSummary,
-	kindPos token.Pos,
+	resultIndex int,
 ) (resultBinding, bool) {
+	result, ok := c.forCall(call).results[resultIndex]
+	if !ok || resultSummaryEmpty(result) {
+		return resultBinding{}, false
+	}
+
 	binding := resultBinding{}
 	addContracts := func(dst *[]boundContract, contracts []guardContract) bool {
 		for _, contract := range contracts {
-			sym, ok := l.symbolForContractTarget(call, contract.target)
+			sym, ok := c.q.symbolForContractTarget(call, contract.target)
 			if !ok {
 				return false
 			}
@@ -211,8 +215,8 @@ func instantiateResultBinding(
 				value:   contract.value,
 				wantEq:  contract.wantEq,
 				why: evidence{
-					pos:  kindPos,
-					text: l.contractEvidenceText(sym, contract, call),
+					pos:  call.Pos(),
+					text: c.q.contractEvidenceText(sym, contract, call),
 				},
 			})
 		}
@@ -220,68 +224,45 @@ func instantiateResultBinding(
 		return true
 	}
 
-	if !addContracts(&binding.whenTrue, result.whenTrue) {
-		return resultBinding{}, false
-	}
-
-	if !addContracts(&binding.whenFalse, result.whenFalse) {
-		return resultBinding{}, false
-	}
-
-	if !addContracts(&binding.whenNil, result.whenNil) {
-		return resultBinding{}, false
-	}
-
-	if !addContracts(&binding.whenNonNil, result.whenNonNil) {
+	if !addContracts(&binding.whenTrue, result.whenTrue) ||
+		!addContracts(&binding.whenFalse, result.whenFalse) ||
+		!addContracts(&binding.whenNil, result.whenNil) ||
+		!addContracts(&binding.whenNonNil, result.whenNonNil) {
 		return resultBinding{}, false
 	}
 
 	return normalizeResultBinding(binding), true
 }
 
-func (l *linter) instantiateBindingForCall(
-	call *ast.CallExpr,
-	resultIndex int,
-) (resultBinding, bool) {
-	summary := l.summaryForCall(call)
-
-	result, ok := summary.results[resultIndex]
-	if !ok || resultSummaryEmpty(result) {
-		return resultBinding{}, false
-	}
-
-	return instantiateResultBinding(l, call, result, call.Pos())
-}
-
-func (l *linter) applyBindingCondition(st state, sym symbol, kind returnKind) []state {
+func applyBindingCondition(st state, sym symbol, kind returnKind) []state {
 	binding, ok := st.bindings[sym.key]
 	if !ok {
 		return []state{st}
 	}
 
-	return l.applyBoundContracts(st, bindingConditionContracts(binding, kind))
+	return applyBoundContracts(st, bindingConditionContracts(binding, kind))
 }
 
-func (l *linter) applyBindingForScalar(st state, sym symbol, value scalar, wantEq bool) []state {
+func applyBindingForScalar(st state, sym symbol, value scalar, wantEq bool) []state {
 	switch {
 	case value.kind == scalarBool && value.text == boolTrueText:
 		if wantEq {
-			return l.applyBindingCondition(st, sym, returnBoolTrue)
+			return applyBindingCondition(st, sym, returnBoolTrue)
 		}
 
-		return l.applyBindingCondition(st, sym, returnBoolFalse)
+		return applyBindingCondition(st, sym, returnBoolFalse)
 	case value.kind == scalarBool && value.text == boolFalseText:
 		if wantEq {
-			return l.applyBindingCondition(st, sym, returnBoolFalse)
+			return applyBindingCondition(st, sym, returnBoolFalse)
 		}
 
-		return l.applyBindingCondition(st, sym, returnBoolTrue)
+		return applyBindingCondition(st, sym, returnBoolTrue)
 	case value.kind == scalarNil:
 		if wantEq {
-			return l.applyBindingCondition(st, sym, returnNil)
+			return applyBindingCondition(st, sym, returnNil)
 		}
 
-		return l.applyBindingCondition(st, sym, returnNonNil)
+		return applyBindingCondition(st, sym, returnNonNil)
 	default:
 		return []state{st}
 	}

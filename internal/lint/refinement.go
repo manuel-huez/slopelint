@@ -5,18 +5,18 @@ import (
 	"go/token"
 )
 
-func (l *linter) refineStates(states []state, expr ast.Expr, wantTrue bool) []state {
+func (c conditionEval) refineStates(states []state, expr ast.Expr, wantTrue bool) []state {
 	out := make([]state, 0, len(states))
 	for _, st := range states {
-		out = append(out, l.refineState(st, expr, wantTrue)...)
+		out = append(out, c.refineState(st, expr, wantTrue)...)
 	}
 
-	return l.normalizeStates(out)
+	return c.budget.normalize(out)
 }
 
-func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
+func (c conditionEval) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 	expr = ast.Unparen(expr)
-	if tri, _ := l.truth(st, expr); tri == triTrue {
+	if tri, _ := c.truth(st, expr); tri == triTrue {
 		if wantTrue {
 			return []state{st}
 		}
@@ -33,28 +33,28 @@ func (l *linter) refineState(st state, expr ast.Expr, wantTrue bool) []state {
 	switch expr := expr.(type) {
 	case *ast.UnaryExpr:
 		if expr.Op == token.NOT {
-			return l.refineState(st, expr.X, !wantTrue)
+			return c.refineState(st, expr.X, !wantTrue)
 		}
 	case *ast.CallExpr:
-		return l.refineCallCondition(st, expr, wantTrue)
+		return c.refineCallCondition(st, expr, wantTrue)
 	case *ast.BinaryExpr:
-		return l.refineBinary(st, expr, wantTrue)
+		return c.refineBinary(st, expr, wantTrue)
 	case *ast.Ident, *ast.SelectorExpr:
-		return l.refineBoolSymbol(st, expr, wantTrue)
+		return c.refineBoolSymbol(st, expr, wantTrue)
 	}
 
 	return []state{st}
 }
 
-func (l *linter) refineCallCondition(
+func (c conditionEval) refineCallCondition(
 	st state,
 	call *ast.CallExpr,
 	wantTrue bool,
 ) []state {
-	sym, predicate := l.predicateCallSymbolOf(call)
+	sym, predicate := c.q.predicateCallSymbolOf(call)
 
 	states := []state{st}
-	if next, ok := l.refineCallExpr(st, call, wantTrue); ok {
+	if next, ok := c.calls.refineCall(st, call, wantTrue); ok {
 		states = next
 	}
 
@@ -62,10 +62,10 @@ func (l *linter) refineCallCondition(
 		return states
 	}
 
-	return l.refinePredicateCallStates(states, sym, call.Pos(), wantTrue)
+	return c.refinePredicateCallStates(states, sym, call.Pos(), wantTrue)
 }
 
-func (l *linter) refineBinary(
+func (c conditionEval) refineBinary(
 	st state,
 	expr *ast.BinaryExpr,
 	wantTrue bool,
@@ -74,91 +74,91 @@ func (l *linter) refineBinary(
 	//exhaustive:ignore
 	switch expr.Op {
 	case token.LAND:
-		return l.refineLogicalAnd(st, expr.X, expr.Y, wantTrue)
+		return c.refineLogicalAnd(st, expr.X, expr.Y, wantTrue)
 	case token.LOR:
-		return l.refineLogicalOr(st, expr.X, expr.Y, wantTrue)
+		return c.refineLogicalOr(st, expr.X, expr.Y, wantTrue)
 	case token.EQL:
-		return l.refineEquality(st, expr.X, expr.Y, wantTrue, expr.Pos())
+		return c.refineEquality(st, expr.X, expr.Y, wantTrue, expr.Pos())
 	case token.NEQ:
-		return l.refineEquality(st, expr.X, expr.Y, !wantTrue, expr.Pos())
+		return c.refineEquality(st, expr.X, expr.Y, !wantTrue, expr.Pos())
 	case token.GTR, token.GEQ, token.LSS, token.LEQ:
-		return l.refineOrderedComparison(st, expr, wantTrue)
+		return c.refineOrderedComparison(st, expr, wantTrue)
 	default:
 		return []state{st}
 	}
 }
 
-func (l *linter) refineLogicalAnd(
+func (c conditionEval) refineLogicalAnd(
 	st state,
 	lhs ast.Expr,
 	rhs ast.Expr,
 	wantTrue bool,
 ) []state {
 	if wantTrue {
-		left := l.refineState(st, lhs, true)
+		left := c.refineState(st, lhs, true)
 
-		return l.refineStates(left, rhs, true)
+		return c.refineStates(left, rhs, true)
 	}
 
-	out := l.refineState(st, lhs, false)
-	leftTrue := l.refineState(st, lhs, true)
-	out = append(out, l.refineStates(leftTrue, rhs, false)...)
+	out := c.refineState(st, lhs, false)
+	leftTrue := c.refineState(st, lhs, true)
+	out = append(out, c.refineStates(leftTrue, rhs, false)...)
 
-	return l.normalizeStates(out)
+	return c.budget.normalize(out)
 }
 
-func (l *linter) refineLogicalOr(
+func (c conditionEval) refineLogicalOr(
 	st state,
 	lhs ast.Expr,
 	rhs ast.Expr,
 	wantTrue bool,
 ) []state {
 	if !wantTrue {
-		left := l.refineState(st, lhs, false)
+		left := c.refineState(st, lhs, false)
 
-		return l.refineStates(left, rhs, false)
+		return c.refineStates(left, rhs, false)
 	}
 
-	out := l.refineState(st, lhs, true)
-	leftFalse := l.refineState(st, lhs, false)
-	out = append(out, l.refineStates(leftFalse, rhs, true)...)
+	out := c.refineState(st, lhs, true)
+	leftFalse := c.refineState(st, lhs, false)
+	out = append(out, c.refineStates(leftFalse, rhs, true)...)
 
-	return l.normalizeStates(out)
+	return c.budget.normalize(out)
 }
 
-func (l *linter) refineEquality(
+func (c conditionEval) refineEquality(
 	st state,
 	lhs ast.Expr,
 	rhs ast.Expr,
 	wantEqual bool,
 	pos token.Pos,
 ) []state {
-	if next, ok := l.refineCallScalar(st, lhs, rhs, wantEqual); ok {
+	if next, ok := c.calls.refineCallScalar(st, lhs, rhs, wantEqual); ok {
 		return next
 	}
 
-	if sym, value, ok := l.symbolScalar(lhs, rhs); ok {
-		return l.refineSymbolScalar(st, sym, value, wantEqual, pos)
+	if sym, value, ok := c.q.symbolScalar(lhs, rhs); ok {
+		return refineSymbolScalar(st, sym, value, wantEqual, pos)
 	}
 
-	if sym, value, ok := l.symbolScalar(rhs, lhs); ok {
-		return l.refineSymbolScalar(st, sym, value, wantEqual, pos)
+	if sym, value, ok := c.q.symbolScalar(rhs, lhs); ok {
+		return refineSymbolScalar(st, sym, value, wantEqual, pos)
 	}
 
 	return []state{st}
 }
 
-func (l *linter) refineOrderedComparison(
+func (c conditionEval) refineOrderedComparison(
 	st state,
 	expr *ast.BinaryExpr,
 	wantTrue bool,
 ) []state {
-	if sym, value, ok := l.symbolScalar(expr.X, expr.Y); ok {
-		return l.refineSymbolOrdered(st, sym, value, expr.Op, wantTrue, expr.Pos())
+	if sym, value, ok := c.q.symbolScalar(expr.X, expr.Y); ok {
+		return refineSymbolOrdered(st, sym, value, expr.Op, wantTrue, expr.Pos())
 	}
 
-	if sym, value, ok := l.symbolScalar(expr.Y, expr.X); ok {
-		return l.refineSymbolOrdered(
+	if sym, value, ok := c.q.symbolScalar(expr.Y, expr.X); ok {
+		return refineSymbolOrdered(
 			st,
 			sym,
 			value,
@@ -171,8 +171,8 @@ func (l *linter) refineOrderedComparison(
 	return []state{st}
 }
 
-func (l *linter) refineBoolSymbol(st state, expr ast.Expr, wantTrue bool) []state {
-	sym, ok := l.symbolOf(expr)
+func (c conditionEval) refineBoolSymbol(st state, expr ast.Expr, wantTrue bool) []state {
+	sym, ok := c.q.symbolOf(expr)
 	if !ok || !isBoolType(sym.typ) {
 		return []state{st}
 	}
@@ -185,20 +185,20 @@ func (l *linter) refineBoolSymbol(st state, expr ast.Expr, wantTrue bool) []stat
 		resultKind = returnBoolTrue
 	}
 
-	next, ok := l.setExact(
+	next, ok := setExact(
 		st,
 		sym,
 		value,
-		evidence{pos: expr.Pos(), text: l.relationText(sym, "==", value)},
+		evidence{pos: expr.Pos(), text: relationText(sym, "==", value)},
 	)
 	if !ok {
 		return nil
 	}
 
-	return l.applyBindingCondition(next, sym, resultKind)
+	return applyBindingCondition(next, sym, resultKind)
 }
 
-func (l *linter) refinePredicateCallStates(
+func (c conditionEval) refinePredicateCallStates(
 	states []state,
 	sym symbol,
 	pos token.Pos,
@@ -211,21 +211,21 @@ func (l *linter) refinePredicateCallStates(
 
 	out := make([]state, 0, len(states))
 	for _, st := range states {
-		next, ok := l.setExact(
+		next, ok := setExact(
 			st,
 			sym,
 			value,
-			evidence{pos: pos, text: l.relationText(sym, "==", value)},
+			evidence{pos: pos, text: relationText(sym, "==", value)},
 		)
 		if ok {
 			out = append(out, next)
 		}
 	}
 
-	return l.normalizeStates(out)
+	return c.budget.normalize(out)
 }
 
-func (l *linter) refineSymbolOrdered(
+func refineSymbolOrdered(
 	st state,
 	sym symbol,
 	value scalar,
@@ -250,7 +250,7 @@ func (l *linter) refineSymbolOrdered(
 		return nil
 	}
 
-	if next, refined, ok := l.refineLenCompare(st, sym, op, limit, wantTrue, pos); ok {
+	if next, refined, ok := refineLenCompare(st, sym, op, limit, wantTrue, pos); ok {
 		if !refined {
 			return []state{st}
 		}
@@ -261,7 +261,7 @@ func (l *linter) refineSymbolOrdered(
 	return []state{st}
 }
 
-func (l *linter) refineSymbolScalar(
+func refineSymbolScalar(
 	st state,
 	sym symbol,
 	value scalar,
@@ -269,28 +269,28 @@ func (l *linter) refineSymbolScalar(
 	pos token.Pos,
 ) []state {
 	if wantEq {
-		next, ok := l.setExact(
+		next, ok := setExact(
 			st,
 			sym,
 			value,
-			evidence{pos: pos, text: l.relationText(sym, "==", value)},
+			evidence{pos: pos, text: relationText(sym, "==", value)},
 		)
 		if !ok {
 			return nil
 		}
 
-		return l.applyBindingForScalar(next, sym, value, true)
+		return applyBindingForScalar(next, sym, value, true)
 	}
 
-	next, ok := l.addNot(st, sym, value, evidence{pos: pos, text: l.relationText(sym, "!=", value)})
+	next, ok := addNot(st, sym, value, evidence{pos: pos, text: relationText(sym, "!=", value)})
 	if !ok {
 		return nil
 	}
 
-	return l.applyBindingForScalar(next, sym, value, false)
+	return applyBindingForScalar(next, sym, value, false)
 }
 
-func (l *linter) setExact(st state, sym symbol, value scalar, why evidence) (state, bool) {
+func setExact(st state, sym symbol, value scalar, why evidence) (state, bool) {
 	out, keys := clonedAliasClosure(st, sym)
 
 	for _, key := range keys {
@@ -318,7 +318,7 @@ func (l *linter) setExact(st state, sym symbol, value scalar, why evidence) (sta
 	return out, true
 }
 
-func (l *linter) addNot(st state, sym symbol, value scalar, why evidence) (state, bool) {
+func addNot(st state, sym symbol, value scalar, why evidence) (state, bool) {
 	out, keys := clonedAliasClosure(st, sym)
 
 	for _, key := range keys {

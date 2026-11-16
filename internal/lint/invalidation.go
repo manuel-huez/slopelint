@@ -7,38 +7,46 @@ import (
 	"strings"
 )
 
-func (l *linter) invalidateLHS(st *state, lhs ast.Expr) {
-	if sym, ok := l.symbolOf(lhs); ok {
-		l.invalidatePrefix(st, sym.key)
+// invalidator drops facts that writes and calls may change. Calls also apply
+// the contracts their summaries always guarantee.
+type invalidator struct {
+	q      *exprQuery
+	calls  *callFacts
+	budget stateBudget
+}
+
+func (inv invalidator) invalidateLHS(st *state, lhs ast.Expr) {
+	if sym, ok := inv.q.symbolOf(lhs); ok {
+		st.invalidatePrefix(sym.key)
 		return
 	}
 
-	for root := range l.rootsInExpr(lhs) {
-		l.invalidatePrefix(st, root)
+	for root := range inv.q.rootsInExpr(lhs) {
+		st.invalidatePrefix(root)
 	}
 }
 
-func (l *linter) invalidatePrefix(st *state, prefix string) {
-	for key := range st.facts {
+func (s *state) invalidatePrefix(prefix string) {
+	for key := range s.facts {
 		if isSameOrChild(key, prefix) || predicateFactInvalidatedByPrefix(key, prefix) {
-			delete(st.facts, key)
+			delete(s.facts, key)
 		}
 	}
 
-	removeAliasPrefix(st, prefix, false)
-	removeBindingsForPrefix(st, prefix)
+	removeAliasPrefix(s, prefix, false)
+	removeBindingsForPrefix(s, prefix)
 }
 
-func (l *linter) invalidateDescendants(st *state, prefix string) {
-	for key := range st.facts {
+func (s *state) invalidateDescendants(prefix string) {
+	for key := range s.facts {
 		if key != prefix &&
 			(isSameOrChild(key, prefix) || predicateFactInvalidatedByPrefix(key, prefix)) {
-			delete(st.facts, key)
+			delete(s.facts, key)
 		}
 	}
 
-	removeAliasPrefix(st, prefix, true)
-	removeBindingsForPrefix(st, prefix)
+	removeAliasPrefix(s, prefix, true)
+	removeBindingsForPrefix(s, prefix)
 }
 
 func predicateFactInvalidatedByPrefix(key string, prefix string) bool {
@@ -54,11 +62,8 @@ func predicateFactInvalidatedByPrefix(key string, prefix string) bool {
 	return strings.HasPrefix(key, root+"|"+predicatePathSegmentPrefix)
 }
 
-func (l *linter) wipeFacts(states []state) []state {
-	if len(states) == 0 {
-		return nil
-	}
-
+// wipeFacts keeps the number of paths but forgets every fact on them.
+func wipeFacts(states []state) []state {
 	out := make([]state, len(states))
 	for i := range out {
 		out[i] = newState()
@@ -67,16 +72,16 @@ func (l *linter) wipeFacts(states []state) []state {
 	return out
 }
 
-func (l *linter) invalidateForExprSideEffects(states []state, expr ast.Expr) []state {
+func (inv invalidator) forExprSideEffects(states []state, expr ast.Expr) []state {
 	out := make([]state, 0, len(states))
 	for _, st := range states {
-		out = append(out, l.invalidateForExprSideEffectsOne(st, expr))
+		out = append(out, inv.forExprSideEffectsOne(st, expr))
 	}
 
-	return l.normalizeStates(out)
+	return inv.budget.normalize(out)
 }
 
-func (l *linter) invalidateForExprSideEffectsOne(st state, expr ast.Expr) state {
+func (inv invalidator) forExprSideEffectsOne(st state, expr ast.Expr) state {
 	out := st.clone()
 
 	ast.Inspect(expr, func(n ast.Node) bool {
@@ -84,7 +89,7 @@ func (l *linter) invalidateForExprSideEffectsOne(st state, expr ast.Expr) state 
 		case *ast.FuncLit:
 			return false
 		case *ast.CallExpr:
-			out = l.invalidateForCallOne(out, n)
+			out = inv.forCallOne(out, n)
 		}
 
 		return true
@@ -93,24 +98,22 @@ func (l *linter) invalidateForExprSideEffectsOne(st state, expr ast.Expr) state 
 	return out
 }
 
-func (l *linter) invalidateForCall(states []state, call *ast.CallExpr) []state {
+func (inv invalidator) forCall(states []state, call *ast.CallExpr) []state {
 	out := make([]state, 0, len(states))
 	for _, st := range states {
-		out = append(out, l.invalidateForCallOne(st, call))
+		out = append(out, inv.forCallOne(st, call))
 	}
 
-	return l.normalizeStates(out)
+	return inv.budget.normalize(out)
 }
 
-func (l *linter) invalidateForFuncLitEffectsSeen(
+// forFuncLitEffects applies writes inside a literal that may run during the
+// call. seen stops recursion through literals that call each other.
+func (inv invalidator) forFuncLitEffects(
 	st state,
 	lit *ast.FuncLit,
 	seen map[*ast.FuncLit]struct{},
 ) state {
-	if lit == nil || lit.Body == nil {
-		return st
-	}
-
 	if _, ok := seen[lit]; ok {
 		return st
 	}
@@ -119,12 +122,28 @@ func (l *linter) invalidateForFuncLitEffectsSeen(
 	out := st.clone()
 
 	ast.Inspect(lit.Body, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
+		switch n := n.(type) {
+		case *ast.FuncLit:
 			return false
-		}
+		case *ast.AssignStmt:
+			for _, lhs := range n.Lhs {
+				inv.invalidateLHS(&out, lhs)
+			}
+		case *ast.IncDecStmt:
+			inv.invalidateLHS(&out, n.X)
+		case *ast.RangeStmt:
+			if n.Key != nil {
+				inv.invalidateLHS(&out, n.Key)
+			}
 
-		if !l.invalidateForFuncLitNode(&out, n, seen) {
-			return false
+			if n.Value != nil {
+				inv.invalidateLHS(&out, n.Value)
+			}
+		case *ast.CallExpr:
+			out = inv.forCallOneSeen(out, n, seen)
+		case *ast.SendStmt:
+			out = inv.forExprSideEffectsOne(out, n.Chan)
+			out = inv.forExprSideEffectsOne(out, n.Value)
 		}
 
 		return true
@@ -133,188 +152,106 @@ func (l *linter) invalidateForFuncLitEffectsSeen(
 	return out
 }
 
-func (l *linter) invalidateForFuncLitNode(
-	out *state,
-	node ast.Node,
-	seen map[*ast.FuncLit]struct{},
-) bool {
-	switch n := node.(type) {
-	case *ast.AssignStmt:
-		for _, lhs := range n.Lhs {
-			l.invalidateLHS(out, lhs)
-		}
-	case *ast.IncDecStmt:
-		l.invalidateLHS(out, n.X)
-	case *ast.RangeStmt:
-		l.invalidateRangeLoopTargets(out, n)
-	case *ast.CallExpr:
-		*out = l.invalidateForCallOneSeen(*out, n, seen)
-	case *ast.SendStmt:
-		*out = l.invalidateForExprSideEffectsOne(*out, n.Chan)
-		*out = l.invalidateForExprSideEffectsOne(*out, n.Value)
-	}
-
-	return true
+func (inv invalidator) forCallOne(st state, call *ast.CallExpr) state {
+	return inv.forCallOneSeen(st, call, make(map[*ast.FuncLit]struct{}))
 }
 
-func (l *linter) invalidateRangeLoopTargets(out *state, stmt *ast.RangeStmt) {
-	if stmt.Key != nil {
-		l.invalidateLHS(out, stmt.Key)
-	}
-
-	if stmt.Value != nil {
-		l.invalidateLHS(out, stmt.Value)
-	}
-}
-
-func (l *linter) invalidateForCallOne(st state, call *ast.CallExpr) state {
-	return l.invalidateForCallOneSeen(st, call, make(map[*ast.FuncLit]struct{}))
-}
-
-func (l *linter) invalidateForCallOneSeen(
+func (inv invalidator) forCallOneSeen(
 	st state,
 	call *ast.CallExpr,
 	seen map[*ast.FuncLit]struct{},
 ) state {
-	if tv, ok := l.pkg.TypesInfo.Types[call.Fun]; ok && tv.IsType() {
+	if tv, ok := inv.q.info.Types[call.Fun]; ok && tv.IsType() {
 		return st
 	}
 
 	out := st.clone()
 
 	if lit, ok := ast.Unparen(call.Fun).(*ast.FuncLit); ok {
-		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
-	} else if lit, ok := l.localFuncLitForExpr(call.Fun); ok {
-		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
+		out = inv.forFuncLitEffects(out, lit, seen)
+	} else if lit, ok := inv.q.localFuncLitForExpr(call.Fun); ok {
+		out = inv.forFuncLitEffects(out, lit, seen)
 	}
 
-	l.invalidateCallReceiver(&out, call.Fun)
-	out = l.invalidateCallArguments(out, call.Args, seen)
-	l.invalidateMutatingBuiltinArgs(&out, call)
+	if recv, ok := pointerMethodReceiver(inv.q.info, call); ok {
+		for root := range inv.q.rootsInExpr(recv) {
+			out.invalidateDescendants(root)
+		}
+	}
 
-	summary := l.summaryForCall(call)
+	out = inv.callArguments(out, call.Args, seen)
 
-	nextStates := l.applySummaryContracts(out, call, summary.always)
-	if len(nextStates) == 0 {
+	if isMutatingBuiltinCall(inv.q.info, call) {
+		for _, arg := range call.Args {
+			for root := range inv.q.rootsInExpr(arg) {
+				out.invalidateDescendants(root)
+			}
+		}
+	}
+
+	next, ok := inv.calls.applyAlways(out, call)
+	if !ok {
 		return newState()
 	}
 
-	return nextStates[0]
+	return next
 }
 
-func (l *linter) invalidateCallReceiver(out *state, fun ast.Expr) {
-	sel, ok := ast.Unparen(fun).(*ast.SelectorExpr)
-	if !ok {
-		return
-	}
-
-	selection := l.pkg.TypesInfo.Selections[sel]
-	if selection == nil || selection.Kind() != types.MethodVal || !isPointerLike(selection.Recv()) {
-		return
-	}
-
-	l.forEachExprRoot(sel.X, func(root string) {
-		l.invalidateDescendants(out, root)
-	})
-}
-
-func (l *linter) invalidateCallArguments(
+func (inv invalidator) callArguments(
 	out state,
 	args []ast.Expr,
 	seen map[*ast.FuncLit]struct{},
 ) state {
 	for _, arg := range args {
-		out = l.invalidateForFuncLitsInExprSeen(out, arg, seen)
+		ast.Inspect(arg, func(node ast.Node) bool {
+			lit, ok := node.(*ast.FuncLit)
+			if !ok {
+				return true
+			}
 
-		if lit, ok := l.localFuncLitForExpr(arg); ok {
-			out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
+			out = inv.forFuncLitEffects(out, lit, seen)
+
+			return false
+		})
+
+		if lit, ok := inv.q.localFuncLitForExpr(arg); ok {
+			out = inv.forFuncLitEffects(out, lit, seen)
 			continue
 		}
 
 		if address, ok := ast.Unparen(arg).(*ast.UnaryExpr); ok && address.Op == token.AND {
-			l.forEachExprRoot(address.X, func(root string) {
-				l.invalidatePrefix(&out, root)
-			})
+			for root := range inv.q.rootsInExpr(address.X) {
+				out.invalidatePrefix(root)
+			}
 
 			continue
 		}
 
-		tv, ok := l.pkg.TypesInfo.Types[arg]
+		tv, ok := inv.q.info.Types[arg]
 		if !ok || !isPointerLike(tv.Type) {
 			continue
 		}
 
-		l.forEachExprRoot(arg, func(root string) {
-			l.invalidateDescendants(&out, root)
-		})
+		for root := range inv.q.rootsInExpr(arg) {
+			out.invalidateDescendants(root)
+		}
 	}
 
 	return out
 }
 
-func (l *linter) invalidateMutatingBuiltinArgs(out *state, call *ast.CallExpr) {
-	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
+// pointerMethodReceiver returns the receiver expression of a method call that
+// may write through it.
+func pointerMethodReceiver(info *types.Info, call *ast.CallExpr) (ast.Expr, bool) {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok {
-		return
+		return nil, false
 	}
 
-	builtin, ok := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin)
-	if !ok {
-		return
+	selection := info.Selections[sel]
+	if selection == nil || selection.Kind() != types.MethodVal || !isPointerLike(selection.Recv()) {
+		return nil, false
 	}
 
-	switch builtin.Name() {
-	case "copy", "clear", "delete", "append", "close":
-		for _, arg := range call.Args {
-			l.forEachExprRoot(arg, func(root string) {
-				l.invalidateDescendants(out, root)
-			})
-		}
-	}
-}
-
-func (l *linter) forEachExprRoot(expr ast.Expr, visit func(string)) {
-	for root := range l.rootsInExpr(expr) {
-		visit(root)
-	}
-}
-
-func (l *linter) invalidateForFuncLitsInExprSeen(
-	st state,
-	expr ast.Expr,
-	seen map[*ast.FuncLit]struct{},
-) state {
-	out := st
-
-	ast.Inspect(expr, func(node ast.Node) bool {
-		lit, ok := node.(*ast.FuncLit)
-		if !ok {
-			return true
-		}
-
-		out = l.invalidateForFuncLitEffectsSeen(out, lit, seen)
-
-		return false
-	})
-
-	return out
-}
-
-func (l *linter) rootsInExpr(expr ast.Expr) map[string]struct{} {
-	roots := make(map[string]struct{})
-
-	ast.Inspect(expr, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.FuncLit:
-			return false
-		case ast.Expr:
-			if sym, ok := l.symbolOf(n); ok {
-				roots[sym.root] = struct{}{}
-			}
-		}
-
-		return true
-	})
-
-	return roots
+	return sel.X, true
 }

@@ -50,6 +50,7 @@ func RunDefault(pkg *Package) []Finding {
 	declGroupingCheck{env}.check()
 	sizeLimitCheck{env}.checkOwnerFiles()
 	sizeLimitCheck{env}.checkFunctions()
+	sizeLimitCheck{env}.checkReceivers()
 	errorCheck{env}.checkSwallowed()
 	tableTestCheck{env}.checkUnnamedLargeTables()
 	tableTestCheck{env}.checkRepeatedFixtures()

@@ -5,9 +5,17 @@ import (
 	"go/token"
 )
 
-func (l *linter) truthAcross(states []state, expr ast.Expr) (triState, *evidence) {
+// conditionEval decides conditions on path states and splits states by the
+// outcome of a condition.
+type conditionEval struct {
+	q      *exprQuery
+	calls  *callFacts
+	budget stateBudget
+}
+
+func (c conditionEval) truthAcross(states []state, expr ast.Expr) (triState, *evidence) {
 	return truthAcrossStates(states, func(st state) (triState, *evidence) {
-		return l.truth(st, expr)
+		return c.truth(st, expr)
 	})
 }
 
@@ -51,18 +59,18 @@ func truthAcrossStates(
 	return triUnknown, nil
 }
 
-func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
+func (c conditionEval) truth(st state, expr ast.Expr) (triState, *evidence) {
 	expr = ast.Unparen(expr)
-	if result, known := l.constantBoolTruth(expr); known {
-		return result, nil
+	if value, ok := c.q.scalarOf(expr); ok && value.kind == scalarBool {
+		return boolTextTruth(value.text), nil
 	}
 
 	switch expr := expr.(type) {
 	case *ast.Ident, *ast.SelectorExpr:
-		return l.truthBoolSymbol(st, expr)
+		return c.truthBoolSymbol(st, expr)
 	case *ast.CallExpr:
-		if sym, ok := l.predicateCallSymbolOf(expr); ok {
-			return l.truthSymbolScalar(
+		if sym, ok := c.q.predicateCallSymbolOf(expr); ok {
+			return truthSymbolScalar(
 				st,
 				sym,
 				scalar{kind: scalarBool, text: boolTrueText},
@@ -74,30 +82,12 @@ func (l *linter) truth(st state, expr ast.Expr) (triState, *evidence) {
 			return triUnknown, nil
 		}
 
-		return l.truthNegation(st, expr.X)
+		return c.truthNegation(st, expr.X)
 	case *ast.BinaryExpr:
-		return l.truthBinary(st, expr)
+		return c.truthBinary(st, expr)
 	}
 
 	return triUnknown, nil
-}
-
-func (l *linter) constantBoolTruth(expr ast.Expr) (triState, bool) {
-	if value, ok := l.scalarOf(expr); ok && value.kind == scalarBool {
-		return boolTextTruth(value.text), true
-	}
-
-	tv, ok := l.pkg.TypesInfo.Types[expr]
-	if !ok || tv.Value == nil || l.containsRuntimeTargetConstant(expr) {
-		return triUnknown, false
-	}
-
-	value, ok := scalarFromConstantValue(tv.Value)
-	if !ok || value.kind != scalarBool {
-		return triUnknown, false
-	}
-
-	return boolTextTruth(value.text), true
 }
 
 func boolTextTruth(text string) triState {
@@ -108,8 +98,8 @@ func boolTextTruth(text string) triState {
 	return triFalse
 }
 
-func (l *linter) truthBoolSymbol(st state, expr ast.Expr) (triState, *evidence) {
-	sym, ok := l.symbolOf(expr)
+func (c conditionEval) truthBoolSymbol(st state, expr ast.Expr) (triState, *evidence) {
+	sym, ok := c.q.symbolOf(expr)
 	if !ok || !isBoolType(sym.typ) {
 		return triUnknown, nil
 	}
@@ -127,8 +117,8 @@ func (l *linter) truthBoolSymbol(st state, expr ast.Expr) (triState, *evidence) 
 	return triFalse, &copyWhy
 }
 
-func (l *linter) truthNegation(st state, expr ast.Expr) (triState, *evidence) {
-	tri, ev := l.truth(st, expr)
+func (c conditionEval) truthNegation(st state, expr ast.Expr) (triState, *evidence) {
+	tri, ev := c.truth(st, expr)
 	if tri == triUnknown {
 		return triUnknown, nil
 	}
@@ -140,78 +130,71 @@ func (l *linter) truthNegation(st state, expr ast.Expr) (triState, *evidence) {
 	return triTrue, ev
 }
 
-func (l *linter) truthBinary(st state, expr *ast.BinaryExpr) (triState, *evidence) {
+func (c conditionEval) truthBinary(st state, expr *ast.BinaryExpr) (triState, *evidence) {
 	// token.Token includes operators not meaningful for this expression type.
 	//exhaustive:ignore
 	switch expr.Op {
 	case token.LAND:
-		return l.truthAnd(st, expr.X, expr.Y)
+		return c.truthJunction(st, expr.X, expr.Y, triFalse)
 	case token.LOR:
-		return l.truthOr(st, expr.X, expr.Y)
+		return c.truthJunction(st, expr.X, expr.Y, triTrue)
 	case token.EQL, token.NEQ:
-		return l.truthCompare(st, expr.X, expr.Y, expr.Op == token.EQL)
+		return c.truthCompare(st, expr.X, expr.Y, expr.Op == token.EQL)
 	case token.GTR, token.GEQ, token.LSS, token.LEQ:
-		return l.truthOrderedCompare(st, expr.X, expr.Y, expr.Op)
+		return c.truthOrderedCompare(st, expr.X, expr.Y, expr.Op)
 	default:
 		return triUnknown, nil
 	}
 }
 
-func (l *linter) truthAnd(st state, lhs, rhs ast.Expr) (triState, *evidence) {
-	left, leftEv := l.truth(st, lhs)
-	if left == triFalse {
-		return triFalse, leftEv
+// truthJunction evaluates && (decisive is triFalse) or || (decisive is
+// triTrue). A decisive left side wins without looking at the right side.
+func (c conditionEval) truthJunction(
+	st state,
+	lhs, rhs ast.Expr,
+	decisive triState,
+) (triState, *evidence) {
+	left, leftEv := c.truth(st, lhs)
+	if left == decisive {
+		return decisive, leftEv
 	}
 
-	right, rightEv := l.truth(st, rhs)
-	if right == triFalse {
-		return triFalse, rightEv
+	right, rightEv := c.truth(st, rhs)
+	if right == decisive {
+		return decisive, rightEv
 	}
 
-	if left != triTrue || right != triTrue {
+	other := triTrue
+	if decisive == triTrue {
+		other = triFalse
+	}
+
+	if left != other || right != other {
 		return triUnknown, nil
 	}
 
 	if leftEv != nil {
-		return triTrue, leftEv
+		return other, leftEv
 	}
 
-	return triTrue, rightEv
+	return other, rightEv
 }
 
-func (l *linter) truthOr(st state, lhs, rhs ast.Expr) (triState, *evidence) {
-	left, leftEv := l.truth(st, lhs)
-	if left == triTrue {
-		return triTrue, leftEv
+func (c conditionEval) truthCompare(
+	st state,
+	lhs, rhs ast.Expr,
+	wantEq bool,
+) (triState, *evidence) {
+	if sym, scalar, ok := c.q.symbolScalar(lhs, rhs); ok {
+		return truthSymbolScalar(st, sym, scalar, wantEq)
 	}
 
-	right, rightEv := l.truth(st, rhs)
-	if right == triTrue {
-		return triTrue, rightEv
+	if sym, scalar, ok := c.q.symbolScalar(rhs, lhs); ok {
+		return truthSymbolScalar(st, sym, scalar, wantEq)
 	}
 
-	if left != triFalse || right != triFalse {
-		return triUnknown, nil
-	}
-
-	if leftEv != nil {
-		return triFalse, leftEv
-	}
-
-	return triFalse, rightEv
-}
-
-func (l *linter) truthCompare(st state, lhs, rhs ast.Expr, wantEq bool) (triState, *evidence) {
-	if sym, scalar, ok := l.symbolScalar(lhs, rhs); ok {
-		return l.truthSymbolScalar(st, sym, scalar, wantEq)
-	}
-
-	if sym, scalar, ok := l.symbolScalar(rhs, lhs); ok {
-		return l.truthSymbolScalar(st, sym, scalar, wantEq)
-	}
-
-	if ls, ok := l.scalarOf(lhs); ok {
-		if rs, ok := l.scalarOf(rhs); ok {
+	if ls, ok := c.q.scalarOf(lhs); ok {
+		if rs, ok := c.q.scalarOf(rhs); ok {
 			equal := ls == rs
 			if wantEq == equal {
 				return triTrue, nil
@@ -224,25 +207,25 @@ func (l *linter) truthCompare(st state, lhs, rhs ast.Expr, wantEq bool) (triStat
 	return triUnknown, nil
 }
 
-func (l *linter) truthOrderedCompare(
+func (c conditionEval) truthOrderedCompare(
 	st state,
 	lhs, rhs ast.Expr,
 	op token.Token,
 ) (triState, *evidence) {
-	sym, scalar, ok := l.symbolScalar(lhs, rhs)
+	sym, scalar, ok := c.q.symbolScalar(lhs, rhs)
 	if ok {
-		return l.truthSymbolOrdered(st, sym, scalar, op)
+		return truthSymbolOrdered(st, sym, scalar, op)
 	}
 
-	sym, scalar, ok = l.symbolScalar(rhs, lhs)
+	sym, scalar, ok = c.q.symbolScalar(rhs, lhs)
 	if !ok {
 		return triUnknown, nil
 	}
 
-	return l.truthSymbolOrdered(st, sym, scalar, reverseOrderedOp(op))
+	return truthSymbolOrdered(st, sym, scalar, reverseOrderedOp(op))
 }
 
-func (l *linter) truthSymbolScalar(
+func truthSymbolScalar(
 	st state,
 	sym symbol,
 	value scalar,
@@ -276,7 +259,7 @@ func (l *linter) truthSymbolScalar(
 	return triUnknown, nil
 }
 
-func (l *linter) truthSymbolOrdered(
+func truthSymbolOrdered(
 	st state,
 	sym symbol,
 	value scalar,

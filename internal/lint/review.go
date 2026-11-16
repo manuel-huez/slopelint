@@ -44,7 +44,7 @@ type codeReviewPolicy struct {
 // codeReviewPolicyVersion must be bumped for any change to the prompt, the
 // output schema, or item selection: which comments are judged here and which
 // dropped errors the smells candidate pass reports.
-const codeReviewPolicyVersion = 7
+const codeReviewPolicyVersion = 8
 
 var codeReviewCurrentPolicy = codeReviewPolicy{
 	Schema: codeReviewPolicyVersion,
@@ -557,21 +557,7 @@ func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration
 
 	// A cgo preamble is C source, not a Go comment.
 	if !importsC(decl) {
-		for _, group := range source.file.Comments {
-			position := source.position(group.Pos())
-			if position.Line >= startLine && position.Line <= endLine && codeReviewHasItem(group) {
-				items = append(items, codeReviewPositionedItem{
-					item: codeReviewItem{
-						Kind: codeReviewCommentItem,
-						Lines: codeReviewLines(
-							position.Line-startLine+1,
-							source.position(group.End()).Line-startLine+1,
-						),
-					},
-					position: position,
-				})
-			}
-		}
+		items = source.commentItems(startLine, endLine)
 	}
 
 	items = append(items, source.droppedErrorItems(decl, startLine)...)
@@ -602,6 +588,43 @@ func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration
 	declaration.request.ID, err = codeReviewKey(source.policy, declaration.request)
 
 	return declaration, err
+}
+
+// commentItems returns one item per judged comment group. A suppression that
+// starts on the line after a judged group joins it: the reason above belongs
+// to the suppression, so both are judged as one item reported at the
+// suppression.
+func (source codeReviewSource) commentItems(startLine, endLine int) []codeReviewPositionedItem {
+	var (
+		items       []codeReviewPositionedItem
+		first, last int
+	)
+
+	for _, group := range source.file.Comments {
+		position := source.position(group.Pos())
+		if position.Line < startLine || position.Line > endLine || !codeReviewHasItem(group) {
+			continue
+		}
+
+		groupFirst := position.Line - startLine + 1
+		groupLast := source.position(group.End()).Line - startLine + 1
+
+		if len(items) > 0 && groupFirst == last+1 && codeReviewSuppression(group.List[0].Text) {
+			items = items[:len(items)-1]
+			groupFirst = first
+		}
+
+		items = append(items, codeReviewPositionedItem{
+			item: codeReviewItem{
+				Kind:  codeReviewCommentItem,
+				Lines: codeReviewLines(groupFirst, groupLast),
+			},
+			position: position,
+		})
+		first, last = groupFirst, groupLast
+	}
+
+	return items
 }
 
 func (source codeReviewSource) droppedErrorItems(
@@ -719,15 +742,22 @@ func codeReviewJudged(text string) bool {
 		return strings.TrimSpace(strings.TrimSuffix(body, "*/")) != ""
 	}
 
-	body := strings.TrimPrefix(text, "//")
-	for _, prefix := range codeReviewSuppressions {
-		if strings.HasPrefix(body, prefix) {
-			return true
-		}
+	if codeReviewSuppression(text) {
+		return true
 	}
+
+	body := strings.TrimPrefix(text, "//")
 
 	return strings.TrimSpace(body) != "" && !strings.HasPrefix(body, " +build") &&
 		!commentDirective(body)
+}
+
+func codeReviewSuppression(text string) bool {
+	body := strings.TrimPrefix(text, "//")
+
+	return slices.ContainsFunc(codeReviewSuppressions, func(prefix string) bool {
+		return strings.HasPrefix(body, prefix)
+	})
 }
 
 // commentDirective matches Go's directive form: `//name:arg` with no space,

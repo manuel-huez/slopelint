@@ -437,7 +437,6 @@ func TestHTTPSimilarityEmbedderReportsConnectionFailure(t *testing.T) {
 func TestHTTPSimilarityEmbedderTimesOutSilentServer(t *testing.T) {
 	t.Parallel()
 
-	// The server accepts the request but never answers, like a hung llama-server.
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		<-release

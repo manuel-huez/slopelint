@@ -549,8 +549,6 @@ func incrementalSimilarityScanBlocks(
 	return selected
 }
 
-// acceptSimilarityFindings applies acceptances and returns the remaining
-// issues, or the stamp to store when none remain.
 func acceptSimilarityFindings(
 	check similarityCheck,
 	descriptionDigest string,

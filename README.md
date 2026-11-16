@@ -96,7 +96,8 @@ sent to the configured Codex service.** Items:
 - Comment groups in or attached to the declaration. Suppressions
   (`//nolint`, `//exhaustive:ignore`, `//slopelint:ignore`, `//lint:ignore`) are
   always judged, bare or with a reason; they pass only when the code shows a real
-  constraint. Other directives (`//go:build`, `//go:generate`, `//go:embed`,
+  constraint. A comment that ends on the line above a suppression is judged with
+  it as its reason. Other directives (`//go:build`, `//go:generate`, `//go:embed`,
   `//slopelint:ensures`), cgo preambles, and file-level comments are skipped.
 - Production `if err != nil` checks that drop an error which is not read again
   before being overwritten. Errors carried across loop iterations, captured by a

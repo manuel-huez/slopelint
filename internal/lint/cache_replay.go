@@ -56,7 +56,11 @@ func replayAnalysisCache(
 		pass.ExportObjectFact(obj.Origin(), fact)
 	}
 
-	files, filesByContent := packageCacheFiles(pass.Files, pass.Fset, pkg.Dir)
+	files, filesByContent, err := packageCacheFiles(pass.Files, pass.Fset, pkg.Dir)
+	if err != nil {
+		return nil, false
+	}
+
 	issues := make([]Issue, 0, len(entry.Issues))
 
 	for _, cached := range entry.Issues {
@@ -292,7 +296,7 @@ func packageCacheFiles(
 	files []*ast.File,
 	fset *token.FileSet,
 	sourceRoot string,
-) (map[string]*token.File, map[string][]*token.File) {
+) (map[string]*token.File, map[string][]*token.File, error) {
 	byPath := make(map[string]*token.File, len(files))
 	byContent := make(map[string][]*token.File, len(files))
 
@@ -309,7 +313,7 @@ func packageCacheFiles(
 
 		content, err := os.ReadFile(tokenFile.Name())
 		if err != nil {
-			continue
+			return nil, nil, err
 		}
 
 		digest := sha256.Sum256(content)
@@ -318,7 +322,7 @@ func packageCacheFiles(
 		byContent[contentID] = append(byContent[contentID], tokenFile)
 	}
 
-	return byPath, byContent
+	return byPath, byContent, nil
 }
 
 func cachedPackageFile(

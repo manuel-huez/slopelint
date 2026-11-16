@@ -881,3 +881,60 @@ func hideCodexForTest(t *testing.T) {
 		t.Fatal("codex is still on PATH")
 	}
 }
+
+func TestCodeReviewJoinsSuppressionWithReasonAbove(t *testing.T) {
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "os"
+
+func skip(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		// An unreadable file is skipped, not fatal.
+		return nil //nolint:nilerr
+	}
+
+	// first note
+	_ = path // second note
+
+	//nolint:gocyclo // trailing reason
+	return nil
+}
+`)
+
+	model := &reviewTestModel{verdict: func(item codeReviewItem, text string) codeReviewVerdict {
+		if item.Kind == codeReviewCommentItem && strings.Contains(text, "nolint:nilerr") {
+			return codeReviewVerdict{Verdict: codeReviewExcuse, Advice: reviewTestExcuseAdvice}
+		}
+
+		return keepAllForTest(item, text)
+	}}
+
+	issues, err := lintWithReviewForTest(t, tmp, t.TempDir(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var comments []string
+
+	for _, item := range model.requests[0].Items {
+		if item.Kind == codeReviewCommentItem {
+			comments = append(comments, item.Lines)
+		}
+	}
+
+	// The reason above joins its suppression; separate notes and a suppression
+	// with its own reason stay separate items.
+	if want := []string{"3-4", "7", "8", "10"}; !slices.Equal(comments, want) {
+		t.Fatalf("comment items = %v, want %v", comments, want)
+	}
+
+	if got := reviewIssueSummary(
+		issues,
+	); !slices.Equal(
+		got,
+		[]string{"8 comment_excuse: " + reviewTestExcuseAdvice},
+	) {
+		t.Fatalf("findings = %v, want the joined item reported at the suppression", got)
+	}
+}

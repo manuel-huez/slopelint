@@ -154,8 +154,6 @@ func (r branchRules) returnStmtKey(ret *ast.ReturnStmt) string {
 	return strings.Join(parts, "\x00")
 }
 
-// finalIfPyramidAt matches a chain of nested ifs that ends a function
-// without results, which guard clauses can flatten.
 func (r branchRules) finalIfPyramidAt(stmts []ast.Stmt, idx int, ctx blockContext) (Finding, bool) {
 	if !ctx.functionBody || ctx.functionHasResults || idx != len(stmts)-1 {
 		return Finding{}, false

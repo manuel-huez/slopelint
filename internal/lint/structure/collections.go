@@ -15,9 +15,6 @@ type rangeGuard struct {
 	hasNil bool
 }
 
-// guardShape says how a guard condition proves a collection empty or
-// non-empty: the operator joining its parts, the len comparison it accepts,
-// and the nil comparison operator.
 type guardShape struct {
 	mergeOp   token.Token
 	provesLen func(token.Token, int64) bool
@@ -131,7 +128,7 @@ func (r collectionRules) guardBeforeRange(
 	info := r.q.pkg.TypesInfo
 
 	sourceExpr := ast.Unparen(loop.X)
-	if !isCheapTempAliasExpr(info, sourceExpr) {
+	if !isVarOrFieldRead(info, sourceExpr) {
 		return rangeGuard{}, false
 	}
 
@@ -253,7 +250,6 @@ func lenCompareProvesEmpty(op token.Token, limit int64) bool {
 	}
 }
 
-// builtinName returns the builtin a call targets, or "" for other calls.
 func builtinName(info *types.Info, call *ast.CallExpr) string {
 	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok {
@@ -296,7 +292,6 @@ func (r collectionRules) collectionGuardSource(expr ast.Expr, shape guardShape) 
 	return rangeGuard{}, false
 }
 
-// nilGuardSource matches `x op nil` or `nil op x` and returns rendered x.
 func (r collectionRules) nilGuardSource(expr ast.Expr, op token.Token) (string, bool) {
 	binary, ok := expr.(*ast.BinaryExpr)
 	if !ok || binary.Op != op {

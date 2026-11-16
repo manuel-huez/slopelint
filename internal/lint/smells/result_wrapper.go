@@ -9,8 +9,6 @@ import (
 
 const resultWrapperFieldCount = 2
 
-// resultWrapperCheck reports private structs that only pair a value with an
-// ok or error status.
 type resultWrapperCheck struct {
 	ruleEnv
 }

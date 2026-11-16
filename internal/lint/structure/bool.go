@@ -18,9 +18,7 @@ type boolRules struct {
 	q *pkgQuery
 }
 
-// ceremonyAt matches an if at stmts[idx] whose branches only pick between
-// true and false, either through if/else or an if followed by a return.
-func (r boolRules) ceremonyAt(stmts []ast.Stmt, idx int) (Finding, bool) {
+func (r boolRules) boolChoiceIfAt(stmts []ast.Stmt, idx int) (Finding, bool) {
 	stmt, ok := stmts[idx].(*ast.IfStmt)
 	if !ok || stmt.Init != nil {
 		return Finding{}, false
@@ -126,8 +124,6 @@ func singleBoolReturnValue(info *types.Info, stmt *ast.ReturnStmt) (bool, bool) 
 	return constBool(info, stmt.Results[0])
 }
 
-// redundantBoolDefault matches a default case in a bool switch whose other
-// cases already cover true and false.
 func redundantBoolDefault(info *types.Info, stmt *ast.SwitchStmt) (Finding, bool) {
 	if stmt.Tag == nil {
 		return Finding{}, false
@@ -138,7 +134,7 @@ func redundantBoolDefault(info *types.Info, stmt *ast.SwitchStmt) (Finding, bool
 		return Finding{}, false
 	}
 
-	defaultClause, ok := boolSwitchDefault(info, stmt)
+	defaultClause, ok := defaultOfExhaustiveBoolSwitch(info, stmt)
 	if !ok || isImpossibleStatePanic(info, defaultClause.Body) {
 		return Finding{}, false
 	}
@@ -150,9 +146,7 @@ func redundantBoolDefault(info *types.Info, stmt *ast.SwitchStmt) (Finding, bool
 	}, true
 }
 
-// boolSwitchDefault returns the default clause when the other cases are
-// bool constants that cover both true and false.
-func boolSwitchDefault(info *types.Info, stmt *ast.SwitchStmt) (*ast.CaseClause, bool) {
+func defaultOfExhaustiveBoolSwitch(info *types.Info, stmt *ast.SwitchStmt) (*ast.CaseClause, bool) {
 	var defaultClause *ast.CaseClause
 
 	covered := map[bool]bool{}

@@ -13,7 +13,6 @@ type privateInterfaceDecl struct {
 	obj  *types.TypeName
 }
 
-// singleImplCheck reports private interfaces with one in-package implementation.
 type singleImplCheck struct {
 	ruleEnv
 }

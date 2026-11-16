@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-// errorCheck reports production panics with errors, dropped errors, and
-// sentinel errors used as callback stop signals.
 type errorCheck struct {
 	ruleEnv
 }
@@ -85,8 +83,6 @@ func (l errorCheck) checkSwallowedIn(body *ast.BlockStmt) {
 	})
 }
 
-// followingStatements maps each if statement that sits directly in a statement
-// list to the statements after it.
 func followingStatements(body *ast.BlockStmt) map[*ast.IfStmt][]ast.Stmt {
 	out := make(map[*ast.IfStmt][]ast.Stmt)
 

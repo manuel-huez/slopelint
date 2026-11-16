@@ -5,8 +5,6 @@ import (
 	"go/token"
 )
 
-// conditionEval decides conditions on path states and splits states by the
-// outcome of a condition.
 type conditionEval struct {
 	q      *exprQuery
 	calls  *callFacts

@@ -20,8 +20,6 @@ const (
 // the size, and splitting first would spread dead code across new owners.
 const sizeLimitDeleteFirst = "first delete code that is no longer needed (legacy compatibility layers, redundant checks, defensive code for cases that cannot happen)"
 
-// sizeLimitCheck reports oversized files, functions, literals, signatures,
-// and method sets.
 type sizeLimitCheck struct {
 	ruleEnv
 }

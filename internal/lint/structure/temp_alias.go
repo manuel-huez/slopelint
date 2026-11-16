@@ -30,8 +30,6 @@ type tempAliasRules struct {
 	q *pkgQuery
 }
 
-// singleUseAt matches a local at stmts[idx] that only renames a cheap
-// expression and is read once, in the next statement.
 func (r tempAliasRules) singleUseAt(stmts []ast.Stmt, idx int) (Finding, bool) {
 	if idx+1 >= len(stmts) {
 		return Finding{}, false
@@ -141,7 +139,7 @@ func tempAliasDeclFromStmt(info *types.Info, stmt ast.Stmt) (tempAliasDecl, bool
 	}
 
 	rhs = ast.Unparen(rhs)
-	if !isCheapTempAliasExpr(info, rhs) {
+	if !isVarOrFieldRead(info, rhs) {
 		return tempAliasDecl{}, false
 	}
 
@@ -180,9 +178,7 @@ func singleUntypedValue(raw ast.Spec) (*ast.Ident, ast.Expr, bool) {
 	return spec.Names[0], spec.Values[0], true
 }
 
-// isCheapTempAliasExpr matches a variable or a chain of field reads on one,
-// excluding function values.
-func isCheapTempAliasExpr(info *types.Info, expr ast.Expr) bool {
+func isVarOrFieldRead(info *types.Info, expr ast.Expr) bool {
 	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
@@ -206,7 +202,7 @@ func isCheapTempAliasExpr(info *types.Info, expr ast.Expr) bool {
 
 		_, isFn := types.Unalias(info.TypeOf(expr)).Underlying().(*types.Signature)
 
-		return !isFn && isCheapTempAliasExpr(info, expr.X)
+		return !isFn && isVarOrFieldRead(info, expr.X)
 	default:
 		return false
 	}

@@ -12,7 +12,6 @@ type blockFinding struct {
 	points int
 }
 
-// blockFindingsAt runs the statement-list checks at stmts[idx] in report order.
 func (l *Runner) blockFindingsAt(stmts []ast.Stmt, idx int, ctx blockContext) []blockFinding {
 	var out []blockFinding
 
@@ -22,7 +21,7 @@ func (l *Runner) blockFindingsAt(stmts []ast.Stmt, idx int, ctx blockContext) []
 		}
 	}
 
-	add(boolRules{l.q}.ceremonyAt(stmts, idx))
+	add(boolRules{l.q}.boolChoiceIfAt(stmts, idx))
 
 	if finding, guards, ok := (branchRules{l.q}).returnGuardRunAt(stmts, idx); ok {
 		out = append(out, blockFinding{Finding: finding, points: guards})

@@ -323,8 +323,6 @@ func (r loopRules) pairwiseComparisonLoops(scope loopScope) []Finding {
 	return out
 }
 
-// innerRanges yields range loops directly in the body that bind a value
-// variable, when the outer loop binds one too.
 func (s loopScope) innerRanges() iter.Seq2[*ast.RangeStmt, types.Object] {
 	return func(yield func(*ast.RangeStmt, types.Object) bool) {
 		if s.value == nil {

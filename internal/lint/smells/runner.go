@@ -149,8 +149,6 @@ func (q *pkgQuery) positionText(pos token.Pos) string {
 	return fmt.Sprintf("%s:%d", position.Filename, position.Line)
 }
 
-// productionPackageFuncUseCounts counts production references to each
-// function object, excluding declaration names and selector names.
 func (q *pkgQuery) productionPackageFuncUseCounts() map[string]int {
 	if q.funcUseCounts != nil {
 		return q.funcUseCounts

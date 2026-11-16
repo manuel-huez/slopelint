@@ -53,7 +53,7 @@ func (l normalizationCheck) checkBody(body *ast.BlockStmt) {
 
 			return false
 		case *ast.CallExpr:
-			if !isNormalizationCall(l.pkg.TypesInfo, n) {
+			if !isTrimSpaceNormalization(l.pkg.TypesInfo, n) {
 				return true
 			}
 
@@ -219,9 +219,7 @@ func mutationRootObject(info *types.Info, expr ast.Expr) types.Object {
 	return nil
 }
 
-// isNormalizationCall matches strings.TrimSpace(x) and ToLower or ToUpper of
-// strings.TrimSpace(x).
-func isNormalizationCall(info *types.Info, call *ast.CallExpr) bool {
+func isTrimSpaceNormalization(info *types.Info, call *ast.CallExpr) bool {
 	fn, _, ok := calledFunc(info, call)
 	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != stringsImportPath || len(call.Args) != 1 {
 		return false

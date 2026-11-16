@@ -76,7 +76,7 @@ func (s inputGuardScan) scattered(body *ast.BlockStmt) (Finding, bool) {
 			continue
 		}
 
-		if s.prepStmt(stmt) {
+		if s.isInputPrepStmt(stmt) {
 			s.addPrepObjects(stmt)
 			continue
 		}
@@ -103,7 +103,6 @@ func (s inputGuardScan) scattered(body *ast.BlockStmt) (Finding, bool) {
 	}, true
 }
 
-// failureGuard matches a plain if whose only statement returns a failure.
 func (s inputGuardScan) failureGuard(stmt ast.Stmt) (*ast.IfStmt, bool) {
 	ifStmt, ok := s.q.plainIfStmt(stmt)
 	if !ok || len(ifStmt.Body.List) != 1 {
@@ -200,7 +199,7 @@ func (s inputGuardScan) validationExpr(expr ast.Expr) bool {
 			return false
 		}
 	default:
-		return isScalarValue(s.q.pkg.TypesInfo, expr)
+		return isNilOrScalarConst(s.q.pkg.TypesInfo, expr)
 	}
 }
 
@@ -364,9 +363,7 @@ func (s inputGuardScan) deferredCleanup(stmt ast.Stmt) bool {
 	return false
 }
 
-// prepStmt matches a deferred cleanup or an assignment of locals computed
-// only from inputs and validation temps.
-func (s inputGuardScan) prepStmt(stmt ast.Stmt) bool {
+func (s inputGuardScan) isInputPrepStmt(stmt ast.Stmt) bool {
 	if s.deferredCleanup(stmt) {
 		return true
 	}

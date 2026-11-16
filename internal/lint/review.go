@@ -44,7 +44,7 @@ type codeReviewPolicy struct {
 // codeReviewPolicyVersion must be bumped for any change to the prompt, the
 // output schema, or item selection: which comments are judged here and which
 // dropped errors the smells candidate pass reports.
-const codeReviewPolicyVersion = 5
+const codeReviewPolicyVersion = 7
 
 var codeReviewCurrentPolicy = codeReviewPolicy{
 	Schema: codeReviewPolicyVersion,
@@ -282,8 +282,6 @@ func (collector *codeReviewCollector) accept(records []codeReviewRecord) error {
 	return nil
 }
 
-// validated returns the record with normalized advice when every request item
-// has exactly one verdict allowed for its kind.
 func (record codeReviewRecord) validated(request codeReviewRequest) (codeReviewRecord, error) {
 	if len(record.Items) != len(request.Items) {
 		return codeReviewRecord{}, fmt.Errorf(
@@ -716,8 +714,6 @@ func codeReviewHasItem(group *ast.CommentGroup) bool {
 	})
 }
 
-// codeReviewJudged reports whether one comment is prose or a suppression.
-// Other machine directives and empty comments are skipped.
 func codeReviewJudged(text string) bool {
 	if body, ok := strings.CutPrefix(text, "/*"); ok {
 		return strings.TrimSpace(strings.TrimSuffix(body, "*/")) != ""

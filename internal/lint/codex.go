@@ -285,7 +285,6 @@ func balanceCodexBatches[Req any](requests []Req, size func(Req) int) [][]Req {
 	return batches
 }
 
-// decodeCodexOutput decodes one strict JSON object without trailing content.
 func decodeCodexOutput(data []byte, out any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

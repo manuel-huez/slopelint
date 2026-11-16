@@ -27,8 +27,6 @@ type zeroValueArgState struct {
 	seen    bool
 }
 
-// zeroValueArgCheck reports private function parameters that every call site
-// fills with the same zero value.
 type zeroValueArgCheck struct {
 	ruleEnv
 }
@@ -243,7 +241,6 @@ func zeroValueScalarArg(info *types.Info, arg ast.Expr, typ types.Type) bool {
 	return tv.Value != nil && isZeroConstantOf(tv.Value, typ)
 }
 
-// isZeroConstantOf reports "" for a string type or 0 for an integer type.
 func isZeroConstantOf(value constant.Value, typ types.Type) bool {
 	basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
 	if !ok {

@@ -11,7 +11,6 @@ const (
 	privateHelperMaxParams    = 2
 )
 
-// singleUseHelperCheck reports tiny private functions with one production use.
 type singleUseHelperCheck struct {
 	ruleEnv
 }

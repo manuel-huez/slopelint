@@ -214,7 +214,6 @@ func (q *pkgQuery) renderCaseClauseHeader(clause *ast.CaseClause) string {
 	}
 }
 
-// commentTexts returns normalized texts of comment groups fully inside node.
 func (q *pkgQuery) commentTexts(node ast.Node) []string {
 	fset := q.pkg.FSet
 	file := fset.File(node.Pos())

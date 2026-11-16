@@ -39,7 +39,6 @@ func (b stateBudget) normalizeLabeled(in map[string][]state) map[string][]state 
 	return out
 }
 
-// copyFactsFrom copies src facts about rhs and its children to lhs.
 func (s *state) copyFactsFrom(src state, lhs, rhs symbol) {
 	for key, f := range src.facts {
 		if key == rhs.key || isSameOrChild(key, rhs.key) {

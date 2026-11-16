@@ -35,8 +35,6 @@ type declGroupRun struct {
 	prefix map[string]int
 }
 
-// declGroupingCheck reports long ungrouped declaration runs and const runs
-// that mix name prefixes.
 type declGroupingCheck struct {
 	ruleEnv
 }

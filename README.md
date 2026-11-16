@@ -106,7 +106,9 @@ The model returns one verdict and one sentence of advice per item. The finding
 message is that advice: `comment_noise` (restates code), `comment_excuse`
 (excuses a shortcut, suppression, or compatibility code), `comment_crutch`
 (explains code a rename or restructure would clarify), and `swallowed_error`.
-The prompt prefers accepting an item when unsure.
+A doc comment on an unexported declaration must add something the name,
+signature, and body do not show, such as a reason, constraint, ordering, or
+result contract. The prompt prefers accepting an item when unsure.
 
 There is no accept list, ignore directive, or override for review findings. The
 stamp records the review policy and is written only when review finds nothing.

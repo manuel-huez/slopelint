@@ -11,7 +11,6 @@ import (
 const tableTestCaseLimit = 10
 const repeatedFixtureMinLength = 16
 
-// tableTestCheck reports large unnamed table tests and repeated fixture text.
 type tableTestCheck struct {
 	ruleEnv
 }

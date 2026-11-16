@@ -40,8 +40,7 @@ func isNilExpr(expr ast.Expr) bool {
 	return ok && id.Name == nilText
 }
 
-// isScalarValue matches nil and bool, string, or integer constants.
-func isScalarValue(info *types.Info, expr ast.Expr) bool {
+func isNilOrScalarConst(info *types.Info, expr ast.Expr) bool {
 	if isNilValue(info, expr) {
 		return true
 	}

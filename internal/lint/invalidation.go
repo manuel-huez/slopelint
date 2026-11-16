@@ -62,7 +62,6 @@ func predicateFactInvalidatedByPrefix(key string, prefix string) bool {
 	return strings.HasPrefix(key, root+"|"+predicatePathSegmentPrefix)
 }
 
-// wipeFacts keeps the number of paths but forgets every fact on them.
 func wipeFacts(states []state) []state {
 	out := make([]state, len(states))
 	for i := range out {

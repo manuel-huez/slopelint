@@ -31,8 +31,6 @@ type contractBinding struct {
 	variadic bool
 }
 
-// collectContracts returns explicit contracts by function key and reports
-// prefixed comments that do not parse.
 func collectContracts(pkg *LoadedPackage, sink *issueSink) map[string][]guardContract {
 	explicit := make(map[string][]guardContract)
 

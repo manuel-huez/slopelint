@@ -5,8 +5,6 @@ import (
 	"go/token"
 )
 
-// pathWalker runs statements over path states and reports conditions the
-// states already decide.
 type pathWalker struct {
 	q      *exprQuery
 	cond   conditionEval

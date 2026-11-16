@@ -254,8 +254,6 @@ func assignReturnForwardedCall(
 	return call, true
 }
 
-// singleCallDefinition matches `a, b := call(...)` or `var a, b = call(...)`
-// and returns the call with the defined names.
 func singleCallDefinition(stmt ast.Stmt) (*ast.CallExpr, []ast.Expr, bool) {
 	var (
 		value ast.Expr

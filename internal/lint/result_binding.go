@@ -189,8 +189,6 @@ func boundContractKey(contract boundContract) string {
 		strconv.Itoa(int(contract.why.pos))
 }
 
-// bindingForCall instantiates the conditional contracts of one call result
-// on the call's argument symbols.
 func (c *callFacts) bindingForCall(
 	call *ast.CallExpr,
 	resultIndex int,

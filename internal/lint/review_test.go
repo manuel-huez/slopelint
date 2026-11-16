@@ -543,8 +543,6 @@ func TestCodeReviewPolicyChangeSelectsNewRecords(t *testing.T) {
 	}
 }
 
-// installReviewCodexForTest puts a fake Codex CLI on PATH that answers review
-// prompts with model and counts its calls.
 func installReviewCodexForTest(t *testing.T, model *reviewTestModel) *atomic.Int32 {
 	t.Helper()
 
@@ -588,7 +586,6 @@ func installReviewCodexForTest(t *testing.T, model *reviewTestModel) *atomic.Int
 	return &calls
 }
 
-// lintWithCodexForTest runs the real standalone path with no injected models.
 func lintWithCodexForTest(t *testing.T, dir string, opts Options) ([]Issue, error) {
 	t.Helper()
 
@@ -804,8 +801,6 @@ func TestCodeReviewStampAndCI(t *testing.T) {
 	}
 }
 
-// requireReviewCI checks that CI with Codex auto requires a reviewed stamp and
-// that Codex off accepts either.
 func requireReviewCI(t *testing.T, dir string, reviewed bool) {
 	t.Helper()
 

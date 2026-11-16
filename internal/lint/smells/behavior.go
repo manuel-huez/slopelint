@@ -161,7 +161,6 @@ func reportBehaviorClones(candidates []behaviorCandidate) map[*Package][]Finding
 	return findings
 }
 
-// newBehaviorCandidate fills the key digest that clone matching groups by.
 func newBehaviorCandidate(candidate behaviorCandidate) behaviorCandidate {
 	candidate.digest = sha256.Sum256([]byte(candidate.key))
 

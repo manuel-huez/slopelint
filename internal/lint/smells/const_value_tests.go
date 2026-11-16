@@ -28,8 +28,6 @@ type constValueTestScan struct {
 	restatements  int
 }
 
-// constValueTestCheck reports tests that only compare fixed package values
-// with fixed expectations.
 type constValueTestCheck struct {
 	ruleEnv
 }

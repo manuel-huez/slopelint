@@ -8,13 +8,19 @@ import (
 
 const optionsOverkillMaxUses = 2
 
-func (l *Runner) checkOptionsOverkill() {
+// optionsOverkillCheck reports private constructors that take functional
+// options but have at most two production uses.
+type optionsOverkillCheck struct {
+	ruleEnv
+}
+
+func (l optionsOverkillCheck) check() {
 	useCounts := l.productionPackageFuncUseCounts()
 
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		obj, ok := l.privateFuncWithFunctionalOptions(fn, useCounts)
+	for _, fn := range l.pkg.ProductionFuncs {
+		obj, ok := privateFuncWithFunctionalOptions(l.pkg.TypesInfo, fn, useCounts)
 		if !ok {
-			return
+			continue
 		}
 
 		l.report(
@@ -26,19 +32,20 @@ func (l *Runner) checkOptionsOverkill() {
 				useCounts[funcObjectKey(obj)],
 			),
 		)
-	})
+	}
 }
 
-func (l *Runner) privateFuncWithFunctionalOptions(
+func privateFuncWithFunctionalOptions(
+	info *types.Info,
 	fn *ast.FuncDecl,
 	useCounts map[string]int,
 ) (*types.Func, bool) {
-	if !isEligiblePrivateSmellFunc(fn) || fn.Doc != nil || !privateConstructorName(fn.Name.Name) {
+	if fn.Recv != nil || fn.Doc != nil || !privateConstructorName(fn.Name.Name) {
 		return nil, false
 	}
 
-	obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-	if !ok || obj == nil {
+	obj, ok := privateFuncObject(info, fn)
+	if !ok {
 		return nil, false
 	}
 
@@ -47,7 +54,7 @@ func (l *Runner) privateFuncWithFunctionalOptions(
 		return nil, false
 	}
 
-	if !funcHasFunctionalOptionParam(l.pkg.TypesInfo, fn.Type.Params) {
+	if !funcHasFunctionalOptionParam(info, fn.Type.Params) {
 		return nil, false
 	}
 
@@ -64,10 +71,6 @@ func privateConstructorName(name string) bool {
 }
 
 func funcHasFunctionalOptionParam(info *types.Info, fields *ast.FieldList) bool {
-	if fields == nil {
-		return false
-	}
-
 	for _, field := range fields.List {
 		ellipsis, ok := field.Type.(*ast.Ellipsis)
 		if !ok {

@@ -8,31 +8,41 @@ import (
 	"strconv"
 )
 
-func (l *Runner) checkPredicateReturnSignatures() {
-	l.forEachPackageFunc(func(fn *ast.FuncDecl) {
-		if fn.Name == nil || !isIsPredicateName(fn.Name.Name) {
-			return
-		}
+// apiCheck reports overbuilt function signatures: predicate names without
+// bool results, bool mode parameters, (value, ok, error) results, and unused
+// private parameters.
+type apiCheck struct {
+	ruleEnv
+}
 
-		obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-		if !ok || obj == nil {
-			return
-		}
+func (l apiCheck) checkPredicateSignatures() {
+	for _, file := range l.pkg.Files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || !isIsPredicateName(fn.Name.Name) {
+				continue
+			}
 
-		sig, ok := obj.Type().(*types.Signature)
-		if !ok || isPredicateSignature(sig) {
-			return
-		}
+			obj, ok := funcDeclObject(l.pkg.TypesInfo, fn)
+			if !ok {
+				continue
+			}
 
-		l.report(
-			fn.Name.Pos(),
-			"predicate_signature",
-			fmt.Sprintf(
-				`predicate-like function %q should return bool or (bool, error)`,
-				fn.Name.Name,
-			),
-		)
-	})
+			sig, ok := obj.Type().(*types.Signature)
+			if !ok || isPredicateSignature(sig) {
+				continue
+			}
+
+			l.report(
+				fn.Name.Pos(),
+				"predicate_signature",
+				fmt.Sprintf(
+					`predicate-like function %q should return bool or (bool, error)`,
+					fn.Name.Name,
+				),
+			)
+		}
+	}
 }
 
 func isPredicateSignature(sig *types.Signature) bool {
@@ -54,40 +64,69 @@ type boolModeParam struct {
 	pos   token.Pos
 }
 
-func (l *Runner) checkBoolModeParams() {
+func (l apiCheck) checkBoolModeParams() {
 	paramsByFunc := l.privateBoolModeParams()
 	if len(paramsByFunc) == 0 {
 		return
 	}
 
-	l.reportBoolModeLiteralCalls(paramsByFunc)
+	reported := make(map[string]struct{})
+
+	for _, decl := range l.pkg.ProductionDecls {
+		ast.Inspect(decl, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+
+			fn, key, ok := calledFunc(l.pkg.TypesInfo, call)
+			if !ok {
+				return true
+			}
+
+			for _, param := range paramsByFunc[key] {
+				if param.index >= len(call.Args) {
+					continue
+				}
+
+				arg, isIdent := ast.Unparen(call.Args[param.index]).(*ast.Ident)
+				if !isIdent || arg.Name != boolTrueText && arg.Name != boolFalseText {
+					continue
+				}
+
+				reportKey := key + ":" + strconv.Itoa(param.index)
+				if _, dup := reported[reportKey]; dup {
+					continue
+				}
+
+				reported[reportKey] = struct{}{}
+
+				l.reportBoolModeParam(fn.Name(), param)
+			}
+
+			return true
+		})
+	}
 }
 
-func (l *Runner) privateBoolModeParams() map[string][]boolModeParam {
+func (l apiCheck) privateBoolModeParams() map[string][]boolModeParam {
 	out := make(map[string][]boolModeParam)
 
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		obj, ok := l.privateFuncObject(fn)
+	for _, fn := range l.pkg.ProductionFuncs {
+		obj, ok := privateFuncObject(l.pkg.TypesInfo, fn)
 		if !ok {
-			return
+			continue
 		}
 
-		params := l.boolModeParams(fn.Type.Params)
-		if len(params) == 0 {
-			return
+		if params := boolModeParams(l.pkg.TypesInfo, fn.Type.Params); len(params) != 0 {
+			out[funcObjectKey(obj)] = params
 		}
-
-		out[funcObjectKey(obj)] = params
-	})
+	}
 
 	return out
 }
 
-func (l *Runner) boolModeParams(fields *ast.FieldList) []boolModeParam {
-	if fields == nil {
-		return nil
-	}
-
+func boolModeParams(info *types.Info, fields *ast.FieldList) []boolModeParam {
 	out := make([]boolModeParam, 0)
 	index := 0
 
@@ -98,13 +137,13 @@ func (l *Runner) boolModeParams(fields *ast.FieldList) []boolModeParam {
 		}
 
 		count := max(len(field.Names), 1)
-		isBool := isBoolType(l.pkg.TypesInfo.TypeOf(field.Type))
+		isBool := isBoolType(info.TypeOf(field.Type))
 
 		for idx := range count {
 			name := ""
 			pos := field.Type.Pos()
 
-			if idx < len(field.Names) && field.Names[idx] != nil {
+			if idx < len(field.Names) {
 				name = field.Names[idx].Name
 				pos = field.Names[idx].Pos()
 			}
@@ -124,43 +163,7 @@ func (l *Runner) boolModeParams(fields *ast.FieldList) []boolModeParam {
 	return out
 }
 
-func (l *Runner) reportBoolModeLiteralCalls(paramsByFunc map[string][]boolModeParam) {
-	reported := make(map[string]struct{})
-
-	l.forEachProductionDecl(func(decl ast.Decl) {
-		ast.Inspect(decl, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-
-			fn, key, ok := l.calledFunc(call)
-			if !ok {
-				return true
-			}
-
-			for _, param := range paramsByFunc[key] {
-				if param.index >= len(call.Args) ||
-					!isBoolLiteral(ast.Unparen(call.Args[param.index])) {
-					continue
-				}
-
-				reportKey := key + ":" + strconv.Itoa(param.index)
-				if _, dup := reported[reportKey]; dup {
-					continue
-				}
-
-				reported[reportKey] = struct{}{}
-
-				l.reportBoolModeParam(fn.Name(), param)
-			}
-
-			return true
-		})
-	})
-}
-
-func (l *Runner) reportBoolModeParam(fnName string, param boolModeParam) {
+func (l apiCheck) reportBoolModeParam(fnName string, param boolModeParam) {
 	name := param.name
 	if name == "" {
 		name = fmt.Sprintf("#%d", param.index+1)
@@ -175,15 +178,6 @@ func (l *Runner) reportBoolModeParam(fnName string, param boolModeParam) {
 			name,
 		),
 	)
-}
-
-func isBoolLiteral(expr ast.Expr) bool {
-	ident, ok := expr.(*ast.Ident)
-	if !ok || ident == nil {
-		return false
-	}
-
-	return ident.Name == boolTrueText || ident.Name == boolFalseText
 }
 
 func boolModeParamNameEligible(name string) bool {
@@ -211,16 +205,16 @@ const (
 	optionalResultTripleErrorIndex  = 2
 )
 
-func (l *Runner) checkOptionalResultTriples() {
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		obj, ok := l.privateFuncObject(fn)
+func (l apiCheck) checkOptionalResultTriples() {
+	for _, fn := range l.pkg.ProductionFuncs {
+		obj, ok := privateFuncObject(l.pkg.TypesInfo, fn)
 		if !ok {
-			return
+			continue
 		}
 
 		sig, ok := obj.Type().(*types.Signature)
 		if !ok || !signatureReturnsValueOKError(sig) {
-			return
+			continue
 		}
 
 		l.report(
@@ -231,7 +225,7 @@ func (l *Runner) checkOptionalResultTriples() {
 				fn.Name.Name,
 			),
 		)
-	})
+	}
 }
 
 func signatureReturnsValueOKError(sig *types.Signature) bool {
@@ -245,47 +239,15 @@ func signatureReturnsValueOKError(sig *types.Signature) bool {
 		isErrorType(results.At(optionalResultTripleErrorIndex).Type())
 }
 
-func (l *Runner) privateFuncObject(fn *ast.FuncDecl) (*types.Func, bool) {
-	if fn == nil ||
-		fn.Name == nil ||
-		fn.Body == nil ||
-		ast.IsExported(fn.Name.Name) ||
-		hasTypeParams(fn.Type) ||
-		fn.Name.Name == initFuncName {
-		return nil, false
-	}
-
-	return l.funcDeclObject(fn)
-}
-
-func (l *Runner) funcDeclObject(fn *ast.FuncDecl) (*types.Func, bool) {
-	if fn == nil || fn.Name == nil {
-		return nil, false
-	}
-
-	obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-
-	return obj, ok && obj != nil
-}
-
-func (l *Runner) isPackageFuncCall(call *ast.CallExpr, pkgPath, name string) bool {
-	fn, _, ok := l.calledFunc(call)
-	if !ok || fn == nil || fn.Pkg() == nil {
-		return false
-	}
-
-	return fn.Pkg().Path() == pkgPath && fn.Name() == name
-}
-
-func (l *Runner) checkUnusedPrivateParams() {
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if fn == nil || fn.Name == nil || fn.Body == nil || ast.IsExported(fn.Name.Name) {
-			return
+func (l apiCheck) checkUnusedPrivateParams() {
+	for _, fn := range l.pkg.ProductionFuncs {
+		if fn.Body == nil || ast.IsExported(fn.Name.Name) {
+			continue
 		}
 
 		for _, field := range fn.Type.Params.List {
 			for _, name := range field.Names {
-				if name == nil || name.Name == "_" {
+				if name.Name == "_" {
 					continue
 				}
 
@@ -305,7 +267,7 @@ func (l *Runner) checkUnusedPrivateParams() {
 				)
 			}
 		}
-	})
+	}
 }
 
 func nodeUsesObject(node ast.Node, target types.Object, info *types.Info) bool {

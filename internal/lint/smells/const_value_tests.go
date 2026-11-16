@@ -18,7 +18,7 @@ type fixedTestValue struct {
 }
 
 type constValueTestScan struct {
-	runner        *Runner
+	pkg           *Package
 	fn            *ast.FuncDecl
 	aliases       map[types.Object]fixedTestValue
 	staticWrites  map[types.Object]struct{}
@@ -28,9 +28,15 @@ type constValueTestScan struct {
 	restatements  int
 }
 
-func (l *Runner) checkConstValueTests() {
+// constValueTestCheck reports tests that only compare fixed package values
+// with fixed expectations.
+type constValueTestCheck struct {
+	ruleEnv
+}
+
+func (l constValueTestCheck) check() {
 	packageScan := constValueTestScan{
-		runner:        l,
+		pkg:           l.pkg,
 		aliases:       make(map[types.Object]fixedTestValue),
 		staticValues:  make(map[types.Object]fixedTestValue),
 		staticReturns: make(map[string]fixedTestValue),
@@ -41,12 +47,12 @@ func (l *Runner) checkConstValueTests() {
 	for _, file := range l.pkg.TestFiles {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || !l.isRunnableTest(fn) {
+			if !ok || !isRunnableTest(l.pkg.TypesInfo, fn) {
 				continue
 			}
 
 			scan := constValueTestScan{
-				runner:        l,
+				pkg:           l.pkg,
 				fn:            fn,
 				aliases:       make(map[types.Object]fixedTestValue),
 				staticWrites:  make(map[types.Object]struct{}),
@@ -75,7 +81,7 @@ func (l *Runner) checkConstValueTests() {
 func (scan *constValueTestScan) collectStaticValues() {
 	candidates := make(map[types.Object]ast.Expr)
 
-	for _, decl := range scan.runner.pkg.ProductionDecls {
+	for _, decl := range scan.pkg.ProductionDecls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.VAR {
 			continue
@@ -88,7 +94,7 @@ func (scan *constValueTestScan) collectStaticValues() {
 			}
 
 			for index, name := range values.Names {
-				obj, ok := scan.runner.pkg.TypesInfo.Defs[name].(*types.Var)
+				obj, ok := scan.pkg.TypesInfo.Defs[name].(*types.Var)
 				if ok && fixedPackageValueType(obj.Type()) {
 					candidates[obj] = values.Values[index]
 				}
@@ -96,7 +102,7 @@ func (scan *constValueTestScan) collectStaticValues() {
 		}
 	}
 
-	for _, file := range scan.runner.pkg.ProductionFiles {
+	for _, file := range scan.pkg.ProductionFiles {
 		ast.Inspect(file, func(node ast.Node) bool {
 			scan.invalidateWrittenStaticValue(node, candidates)
 
@@ -169,7 +175,7 @@ func (scan *constValueTestScan) invalidateWrittenStaticValue(
 			continue
 		}
 
-		delete(candidates, scan.runner.pkg.TypesInfo.ObjectOf(ident))
+		delete(candidates, scan.pkg.TypesInfo.ObjectOf(ident))
 	}
 }
 
@@ -179,7 +185,7 @@ func (scan *constValueTestScan) pointerReceiverTargets(call *ast.CallExpr) []ast
 		return nil
 	}
 
-	selection := scan.runner.pkg.TypesInfo.Selections[selector]
+	selection := scan.pkg.TypesInfo.Selections[selector]
 	if selection == nil {
 		return nil
 	}
@@ -199,7 +205,7 @@ func (scan *constValueTestScan) pointerReceiverTargets(call *ast.CallExpr) []ast
 func (scan *constValueTestScan) collectStaticReturns() {
 	candidates := make(map[string]ast.Expr)
 
-	for _, fn := range scan.runner.pkg.ProductionFuncs {
+	for _, fn := range scan.pkg.ProductionFuncs {
 		if fn.Body == nil || len(fn.Body.List) != 1 {
 			continue
 		}
@@ -209,7 +215,7 @@ func (scan *constValueTestScan) collectStaticReturns() {
 			continue
 		}
 
-		obj, ok := scan.runner.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
+		obj, ok := scan.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
 		if ok {
 			candidates[funcObjectKey(obj)] = statement.Results[0]
 		}
@@ -240,18 +246,13 @@ func (scan *constValueTestScan) collectStaticReturns() {
 	}
 }
 
-func (l *Runner) isRunnableTest(fn *ast.FuncDecl) bool {
-	if fn == nil || fn.Body == nil || fn.Recv != nil ||
-		!goTestName(fn.Name.Name) {
+func isRunnableTest(info *types.Info, fn *ast.FuncDecl) bool {
+	if fn.Body == nil || fn.Recv != nil || !goTestName(fn.Name.Name) {
 		return false
 	}
 
-	return l.hasTestingTSignature(fn.Name)
-}
-
-func (l *Runner) hasTestingTSignature(name *ast.Ident) bool {
-	obj, ok := l.pkg.TypesInfo.Defs[name].(*types.Func)
-	if !ok || obj == nil {
+	obj, ok := info.Defs[fn.Name].(*types.Func)
+	if !ok {
 		return false
 	}
 
@@ -388,7 +389,7 @@ func (scan *constValueTestScan) recordAliasWrite(
 		return
 	}
 
-	obj := scan.runner.pkg.TypesInfo.ObjectOf(ident)
+	obj := scan.pkg.TypesInfo.ObjectOf(ident)
 	if _, fixed := scan.staticValues[obj]; fixed {
 		scan.staticWrites[obj] = struct{}{}
 	}
@@ -468,7 +469,7 @@ func (scan *constValueTestScan) hasTestingFailure(block *ast.BlockStmt) bool {
 			return true
 		}
 
-		fn := scan.runner.funcObject(call.Fun)
+		fn := funcObject(scan.pkg.TypesInfo, call.Fun)
 		found = fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == testingImportPath &&
 			testingFailureName(fn.Name())
 
@@ -479,8 +480,8 @@ func (scan *constValueTestScan) hasTestingFailure(block *ast.BlockStmt) bool {
 }
 
 func (scan *constValueTestScan) assertionFunc(call *ast.CallExpr) *types.Func {
-	fn := scan.runner.funcObject(call.Fun)
-	if fn == nil || fn.Pkg() == nil || fn.Pkg() == scan.runner.pkg.TypesPkg {
+	fn := funcObject(scan.pkg.TypesInfo, call.Fun)
+	if fn == nil || fn.Pkg() == nil || fn.Pkg() == scan.pkg.TypesPkg {
 		return nil
 	}
 
@@ -546,7 +547,7 @@ func (scan *constValueTestScan) fixedValue(expr ast.Expr) fixedTestValue {
 }
 
 func (scan *constValueTestScan) fixedIdentValue(ident *ast.Ident) fixedTestValue {
-	obj := scan.runner.pkg.TypesInfo.ObjectOf(ident)
+	obj := scan.pkg.TypesInfo.ObjectOf(ident)
 	if value, ok := scan.aliases[obj]; ok {
 		return value
 	}
@@ -568,7 +569,7 @@ func (scan *constValueTestScan) fixedIdentValue(ident *ast.Ident) fixedTestValue
 }
 
 func (scan *constValueTestScan) fixedSelectorValue(selector *ast.SelectorExpr) fixedTestValue {
-	if _, ok := scan.runner.pkg.TypesInfo.ObjectOf(selector.Sel).(*types.Const); ok {
+	if _, ok := scan.pkg.TypesInfo.ObjectOf(selector.Sel).(*types.Const); ok {
 		return fixedTestValue{fixed: true}
 	}
 
@@ -591,7 +592,7 @@ func (scan *constValueTestScan) fixedUnaryValue(expr *ast.UnaryExpr) fixedTestVa
 }
 
 func (scan *constValueTestScan) fixedCompositeValue(expr *ast.CompositeLit) fixedTestValue {
-	compositeType := scan.runner.pkg.TypesInfo.TypeOf(expr)
+	compositeType := scan.pkg.TypesInfo.TypeOf(expr)
 	if compositeType == nil {
 		return fixedTestValue{}
 	}
@@ -649,7 +650,7 @@ func compositeField(
 }
 
 func (scan *constValueTestScan) fixedCallValue(call *ast.CallExpr) fixedTestValue {
-	if fn := scan.runner.funcObject(call.Fun); fn != nil {
+	if fn := funcObject(scan.pkg.TypesInfo, call.Fun); fn != nil {
 		if value, ok := scan.staticReturns[funcObjectKey(fn)]; ok {
 			return value
 		}
@@ -664,7 +665,7 @@ func (scan *constValueTestScan) fixedCallValue(call *ast.CallExpr) fixedTestValu
 		return fixedTestValue{}
 	}
 
-	obj := scan.runner.pkg.TypesInfo.ObjectOf(name)
+	obj := scan.pkg.TypesInfo.ObjectOf(name)
 	switch obj := obj.(type) {
 	case *types.Builtin:
 		if !constantBuiltinName(obj.Name()) {

@@ -5,57 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"slices"
 )
-
-func (l *Runner) packageFuncUseCountsForFiles(files []*ast.File) map[string]int {
-	counts := make(map[string]int)
-
-	for _, file := range files {
-		ast.PreorderStack(file, nil, func(n ast.Node, stack []ast.Node) bool {
-			expr, ok := n.(ast.Expr)
-			if !ok || funcUseExprIsDeclarationOrSelectorName(expr, stack) {
-				return true
-			}
-
-			obj := l.funcObject(expr)
-			if obj == nil {
-				return true
-			}
-
-			key := funcObjectKey(obj)
-			counts[key]++
-
-			return true
-		})
-	}
-
-	return counts
-}
-
-func funcUseExprIsDeclarationOrSelectorName(expr ast.Expr, stack []ast.Node) bool {
-	if len(stack) == 0 {
-		return false
-	}
-
-	parent := stack[len(stack)-1]
-
-	ident, ok := expr.(*ast.Ident)
-	if !ok {
-		return false
-	}
-
-	switch parent := parent.(type) {
-	case *ast.FuncDecl:
-		return parent.Name == ident
-	case *ast.SelectorExpr:
-		return parent.Sel == ident
-	case *ast.Field:
-		return slices.Contains(parent.Names, ident)
-	default:
-		return false
-	}
-}
 
 const (
 	trivialForwarderDirectStmtCount   = 1
@@ -63,30 +13,30 @@ const (
 	trivialForwarderMaxShortBodyLines = 3
 )
 
-func (l *Runner) checkTrivialForwarders() {
-	useCounts := l.productionPackageFuncUseCounts()
-
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		l.checkTrivialForwarder(fn, useCounts)
-	})
+type forwarderCheck struct {
+	ruleEnv
 }
 
-func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, useCounts map[string]int) {
+func (l forwarderCheck) check() {
+	useCounts := l.productionPackageFuncUseCounts()
+
+	for _, fn := range l.pkg.ProductionFuncs {
+		l.checkFunc(fn, useCounts)
+	}
+}
+
+func (l forwarderCheck) checkFunc(fn *ast.FuncDecl, useCounts map[string]int) {
 	if !isEligibleTrivialForwarderDecl(fn) {
 		return
 	}
 
-	obj, ok := l.trivialForwarderObject(fn)
+	obj, ok := l.forwarderObject(fn)
 	if !ok {
 		return
 	}
 
-	call, ok := l.trivialForwarderBodyCall(fn, obj)
+	call, ok := forwardedBodyCall(l.pkg.TypesInfo, fn, obj)
 	if !ok {
-		return
-	}
-
-	if !l.validForwardTarget(obj, call) {
 		return
 	}
 
@@ -100,10 +50,7 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, useCounts map[string]in
 		bodyStart := l.pkg.FSet.Position(fn.Body.List[0].Pos()).Line
 		bodyEnd := l.pkg.FSet.Position(fn.Body.List[len(fn.Body.List)-1].End()).Line
 
-		if bodyStart == 0 ||
-			bodyEnd == 0 ||
-			bodyEnd < bodyStart ||
-			bodyEnd-bodyStart+1 > trivialForwarderMaxShortBodyLines {
+		if bodyEnd-bodyStart+1 > trivialForwarderMaxShortBodyLines {
 			return
 		}
 
@@ -123,7 +70,7 @@ func (l *Runner) checkTrivialForwarder(fn *ast.FuncDecl, useCounts map[string]in
 	)
 
 	if !ast.IsExported(fn.Name.Name) {
-		l.reportGenericNameForHelper(fn, "only forwards")
+		reportGenericNameForHelper(l.findingSink, fn, "only forwards")
 	}
 }
 
@@ -135,49 +82,19 @@ func trivialForwarderSubject(fn *ast.FuncDecl) string {
 	return "private helper"
 }
 
+// isEligibleTrivialForwarderDecl skips generic functions, exported functions
+// (public API), and codec hooks that encoding packages call by name.
 func isEligibleTrivialForwarderDecl(fn *ast.FuncDecl) bool {
-	if fn == nil {
-		return false
-	}
-
-	if fn.Name == nil {
-		return false
-	}
-
-	if fn.Body == nil {
-		return false
-	}
-
-	if trivialForwarderDeclIsSuppressed(fn) {
+	if fn.Body == nil ||
+		hasTypeParams(fn.Type) ||
+		fn.Recv == nil && ast.IsExported(fn.Name.Name) ||
+		fn.Recv != nil && exportedCodecHookMethod(fn.Name.Name) {
 		return false
 	}
 
 	bodyLen := len(fn.Body.List)
-	if bodyLen == trivialForwarderDirectStmtCount {
-		return true
-	}
 
-	return bodyLen == trivialForwarderAssignStmtCount
-}
-
-func trivialForwarderDeclIsSuppressed(fn *ast.FuncDecl) bool {
-	if hasTypeParams(fn.Type) {
-		return true
-	}
-
-	if ast.IsExported(fn.Name.Name) {
-		if fn.Recv == nil {
-			return true
-		}
-	}
-
-	if fn.Recv != nil {
-		if exportedCodecHookMethod(fn.Name.Name) {
-			return true
-		}
-	}
-
-	return false
+	return bodyLen == trivialForwarderDirectStmtCount || bodyLen == trivialForwarderAssignStmtCount
 }
 
 func exportedCodecHookMethod(name string) bool {
@@ -191,10 +108,10 @@ func exportedCodecHookMethod(name string) bool {
 }
 
 func hasTypeParams(fnType *ast.FuncType) bool {
-	return fnType != nil && fnType.TypeParams != nil && len(fnType.TypeParams.List) != 0
+	return fnType.TypeParams.NumFields() != 0
 }
 
-func (l *Runner) trivialForwarderObject(fn *ast.FuncDecl) (*types.Func, bool) {
+func (l forwarderCheck) forwarderObject(fn *ast.FuncDecl) (*types.Func, bool) {
 	for _, stmt := range fn.Body.List {
 		if l.hasAttachedComment(stmt, nil) {
 			return nil, false
@@ -205,24 +122,19 @@ func (l *Runner) trivialForwarderObject(fn *ast.FuncDecl) (*types.Func, bool) {
 		return nil, false
 	}
 
-	if ast.IsExported(fn.Name.Name) {
-		if l.funcUsesPrivateReceiverMember(fn) {
-			return nil, false
-		}
-
-		obj, ok := l.funcDeclObject(fn)
-		if !ok || obj == nil {
-			return nil, false
-		}
-
-		return obj, true
+	if !ast.IsExported(fn.Name.Name) {
+		return privateFuncObject(l.pkg.TypesInfo, fn)
 	}
 
-	return l.privateFuncObject(fn)
+	if funcUsesPrivateReceiverMember(l.pkg.TypesInfo, fn) {
+		return nil, false
+	}
+
+	return funcDeclObject(l.pkg.TypesInfo, fn)
 }
 
-func (l *Runner) funcUsesPrivateReceiverMember(fn *ast.FuncDecl) bool {
-	receiver := funcReceiverObject(l.pkg.TypesInfo, fn.Recv)
+func funcUsesPrivateReceiverMember(info *types.Info, fn *ast.FuncDecl) bool {
+	receiver := funcReceiverObject(info, fn.Recv)
 	if receiver == nil {
 		return false
 	}
@@ -231,11 +143,11 @@ func (l *Runner) funcUsesPrivateReceiverMember(fn *ast.FuncDecl) bool {
 
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || !identRefersToObject(l.pkg.TypesInfo, ast.Unparen(sel.X), receiver) {
+		if !ok || !identRefersToObject(info, ast.Unparen(sel.X), receiver) {
 			return true
 		}
 
-		selection := l.pkg.TypesInfo.Selections[sel]
+		selection := info.Selections[sel]
 		if selection != nil && !ast.IsExported(selection.Obj().Name()) {
 			usesPrivate = true
 			return false
@@ -247,64 +159,45 @@ func (l *Runner) funcUsesPrivateReceiverMember(fn *ast.FuncDecl) bool {
 	return usesPrivate
 }
 
-func (l *Runner) trivialForwarderBodyCall(
+// forwardedBodyCall returns the call that fn's body only forwards to, with
+// fn's inputs passed through unchanged. Forwarder, single-use helper, and
+// behavior clone checks share it so they agree on what a forwarder is.
+func forwardedBodyCall(
+	info *types.Info,
 	fn *ast.FuncDecl,
 	obj *types.Func,
 ) (*ast.CallExpr, bool) {
 	sig, ok := obj.Type().(*types.Signature)
-	if !ok || sig == nil {
-		return nil, false
-	}
-
-	call, ok := l.trivialForwarderCall(fn.Body.List, sig.Results())
 	if !ok {
 		return nil, false
 	}
 
-	if !forwardedCallMatchesFuncInputs(
-		l.pkg.TypesInfo,
-		call,
-		fn,
-		sig.Variadic(),
-	) {
+	var call *ast.CallExpr
+
+	resultCount := sig.Results().Len()
+
+	switch stmts := fn.Body.List; len(stmts) {
+	case trivialForwarderDirectStmtCount:
+		call, ok = directForwardedCall(stmts[0], resultCount)
+	case trivialForwarderAssignStmtCount:
+		call, ok = assignReturnForwardedCall(info, stmts[0], stmts[1], resultCount)
+	default:
+		return nil, false
+	}
+
+	if !ok || !forwardedCallMatchesFuncInputs(info, call, fn, sig.Variadic()) {
+		return nil, false
+	}
+
+	callee, _, ok := calledFunc(info, call)
+	if !ok || callee == obj || obj.Pkg() == nil || callee.Pkg() == nil {
 		return nil, false
 	}
 
 	return call, true
 }
 
-func (l *Runner) validForwardTarget(obj *types.Func, call *ast.CallExpr) bool {
-	callee, _, ok := l.calledFunc(call)
-	if !ok || obj == nil || callee == nil || callee == obj {
-		return false
-	}
-
-	return obj.Pkg() != nil && callee.Pkg() != nil
-}
-
-func (l *Runner) trivialForwarderCall(
-	stmts []ast.Stmt,
-	results *types.Tuple,
-) (*ast.CallExpr, bool) {
-	resultCount := 0
-	if results != nil {
-		resultCount = results.Len()
-	}
-
-	switch len(stmts) {
-	case trivialForwarderDirectStmtCount:
-		return l.directTrivialForwarderCall(stmts[0], resultCount)
-	case trivialForwarderAssignStmtCount:
-		return l.assignReturnTrivialForwarderCall(stmts[0], stmts[1], resultCount)
-	default:
-		return nil, false
-	}
-}
-
-func (l *Runner) directTrivialForwarderCall(
-	stmt ast.Stmt,
-	resultCount int,
-) (*ast.CallExpr, bool) {
+func directForwardedCall(stmt ast.Stmt, resultCount int) (*ast.CallExpr, bool) {
 	switch stmt := stmt.(type) {
 	case *ast.ReturnStmt:
 		if resultCount == 0 || len(stmt.Results) != 1 {
@@ -312,28 +205,23 @@ func (l *Runner) directTrivialForwarderCall(
 		}
 
 		call, ok := ast.Unparen(stmt.Results[0]).(*ast.CallExpr)
-		if !ok {
-			return nil, false
-		}
 
-		return call, true
+		return call, ok
 	case *ast.ExprStmt:
 		if resultCount != 0 {
 			return nil, false
 		}
 
 		call, ok := ast.Unparen(stmt.X).(*ast.CallExpr)
-		if !ok {
-			return nil, false
-		}
 
-		return call, true
+		return call, ok
 	default:
 		return nil, false
 	}
 }
 
-func (l *Runner) assignReturnTrivialForwarderCall(
+func assignReturnForwardedCall(
+	info *types.Info,
 	assignStmt ast.Stmt,
 	returnStmt ast.Stmt,
 	resultCount int,
@@ -347,13 +235,18 @@ func (l *Runner) assignReturnTrivialForwarderCall(
 		return nil, false
 	}
 
-	call, temps, ok := l.forwardedCallResultTemps(assignStmt)
+	call, names, ok := singleCallDefinition(assignStmt)
+	if !ok {
+		return nil, false
+	}
+
+	temps, ok := definedVars(info, names)
 	if !ok || len(temps) != resultCount {
 		return nil, false
 	}
 
 	for idx, result := range ret.Results {
-		if !identRefersToObject(l.pkg.TypesInfo, ast.Unparen(result), temps[idx]) {
+		if !identRefersToObject(info, ast.Unparen(result), temps[idx]) {
 			return nil, false
 		}
 	}
@@ -361,69 +254,52 @@ func (l *Runner) assignReturnTrivialForwarderCall(
 	return call, true
 }
 
-func (l *Runner) forwardedCallResultTemps(stmt ast.Stmt) (*ast.CallExpr, []*types.Var, bool) {
+// singleCallDefinition matches `a, b := call(...)` or `var a, b = call(...)`
+// and returns the call with the defined names.
+func singleCallDefinition(stmt ast.Stmt) (*ast.CallExpr, []ast.Expr, bool) {
+	var (
+		value ast.Expr
+		names []ast.Expr
+	)
+
 	switch stmt := stmt.(type) {
 	case *ast.AssignStmt:
-		return l.forwardedCallResultTempsFromAssign(stmt)
+		if stmt.Tok != token.DEFINE || len(stmt.Rhs) != 1 {
+			return nil, nil, false
+		}
+
+		value, names = stmt.Rhs[0], stmt.Lhs
 	case *ast.DeclStmt:
-		return l.forwardedCallResultTempsFromDecl(stmt)
+		spec, ok := singleUntypedVarSpec(stmt)
+		if !ok {
+			return nil, nil, false
+		}
+
+		value = spec.Values[0]
+		for _, name := range spec.Names {
+			names = append(names, name)
+		}
 	default:
 		return nil, nil, false
 	}
+
+	call, ok := ast.Unparen(value).(*ast.CallExpr)
+
+	return call, names, ok
 }
 
-func (l *Runner) forwardedCallResultTempsFromAssign(
-	stmt *ast.AssignStmt,
-) (*ast.CallExpr, []*types.Var, bool) {
-	if stmt == nil || stmt.Tok != token.DEFINE || len(stmt.Rhs) != 1 {
-		return nil, nil, false
-	}
-
-	call, ok := ast.Unparen(stmt.Rhs[0]).(*ast.CallExpr)
-	if !ok {
-		return nil, nil, false
-	}
-
-	temps, ok := l.definedVarsForIdents(stmt.Lhs)
-	if !ok {
-		return nil, nil, false
-	}
-
-	return call, temps, true
-}
-
-func (l *Runner) forwardedCallResultTempsFromDecl(
-	stmt *ast.DeclStmt,
-) (*ast.CallExpr, []*types.Var, bool) {
+func singleUntypedVarSpec(stmt *ast.DeclStmt) (*ast.ValueSpec, bool) {
 	decl, ok := stmt.Decl.(*ast.GenDecl)
-	if !ok || decl == nil || decl.Tok != token.VAR || len(decl.Specs) != 1 {
-		return nil, nil, false
+	if !ok || decl.Tok != token.VAR || len(decl.Specs) != 1 {
+		return nil, false
 	}
 
 	spec, ok := decl.Specs[0].(*ast.ValueSpec)
-	if !ok || spec == nil || spec.Type != nil || len(spec.Values) != 1 {
-		return nil, nil, false
-	}
 
-	call, ok := ast.Unparen(spec.Values[0]).(*ast.CallExpr)
-	if !ok {
-		return nil, nil, false
-	}
-
-	exprs := make([]ast.Expr, 0, len(spec.Names))
-	for _, name := range spec.Names {
-		exprs = append(exprs, name)
-	}
-
-	temps, ok := l.definedVarsForIdents(exprs)
-	if !ok {
-		return nil, nil, false
-	}
-
-	return call, temps, true
+	return spec, ok && spec.Type == nil && len(spec.Values) == 1
 }
 
-func (l *Runner) definedVarsForIdents(exprs []ast.Expr) ([]*types.Var, bool) {
+func definedVars(info *types.Info, exprs []ast.Expr) ([]*types.Var, bool) {
 	if len(exprs) == 0 {
 		return nil, false
 	}
@@ -431,12 +307,12 @@ func (l *Runner) definedVarsForIdents(exprs []ast.Expr) ([]*types.Var, bool) {
 	vars := make([]*types.Var, 0, len(exprs))
 	for _, expr := range exprs {
 		ident, ok := expr.(*ast.Ident)
-		if !ok || ident == nil || ident.Name == "_" {
+		if !ok || ident.Name == "_" {
 			return nil, false
 		}
 
-		obj, ok := l.pkg.TypesInfo.Defs[ident].(*types.Var)
-		if !ok || obj == nil {
+		obj, ok := info.Defs[ident].(*types.Var)
+		if !ok {
 			return nil, false
 		}
 
@@ -460,7 +336,7 @@ func funcParamObjects(info *types.Info, fields *ast.FieldList) []*types.Var {
 
 		for _, name := range field.Names {
 			obj, ok := info.ObjectOf(name).(*types.Var)
-			if !ok || obj == nil {
+			if !ok {
 				return nil
 			}
 
@@ -508,10 +384,6 @@ func forwardedCallMatchesParamRefs(
 	argOffset int,
 	variadic bool,
 ) bool {
-	if call == nil {
-		return false
-	}
-
 	expectedArgs := len(params) + argOffset
 	if variadic {
 		if expectedArgs == 0 ||
@@ -594,9 +466,6 @@ func zeroArgMethodCallOnObject(info *types.Info, expr ast.Expr, obj types.Object
 
 func identRefersToObject(info *types.Info, expr ast.Expr, obj types.Object) bool {
 	ident, ok := ast.Unparen(expr).(*ast.Ident)
-	if !ok || ident == nil {
-		return false
-	}
 
-	return info.ObjectOf(ident) == obj
+	return ok && info.ObjectOf(ident) == obj
 }

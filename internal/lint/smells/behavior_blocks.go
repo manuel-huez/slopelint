@@ -18,6 +18,14 @@ const (
 	behaviorMinAdjacentNodes   = 9
 )
 
+// behaviorPackage extracts behavior clone candidates from one package. calls
+// maps function keys to SSA behavior summaries, so blocks that call
+// equivalent functions compare equal.
+type behaviorPackage struct {
+	pkg   *Package
+	calls map[string]behaviorSummary
+}
+
 type behaviorStmtList struct {
 	owner    string
 	stmts    []ast.Stmt
@@ -25,24 +33,29 @@ type behaviorStmtList struct {
 	typeKeys *behaviorTypeEncoder
 }
 
-func (l *Runner) blockBehaviorCandidates() []behaviorCandidate {
+func (b behaviorPackage) blockBehaviorCandidates() []behaviorCandidate {
 	candidates := make([]behaviorCandidate, 0)
 
-	for _, fn := range l.pkg.ProductionFuncs {
-		if fn.Body == nil || l.behaviorGenerated(fn) {
+	for _, fn := range b.pkg.ProductionFuncs {
+		if fn.Body == nil || b.behaviorGenerated(fn) {
 			continue
 		}
 
-		for _, list := range l.behaviorStmtLists(fn) {
-			candidates = append(candidates, l.behaviorCandidatesForStmtList(list)...)
+		for _, list := range b.behaviorStmtLists(fn) {
+			if len(list.stmts) == 0 {
+				continue
+			}
+
+			candidates = append(candidates, b.behaviorWindowCandidates(list)...)
+			candidates = append(candidates, b.behaviorStructuredCandidates(list)...)
 		}
 	}
 
 	return candidates
 }
 
-func (l *Runner) behaviorStmtLists(fn *ast.FuncDecl) []behaviorStmtList {
-	if l.behaviorCloneSuppressed(fn) {
+func (b behaviorPackage) behaviorStmtLists(fn *ast.FuncDecl) []behaviorStmtList {
+	if b.behaviorCloneSuppressed(fn) {
 		return nil
 	}
 
@@ -52,14 +65,14 @@ func (l *Runner) behaviorStmtLists(fn *ast.FuncDecl) []behaviorStmtList {
 		visiting: make(map[types.Type]bool),
 	}
 
-	if obj, ok := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func); ok {
+	if obj, ok := b.pkg.TypesInfo.Defs[fn.Name].(*types.Func); ok {
 		owner = behaviorFunctionName(obj)
 		if signature, ok := obj.Type().(*types.Signature); ok {
 			typeKeys = newBehaviorTypeEncoder(signature)
 		}
 	}
 
-	bindings := l.behaviorFunctionBindings(fn)
+	bindings := behaviorFunctionBindings(b.pkg.TypesInfo, fn)
 	lists := []behaviorStmtList{{
 		owner: owner, stmts: fn.Body.List, bindings: bindings, typeKeys: typeKeys,
 	}}
@@ -99,7 +112,7 @@ func (l *Runner) behaviorStmtLists(fn *ast.FuncDecl) []behaviorStmtList {
 	return lists
 }
 
-func (l *Runner) behaviorFunctionBindings(fn *ast.FuncDecl) map[types.Object]string {
+func behaviorFunctionBindings(info *types.Info, fn *ast.FuncDecl) map[types.Object]string {
 	bindings := make(map[types.Object]string)
 
 	ast.Inspect(fn, func(node ast.Node) bool {
@@ -112,7 +125,7 @@ func (l *Runner) behaviorFunctionBindings(fn *ast.FuncDecl) map[types.Object]str
 			return true
 		}
 
-		obj := l.pkg.TypesInfo.ObjectOf(id)
+		obj := info.ObjectOf(id)
 		if behaviorNormalizableObject(obj) {
 			if _, exists := bindings[obj]; !exists {
 				bindings[obj] = "slopelintF" + strconv.Itoa(len(bindings))
@@ -125,28 +138,18 @@ func (l *Runner) behaviorFunctionBindings(fn *ast.FuncDecl) map[types.Object]str
 	return bindings
 }
 
-func (l *Runner) behaviorCandidatesForStmtList(list behaviorStmtList) []behaviorCandidate {
-	if len(list.stmts) == 0 {
-		return nil
-	}
-
-	candidates := l.behaviorWindowCandidates(list)
-
-	return append(candidates, l.behaviorStructuredCandidates(list)...)
-}
-
-func (l *Runner) behaviorWindowCandidates(list behaviorStmtList) []behaviorCandidate {
+func (b behaviorPackage) behaviorWindowCandidates(list behaviorStmtList) []behaviorCandidate {
 	candidates := make([]behaviorCandidate, 0)
 	maxWindow := min(len(list.stmts), behaviorMaxBlockStatements)
 
 	for window := behaviorMinBlockStatements; window <= maxWindow; window++ {
 		for start := 0; start+window <= len(list.stmts); start++ {
 			stmts := list.stmts[start : start+window]
-			if l.behaviorCloneSuppressedStatements(list.stmts, start, start+window) {
+			if b.behaviorCloneSuppressedStatements(list.stmts, start, start+window) {
 				continue
 			}
 
-			if candidate, ok := l.blockBehaviorCandidate(
+			if candidate, ok := b.blockBehaviorCandidate(
 				list.owner,
 				list.bindings,
 				list.typeKeys,
@@ -160,7 +163,7 @@ func (l *Runner) behaviorWindowCandidates(list behaviorStmtList) []behaviorCandi
 	return candidates
 }
 
-func (l *Runner) behaviorStructuredCandidates(list behaviorStmtList) []behaviorCandidate {
+func (b behaviorPackage) behaviorStructuredCandidates(list behaviorStmtList) []behaviorCandidate {
 	candidates := make([]behaviorCandidate, 0)
 
 	for idx, stmt := range list.stmts {
@@ -174,11 +177,11 @@ func (l *Runner) behaviorStructuredCandidates(list behaviorStmtList) []behaviorC
 			continue
 		}
 
-		if l.behaviorCloneSuppressedStatements(list.stmts, idx, idx+1) {
+		if b.behaviorCloneSuppressedStatements(list.stmts, idx, idx+1) {
 			continue
 		}
 
-		if candidate, ok := l.blockBehaviorCandidate(
+		if candidate, ok := b.blockBehaviorCandidate(
 			list.owner,
 			list.bindings,
 			list.typeKeys,
@@ -191,7 +194,7 @@ func (l *Runner) behaviorStructuredCandidates(list behaviorStmtList) []behaviorC
 	return candidates
 }
 
-func (l *Runner) blockBehaviorCandidate(
+func (b behaviorPackage) blockBehaviorCandidate(
 	owner string,
 	bindings map[types.Object]string,
 	typeKeys *behaviorTypeEncoder,
@@ -208,20 +211,20 @@ func (l *Runner) blockBehaviorCandidate(
 		return behaviorCandidate{}, false
 	}
 
-	key, ok := l.normalizedBehaviorBlock(bindings, typeKeys, stmts)
+	key, ok := b.normalizedBehaviorBlock(bindings, typeKeys, stmts)
 	if !ok {
 		return behaviorCandidate{}, false
 	}
 
 	return newBehaviorCandidate(behaviorCandidate{
-		pkg:     l.pkg,
+		pkg:     b.pkg,
 		key:     "block|" + key,
 		name:    owner,
 		pos:     stmts[0].Pos(),
 		end:     stmts[len(stmts)-1].End(),
 		kind:    behaviorCandidateBlock,
 		weight:  weight,
-		effects: l.blockBehaviorEffects(stmts),
+		effects: b.blockBehaviorEffects(stmts),
 	}), true
 }
 
@@ -240,16 +243,16 @@ func behaviorValidationWindow(stmts []ast.Stmt) bool {
 	return true
 }
 
-func (l *Runner) normalizedBehaviorBlock(
+func (b behaviorPackage) normalizedBehaviorBlock(
 	functionBindings map[types.Object]string,
 	typeKeys *behaviorTypeEncoder,
 	stmts []ast.Stmt,
 ) (key string, ok bool) {
 	block := &ast.BlockStmt{List: stmts}
-	defined := l.behaviorBlockDefinitions(block)
+	defined := behaviorBlockDefinitions(b.pkg.TypesInfo, block)
 
 	renamer := &behaviorBlockRenamer{
-		runner:           l,
+		owner:            b,
 		functionBindings: functionBindings,
 		typeKeys:         typeKeys,
 		defined:          defined,
@@ -269,14 +272,14 @@ func (l *Runner) normalizedBehaviorBlock(
 	}
 
 	var rendered bytes.Buffer
-	if err := format.Node(&rendered, l.pkg.FSet, block); err != nil {
+	if err := format.Node(&rendered, b.pkg.FSet, block); err != nil {
 		return "", false
 	}
 
 	return strings.Join(renamer.typesByPlaceholder, ",") + "|" + rendered.String(), true
 }
 
-func (l *Runner) behaviorBlockDefinitions(block *ast.BlockStmt) map[types.Object]struct{} {
+func behaviorBlockDefinitions(info *types.Info, block *ast.BlockStmt) map[types.Object]struct{} {
 	defined := make(map[types.Object]struct{})
 
 	ast.Inspect(block, func(node ast.Node) bool {
@@ -285,7 +288,7 @@ func (l *Runner) behaviorBlockDefinitions(block *ast.BlockStmt) map[types.Object
 			return true
 		}
 
-		if obj := l.pkg.TypesInfo.Defs[id]; behaviorNormalizableObject(obj) {
+		if obj := info.Defs[id]; behaviorNormalizableObject(obj) {
 			defined[obj] = struct{}{}
 		}
 
@@ -303,7 +306,7 @@ type behaviorRenamedIdent struct {
 // behaviorBlockRenamer replaces block identifiers with stable placeholders in
 // place; callers restore renamed after rendering.
 type behaviorBlockRenamer struct {
-	runner             *Runner
+	owner              behaviorPackage
 	functionBindings   map[types.Object]string
 	typeKeys           *behaviorTypeEncoder
 	defined            map[types.Object]struct{}
@@ -316,7 +319,7 @@ type behaviorBlockRenamer struct {
 
 func (r *behaviorBlockRenamer) visit(node ast.Node) bool {
 	if call, isCall := node.(*ast.CallExpr); isCall &&
-		!r.runner.behaviorBlockCallSupported(call, r.defined) {
+		!behaviorBlockCallSupported(r.owner.pkg.TypesInfo, call, r.defined) {
 		r.unsupported = true
 		return false
 	}
@@ -326,7 +329,7 @@ func (r *behaviorBlockRenamer) visit(node ast.Node) bool {
 		return true
 	}
 
-	obj := r.runner.pkg.TypesInfo.ObjectOf(id)
+	obj := r.owner.pkg.TypesInfo.ObjectOf(id)
 	if obj == nil {
 		return true
 	}
@@ -352,7 +355,7 @@ func (r *behaviorBlockRenamer) visit(node ast.Node) bool {
 
 func (r *behaviorBlockRenamer) placeholder(obj types.Object) (string, string) {
 	if !behaviorNormalizableObject(obj) {
-		objectKey, ok := r.runner.behaviorCanonicalObjectKey(obj, r.typeKeys)
+		objectKey, ok := r.owner.behaviorCanonicalObjectKey(obj, r.typeKeys)
 		if !ok {
 			return "", ""
 		}
@@ -370,25 +373,26 @@ func (r *behaviorBlockRenamer) placeholder(obj types.Object) (string, string) {
 	return r.functionBindings[obj], r.typeKeys.typeKey(obj.Type())
 }
 
-func (l *Runner) behaviorBlockCallSupported(
+func behaviorBlockCallSupported(
+	info *types.Info,
 	call *ast.CallExpr,
 	defined map[types.Object]struct{},
 ) bool {
-	if l.pkg.TypesInfo.Types[call.Fun].IsType() {
+	if info.Types[call.Fun].IsType() {
 		return true
 	}
 
 	if id, ok := ast.Unparen(call.Fun).(*ast.Ident); ok {
-		if _, isBuiltin := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin); isBuiltin {
+		if _, isBuiltin := info.ObjectOf(id).(*types.Builtin); isBuiltin {
 			return true
 		}
 
-		if _, isDefined := defined[l.pkg.TypesInfo.ObjectOf(id)]; isDefined {
+		if _, isDefined := defined[info.ObjectOf(id)]; isDefined {
 			return true
 		}
 	}
 
-	_, _, ok := l.calledFunc(call)
+	_, _, ok := calledFunc(info, call)
 
 	return ok
 }
@@ -408,7 +412,7 @@ func behaviorNormalizableObject(obj types.Object) bool {
 	return pkg == nil || obj.Parent() != pkg.Scope()
 }
 
-func (l *Runner) behaviorCanonicalObjectKey(
+func (b behaviorPackage) behaviorCanonicalObjectKey(
 	obj types.Object,
 	typeKeys *behaviorTypeEncoder,
 ) (string, bool) {
@@ -420,7 +424,7 @@ func (l *Runner) behaviorCanonicalObjectKey(
 	case *types.PkgName:
 		return "package:" + obj.Imported().Path(), true
 	case *types.Func:
-		if summary, ok := l.behaviorCalls[funcObjectKey(obj)]; ok {
+		if summary, ok := b.calls[funcObjectKey(obj)]; ok {
 			return "function-behavior:" + summary.digest, true
 		}
 
@@ -461,12 +465,12 @@ func behaviorNodeCount(node ast.Node) int {
 	return count
 }
 
-func (l *Runner) blockBehaviorEffects(stmts []ast.Stmt) behaviorEffects {
+func (b behaviorPackage) blockBehaviorEffects(stmts []ast.Stmt) behaviorEffects {
 	var effects behaviorEffects
 
 	for _, stmt := range stmts {
 		ast.Inspect(stmt, func(node ast.Node) bool {
-			nodeEffects, descend := l.behaviorEffectsForNode(node)
+			nodeEffects, descend := b.behaviorEffectsForNode(node)
 			effects |= nodeEffects
 
 			return descend
@@ -476,20 +480,22 @@ func (l *Runner) blockBehaviorEffects(stmts []ast.Stmt) behaviorEffects {
 	return effects
 }
 
-func (l *Runner) behaviorEffectsForNode(node ast.Node) (behaviorEffects, bool) {
+func (b behaviorPackage) behaviorEffectsForNode(node ast.Node) (behaviorEffects, bool) {
 	switch node := node.(type) {
 	case *ast.FuncLit:
 		return 0, false
 	case *ast.AssignStmt:
-		if node.Tok.String() != ":=" && l.assignmentHasBehaviorWrite(node.Lhs) {
+		if node.Tok.String() != ":=" && slices.ContainsFunc(node.Lhs, func(lhs ast.Expr) bool {
+			return exprIsBehaviorWrite(b.pkg.TypesInfo, lhs)
+		}) {
 			return behaviorEffectWrite, true
 		}
 	case *ast.IncDecStmt:
-		if l.exprIsBehaviorWrite(node.X) {
+		if exprIsBehaviorWrite(b.pkg.TypesInfo, node.X) {
 			return behaviorEffectWrite, true
 		}
 	case *ast.CallExpr:
-		return l.callBehaviorEffects(node), true
+		return b.callBehaviorEffects(node), true
 	default:
 		return behaviorNonMutationEffects(node), true
 	}
@@ -514,34 +520,25 @@ func behaviorNonMutationEffects(node ast.Node) behaviorEffects {
 	return 0
 }
 
-func (l *Runner) assignmentHasBehaviorWrite(exprs []ast.Expr) bool {
-	return slices.ContainsFunc(exprs, l.exprIsBehaviorWrite)
-}
-
-func (l *Runner) exprIsBehaviorWrite(expr ast.Expr) bool {
+func exprIsBehaviorWrite(info *types.Info, expr ast.Expr) bool {
 	id, ok := ast.Unparen(expr).(*ast.Ident)
-	if !ok {
-		return true
-	}
 
-	obj := l.pkg.TypesInfo.ObjectOf(id)
-
-	return !behaviorNormalizableObject(obj)
+	return !ok || !behaviorNormalizableObject(info.ObjectOf(id))
 }
 
-func (l *Runner) callBehaviorEffects(call *ast.CallExpr) behaviorEffects {
-	if l.pkg.TypesInfo.Types[call.Fun].IsType() {
+func (b behaviorPackage) callBehaviorEffects(call *ast.CallExpr) behaviorEffects {
+	if b.pkg.TypesInfo.Types[call.Fun].IsType() {
 		return 0
 	}
 
 	if id, ok := ast.Unparen(call.Fun).(*ast.Ident); ok {
-		if builtin, ok := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin); ok {
+		if builtin, ok := b.pkg.TypesInfo.ObjectOf(id).(*types.Builtin); ok {
 			return behaviorBuiltinEffects(builtin.Name())
 		}
 	}
 
-	if fn, _, ok := l.calledFunc(call); ok {
-		if summary, exists := l.behaviorCalls[funcObjectKey(fn)]; exists {
+	if fn, _, ok := calledFunc(b.pkg.TypesInfo, call); ok {
+		if summary, exists := b.calls[funcObjectKey(fn)]; exists {
 			return behaviorEffectCall | summary.effects
 		}
 	}

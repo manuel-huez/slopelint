@@ -3,15 +3,14 @@ package smells
 import (
 	"fmt"
 	"go/ast"
-	"slices"
 )
 
-func (l *Runner) reportGenericNameForHelper(fn *ast.FuncDecl, reason string) {
-	if fn == nil || fn.Name == nil || !genericPrivateName(fn.Name.Name) {
+func reportGenericNameForHelper(sink *findingSink, fn *ast.FuncDecl, reason string) {
+	if !genericPrivateName(fn.Name.Name) {
 		return
 	}
 
-	l.report(
+	sink.report(
 		fn.Name.Pos(),
 		"generic_naming",
 		fmt.Sprintf(
@@ -35,24 +34,7 @@ func genericPrivateName(name string) bool {
 	return false
 }
 
-func isEligiblePrivateSmellFunc(fn *ast.FuncDecl) bool {
-	return fn != nil &&
-		fn.Name != nil &&
-		fn.Body != nil &&
-		fn.Recv == nil &&
-		!ast.IsExported(fn.Name.Name) &&
-		!hasTypeParams(fn.Type)
-}
-
 const initFuncName = "init"
-
-func (l *Runner) productionPackageFuncUseCounts() map[string]int {
-	if l.funcUseCounts == nil {
-		l.funcUseCounts = l.packageFuncUseCountsForFiles(l.pkg.ProductionFiles)
-	}
-
-	return l.funcUseCounts
-}
 
 func funcParamCount(fields *ast.FieldList) int {
 	if fields == nil {
@@ -71,36 +53,4 @@ func funcParamCount(fields *ast.FieldList) int {
 	}
 
 	return count
-}
-
-func (l *Runner) methodCountsByReceiverName() map[string]int {
-	counts := make(map[string]int)
-
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if fn.Recv == nil || len(fn.Recv.List) != 1 {
-			return
-		}
-
-		name, ok := receiverTypeName(fn.Recv.List[0].Type)
-		if ok {
-			counts[name]++
-		}
-	})
-
-	return counts
-}
-
-func receiverTypeName(expr ast.Expr) (string, bool) {
-	switch expr := expr.(type) {
-	case *ast.Ident:
-		return expr.Name, true
-	case *ast.StarExpr:
-		return receiverTypeName(expr.X)
-	default:
-		return "", false
-	}
-}
-
-func identifierHasWord(name, want string) bool {
-	return slices.Contains(splitIdentifierWords(name), want)
 }

@@ -3,6 +3,7 @@ package smells
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
 	"strconv"
@@ -26,13 +27,19 @@ type zeroValueArgState struct {
 	seen    bool
 }
 
-func (l *Runner) checkZeroValuePrivateArgs() {
-	funcs := l.zeroValueArgCandidateFuncs()
+// zeroValueArgCheck reports private function parameters that every call site
+// fills with the same zero value.
+type zeroValueArgCheck struct {
+	ruleEnv
+}
+
+func (l zeroValueArgCheck) check() {
+	funcs := l.candidateFuncs()
 	if len(funcs) == 0 {
 		return
 	}
 
-	callStates := l.zeroValueArgCallStates(funcs)
+	callStates := l.callStates(funcs)
 
 	for key, fn := range funcs {
 		for idx, state := range callStates[key] {
@@ -59,35 +66,29 @@ func (l *Runner) checkZeroValuePrivateArgs() {
 	}
 }
 
-func (l *Runner) zeroValueArgCandidateFuncs() map[string]zeroValueArgFunc {
+func (l zeroValueArgCheck) candidateFuncs() map[string]zeroValueArgFunc {
 	out := make(map[string]zeroValueArgFunc)
 
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if !isEligiblePrivateSmellFunc(fn) || fn.Doc != nil || fn.Name.Name == initFuncName {
-			return
+	for _, fn := range l.pkg.ProductionFuncs {
+		if fn.Recv != nil || fn.Doc != nil {
+			continue
 		}
 
-		obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-		if !ok || obj == nil {
-			return
+		obj, ok := privateFuncObject(l.pkg.TypesInfo, fn)
+		if !ok {
+			continue
 		}
 
-		params := l.zeroValueArgParams(fn)
-		if len(params) == 0 {
-			return
+		if params := zeroValueArgParams(l.pkg.TypesInfo, fn); len(params) != 0 {
+			out[funcObjectKey(obj)] = zeroValueArgFunc{fn: fn, params: params}
 		}
-
-		out[funcObjectKey(obj)] = zeroValueArgFunc{
-			fn:     fn,
-			params: params,
-		}
-	})
+	}
 
 	return out
 }
 
-func (l *Runner) zeroValueArgParams(fn *ast.FuncDecl) []zeroValueArgParam {
-	params := funcParamObjects(l.pkg.TypesInfo, fn.Type.Params)
+func zeroValueArgParams(info *types.Info, fn *ast.FuncDecl) []zeroValueArgParam {
+	params := funcParamObjects(info, fn.Type.Params)
 	if len(params) == 0 {
 		return nil
 	}
@@ -96,10 +97,6 @@ func (l *Runner) zeroValueArgParams(fn *ast.FuncDecl) []zeroValueArgParam {
 	reportable := false
 
 	for _, param := range params {
-		if param == nil {
-			return nil
-		}
-
 		report := !isBoolType(param.Type())
 		reportable = reportable || report
 
@@ -118,7 +115,7 @@ func (l *Runner) zeroValueArgParams(fn *ast.FuncDecl) []zeroValueArgParam {
 	return out
 }
 
-func (l *Runner) zeroValueArgCallStates(
+func (l zeroValueArgCheck) callStates(
 	funcs map[string]zeroValueArgFunc,
 ) map[string][]zeroValueArgState {
 	states := make(map[string][]zeroValueArgState, len(funcs))
@@ -138,9 +135,9 @@ func (l *Runner) zeroValueArgCallStates(
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.Ident:
-				l.countZeroValueArgFuncRef(node, funcs, funcRefs)
+				countZeroValueArgFuncRef(l.pkg.TypesInfo, node, funcs, funcRefs)
 			case *ast.CallExpr:
-				l.recordZeroValueArgCall(node, funcs, states, directCalls)
+				l.recordCall(node, funcs, states, directCalls)
 			}
 
 			return true
@@ -158,16 +155,17 @@ func (l *Runner) zeroValueArgCallStates(
 	return states
 }
 
-func (l *Runner) countZeroValueArgFuncRef(
+func countZeroValueArgFuncRef(
+	info *types.Info,
 	ident *ast.Ident,
 	funcs map[string]zeroValueArgFunc,
 	funcRefs map[string]int,
 ) {
-	if ident == nil || l.pkg.TypesInfo.Defs[ident] != nil {
+	if info.Defs[ident] != nil {
 		return
 	}
 
-	obj, _ := l.pkg.TypesInfo.Uses[ident].(*types.Func)
+	obj, _ := info.Uses[ident].(*types.Func)
 	if obj == nil {
 		return
 	}
@@ -178,13 +176,13 @@ func (l *Runner) countZeroValueArgFuncRef(
 	}
 }
 
-func (l *Runner) recordZeroValueArgCall(
+func (l zeroValueArgCheck) recordCall(
 	call *ast.CallExpr,
 	funcs map[string]zeroValueArgFunc,
 	states map[string][]zeroValueArgState,
 	directCalls map[string]int,
 ) {
-	_, key, ok := l.calledFunc(call)
+	_, key, ok := calledFunc(l.pkg.TypesInfo, call)
 	if !ok {
 		return
 	}
@@ -205,64 +203,104 @@ func (l *Runner) recordZeroValueArgCall(
 	}
 
 	for idx, arg := range call.Args {
-		display, ok := l.zeroValueArgDisplay(arg, fn.params[idx].typ)
-		if !ok {
+		typ := fn.params[idx].typ
+		if !zeroValueScalarArg(l.pkg.TypesInfo, arg, typ) &&
+			!zeroValueCompositeArg(l.pkg.TypesInfo, arg, typ) {
 			states[key][idx].ok = false
 			continue
 		}
 
 		if !states[key][idx].seen {
-			states[key][idx].display = display
+			states[key][idx].display = l.render(arg)
 			states[key][idx].seen = true
 		}
 	}
 }
 
-func (l *Runner) zeroValueArgDisplay(arg ast.Expr, typ types.Type) (string, bool) {
-	if zeroValueScalarArg(l, arg, typ) || zeroValueCompositeArg(l, arg, typ) {
-		return l.render(arg), true
+// zeroValueScalarArg reports nil, "" or 0 passed for a parameter that holds
+// that zero value. runtime.GOOS and GOARCH differ per build, so an argument
+// that uses them is not fixed.
+func zeroValueScalarArg(info *types.Info, arg ast.Expr, typ types.Type) bool {
+	arg = ast.Unparen(arg)
+
+	if ident, ok := arg.(*ast.Ident); ok && ident.Name == nilText {
+		return typeCanBeNil(typ)
 	}
 
-	return "", false
-}
+	if runtimeTargetConstIn(info, arg) {
+		return false
+	}
 
-func zeroValueScalarArg(l *Runner, arg ast.Expr, typ types.Type) bool {
-	value, ok := l.scalarOf(arg)
+	tv, ok := info.Types[arg]
 	if !ok {
 		return false
 	}
 
-	switch value.kind {
-	case scalarNil:
+	if tv.IsNil() {
 		return typeCanBeNil(typ)
-	case scalarString:
-		basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
-		if !ok {
-			return false
-		}
+	}
 
-		return value.text == "" && basic.Info()&types.IsString != 0
-	case scalarInt:
-		basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
-		if !ok {
-			return false
-		}
+	return tv.Value != nil && isZeroConstantOf(tv.Value, typ)
+}
 
-		return value.text == "0" && basic.Info()&types.IsInteger != 0
-	case scalarInvalid, scalarBool:
+// isZeroConstantOf reports "" for a string type or 0 for an integer type.
+func isZeroConstantOf(value constant.Value, typ types.Type) bool {
+	basic, ok := types.Unalias(typ).Underlying().(*types.Basic)
+	if !ok {
+		return false
+	}
+
+	switch value.Kind() {
+	case constant.String:
+		return constant.StringVal(value) == "" && basic.Info()&types.IsString != 0
+	case constant.Int:
+		return value.ExactString() == "0" && basic.Info()&types.IsInteger != 0
+	case constant.Unknown, constant.Bool, constant.Float, constant.Complex:
 		return false
 	}
 
 	return false
 }
 
-func zeroValueCompositeArg(l *Runner, arg ast.Expr, paramType types.Type) bool {
+func runtimeTargetConstIn(info *types.Info, expr ast.Expr) bool {
+	found := false
+
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if found || n == nil {
+			return false
+		}
+
+		if child, ok := n.(ast.Expr); ok && isRuntimeTargetConst(info, ast.Unparen(child)) {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+func isRuntimeTargetConst(info *types.Info, expr ast.Expr) bool {
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	constObj, _ := info.Uses[selector.Sel].(*types.Const)
+
+	return constObj != nil &&
+		constObj.Pkg() != nil &&
+		constObj.Pkg().Path() == "runtime" &&
+		(constObj.Name() == "GOOS" || constObj.Name() == "GOARCH")
+}
+
+func zeroValueCompositeArg(info *types.Info, arg ast.Expr, paramType types.Type) bool {
 	lit, ok := ast.Unparen(arg).(*ast.CompositeLit)
 	if !ok || len(lit.Elts) != 0 {
 		return false
 	}
 
-	litType := l.pkg.TypesInfo.TypeOf(lit)
+	litType := info.TypeOf(lit)
 	if litType == nil || paramType == nil || !types.AssignableTo(litType, paramType) {
 		return false
 	}

@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
+	"strings"
 )
 
 type functionVarDecl struct {
@@ -12,7 +14,13 @@ type functionVarDecl struct {
 	pos  token.Pos
 }
 
-func (l *Runner) checkTestGlobalFuncStubs() {
+// testSupportCheck reports test code that stubs package function variables,
+// panics after a fatal call, or shares helpers without a test_support filename.
+type testSupportCheck struct {
+	ruleEnv
+}
+
+func (l testSupportCheck) checkGlobalFuncStubs() {
 	functionVars := l.productionFunctionVars()
 	if len(functionVars) == 0 {
 		return
@@ -33,13 +41,13 @@ func (l *Runner) checkTestGlobalFuncStubs() {
 	}
 }
 
-func (l *Runner) productionFunctionVars() map[types.Object]functionVarDecl {
+func (l testSupportCheck) productionFunctionVars() map[types.Object]functionVarDecl {
 	out := make(map[types.Object]functionVarDecl)
 
-	l.forEachProductionDecl(func(decl ast.Decl) {
+	for _, decl := range l.pkg.ProductionDecls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.VAR {
-			return
+			continue
 		}
 
 		for _, spec := range gen.Specs {
@@ -49,24 +57,24 @@ func (l *Runner) productionFunctionVars() map[types.Object]functionVarDecl {
 			}
 
 			for _, name := range valueSpec.Names {
-				if name == nil || ast.IsExported(name.Name) {
+				if ast.IsExported(name.Name) {
 					continue
 				}
 
 				obj, ok := l.pkg.TypesInfo.Defs[name].(*types.Var)
-				if !ok || obj == nil || !typeIsFunctionSignature(obj.Type()) {
+				if !ok || !typeIsFunctionSignature(obj.Type()) {
 					continue
 				}
 
 				out[obj] = functionVarDecl{name: name.Name, pos: name.Pos()}
 			}
 		}
-	})
+	}
 
 	return out
 }
 
-func (l *Runner) testAssignedFunctionVars(
+func (l testSupportCheck) testAssignedFunctionVars(
 	functionVars map[types.Object]functionVarDecl,
 ) map[types.Object]token.Pos {
 	out := make(map[types.Object]token.Pos)
@@ -84,7 +92,7 @@ func (l *Runner) testAssignedFunctionVars(
 
 			for _, lhs := range assign.Lhs {
 				ident, ok := ast.Unparen(lhs).(*ast.Ident)
-				if !ok || ident == nil {
+				if !ok {
 					continue
 				}
 
@@ -105,7 +113,7 @@ func (l *Runner) testAssignedFunctionVars(
 	return out
 }
 
-func (l *Runner) checkTestFatalPanics() {
+func (l testSupportCheck) checkFatalPanics() {
 	for _, file := range l.pkg.TestFiles {
 		ast.Inspect(file, func(node ast.Node) bool {
 			block, ok := node.(*ast.BlockStmt)
@@ -114,12 +122,12 @@ func (l *Runner) checkTestFatalPanics() {
 			}
 
 			for index := 1; index < len(block.List); index++ {
-				if !l.testingFatalStmt(block.List[index-1]) {
+				if !isTestingFatalStmt(l.pkg.TypesInfo, block.List[index-1]) {
 					continue
 				}
 
 				panicCall, ok := exprStmtCall(block.List[index])
-				if !ok || !l.isBuiltinCall(panicCall, panicText) {
+				if !ok || !isBuiltinCall(l.pkg.TypesInfo, panicCall, panicText) {
 					continue
 				}
 
@@ -135,13 +143,13 @@ func (l *Runner) checkTestFatalPanics() {
 	}
 }
 
-func (l *Runner) testingFatalStmt(stmt ast.Stmt) bool {
+func isTestingFatalStmt(info *types.Info, stmt ast.Stmt) bool {
 	call, ok := exprStmtCall(stmt)
 	if !ok {
 		return false
 	}
 
-	fn, _, ok := l.calledFunc(call)
+	fn, _, ok := calledFunc(info, call)
 
 	return ok && fn.Pkg() != nil && fn.Pkg().Path() == testingImportPath &&
 		(fn.Name() == "Fatal" || fn.Name() == "Fatalf")
@@ -156,4 +164,24 @@ func exprStmtCall(stmt ast.Stmt) (*ast.CallExpr, bool) {
 	call, ok := ast.Unparen(exprStmt.X).(*ast.CallExpr)
 
 	return call, ok
+}
+
+func (l testSupportCheck) checkFilenames() {
+	for _, file := range l.pkg.TestSupportFiles {
+		if ast.IsGenerated(file) {
+			continue
+		}
+
+		name := strings.TrimSuffix(filepath.Base(l.fileName(file)), ".go")
+		// A delimited marker also permits Go's trailing OS and architecture suffixes.
+		if strings.Contains("_"+name+"_", "_test_support_") {
+			continue
+		}
+
+		l.report(
+			file.Package,
+			"test_support_filename",
+			"shared test-only source must use a test_support filename marker (for example helpers_test_support.go); keep .go so other packages' tests can import it",
+		)
+	}
 }

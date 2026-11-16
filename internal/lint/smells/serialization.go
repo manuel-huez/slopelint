@@ -14,7 +14,12 @@ const (
 	marshalTextResultCount = 2
 )
 
-func (l *Runner) checkRedundantJSONMarshalText() {
+// serializationCheck reports MarshalJSON methods that repeat MarshalText.
+type serializationCheck struct {
+	ruleEnv
+}
+
+func (l serializationCheck) check() {
 	textMarshalers := l.equivalentTextMarshalerTypes()
 	if len(textMarshalers) == 0 {
 		return
@@ -23,11 +28,11 @@ func (l *Runner) checkRedundantJSONMarshalText() {
 	for _, file := range l.pkg.Files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name == nil || fn.Name.Name != marshalJSONMethodName {
+			if !ok || fn.Name.Name != marshalJSONMethodName {
 				continue
 			}
 
-			typeName, ok := l.redundantJSONMarshalTextMethod(fn, textMarshalers)
+			typeName, ok := redundantJSONMarshalTextMethod(l.pkg.TypesInfo, fn, textMarshalers)
 			if !ok {
 				continue
 			}
@@ -45,13 +50,13 @@ func (l *Runner) checkRedundantJSONMarshalText() {
 	}
 }
 
-func (l *Runner) equivalentTextMarshalerTypes() map[string]struct{} {
+func (l serializationCheck) equivalentTextMarshalerTypes() map[string]struct{} {
 	out := make(map[string]struct{})
 
 	for _, file := range l.pkg.Files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name == nil || fn.Name.Name != marshalTextMethodName {
+			if !ok || fn.Name.Name != marshalTextMethodName {
 				continue
 			}
 
@@ -60,8 +65,9 @@ func (l *Runner) equivalentTextMarshalerTypes() map[string]struct{} {
 				continue
 			}
 
-			recvObj, ok := receiverVarObject(l.pkg.TypesInfo, fn)
-			if !ok || !l.marshalTextReturnsReceiverString(fn.Body, recvObj) {
+			recvObj := funcReceiverObject(l.pkg.TypesInfo, fn.Recv)
+			if recvObj == nil ||
+				!marshalTextReturnsReceiverString(l.pkg.TypesInfo, fn.Body, recvObj) {
 				continue
 			}
 
@@ -72,7 +78,8 @@ func (l *Runner) equivalentTextMarshalerTypes() map[string]struct{} {
 	return out
 }
 
-func (l *Runner) marshalTextReturnsReceiverString(
+func marshalTextReturnsReceiverString(
+	info *types.Info,
 	body *ast.BlockStmt,
 	recvObj *types.Var,
 ) bool {
@@ -91,12 +98,12 @@ func (l *Runner) marshalTextReturnsReceiverString(
 		return false
 	}
 
-	tv, ok := l.pkg.TypesInfo.Types[ast.Unparen(conversion.Fun)]
+	tv, ok := info.Types[ast.Unparen(conversion.Fun)]
 	if !ok || !tv.IsType() || !isByteSlice(tv.Type) {
 		return false
 	}
 
-	return l.isReceiverStringCall(conversion.Args[0], recvObj)
+	return isReceiverStringCall(info, conversion.Args[0], recvObj)
 }
 
 func isByteSlice(typ types.Type) bool {
@@ -110,7 +117,8 @@ func isByteSlice(typ types.Type) bool {
 	return ok && basic.Kind() == types.Uint8
 }
 
-func (l *Runner) redundantJSONMarshalTextMethod(
+func redundantJSONMarshalTextMethod(
+	info *types.Info,
 	fn *ast.FuncDecl,
 	textMarshalers map[string]struct{},
 ) (string, bool) {
@@ -123,12 +131,12 @@ func (l *Runner) redundantJSONMarshalTextMethod(
 		return "", false
 	}
 
-	recvObj, ok := receiverVarObject(l.pkg.TypesInfo, fn)
-	if !ok {
+	recvObj := funcReceiverObject(info, fn.Recv)
+	if recvObj == nil {
 		return "", false
 	}
 
-	if !l.marshalJSONOnlyMarshalsString(fn.Body, recvObj) {
+	if !marshalJSONOnlyMarshalsString(info, fn.Body, recvObj) {
 		return "", false
 	}
 
@@ -136,37 +144,20 @@ func (l *Runner) redundantJSONMarshalTextMethod(
 }
 
 func valueReceiverTypeName(fn *ast.FuncDecl) (string, bool) {
-	if fn == nil || fn.Recv == nil || len(fn.Recv.List) != 1 {
+	if fn.Recv == nil || len(fn.Recv.List) != 1 {
 		return "", false
 	}
 
 	ident, ok := fn.Recv.List[0].Type.(*ast.Ident)
-	if !ok || ident == nil {
+	if !ok {
 		return "", false
 	}
 
 	return ident.Name, true
 }
 
-func receiverVarObject(info *types.Info, fn *ast.FuncDecl) (*types.Var, bool) {
-	if fn == nil || fn.Recv == nil || len(fn.Recv.List) != 1 {
-		return nil, false
-	}
-
-	field := fn.Recv.List[0]
-	if len(field.Names) != 1 || field.Names[0] == nil {
-		return nil, false
-	}
-
-	obj, ok := info.Defs[field.Names[0]].(*types.Var)
-	if !ok || obj == nil {
-		return nil, false
-	}
-
-	return obj, true
-}
-
-func (l *Runner) marshalJSONOnlyMarshalsString(
+func marshalJSONOnlyMarshalsString(
+	info *types.Info,
 	body *ast.BlockStmt,
 	recvObj *types.Var,
 ) bool {
@@ -180,11 +171,11 @@ func (l *Runner) marshalJSONOnlyMarshalsString(
 		return false
 	}
 
-	if !l.isPackageFuncCall(call, encodingJSONPkgPath, "Marshal") {
+	if !isPackageFuncCall(info, call, encodingJSONPkgPath, "Marshal") {
 		return false
 	}
 
-	return l.isReceiverStringCall(call.Args[0], recvObj)
+	return isReceiverStringCall(info, call.Args[0], recvObj)
 }
 
 func singleReturnResults(body *ast.BlockStmt, count int) ([]ast.Expr, bool) {
@@ -200,16 +191,16 @@ func singleReturnResults(body *ast.BlockStmt, count int) ([]ast.Expr, bool) {
 	return ret.Results, len(ret.Results) == count
 }
 
-func (l *Runner) isReceiverStringCall(expr ast.Expr, recvObj *types.Var) bool {
+func isReceiverStringCall(info *types.Info, expr ast.Expr, recvObj *types.Var) bool {
 	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 0 {
 		return false
 	}
 
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || sel.Sel == nil || sel.Sel.Name != stringMethodName {
+	if !ok || sel.Sel.Name != stringMethodName {
 		return false
 	}
 
-	return identRefersToObject(l.pkg.TypesInfo, ast.Unparen(sel.X), recvObj)
+	return identRefersToObject(info, ast.Unparen(sel.X), recvObj)
 }

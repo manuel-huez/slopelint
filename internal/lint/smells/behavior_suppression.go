@@ -10,32 +10,24 @@ import (
 
 const behaviorCloneIgnorePrefix = "slopelint:ignore behavior_clone"
 
-func (l *Runner) behaviorCloneSuppressed(node ast.Node) bool {
-	if node == nil {
-		return false
-	}
-
-	return l.behaviorCloneSuppressedRange(node.Pos(), node.End())
+func (b behaviorPackage) behaviorCloneSuppressed(node ast.Node) bool {
+	return b.behaviorCloneSuppressedRange(node.Pos(), node.End())
 }
 
-func (l *Runner) behaviorCloneSuppressedRange(startPos, endPos token.Pos) bool {
-	if l.pkg.FSet == nil {
-		return false
-	}
-
-	nodeFile := l.pkg.FSet.File(startPos)
+func (b behaviorPackage) behaviorCloneSuppressedRange(startPos, endPos token.Pos) bool {
+	nodeFile := b.pkg.FSet.File(startPos)
 	if nodeFile == nil {
 		return false
 	}
 
-	start := l.pkg.FSet.Position(startPos).Line
-	end := l.pkg.FSet.Position(endPos).Line
+	start := b.pkg.FSet.Position(startPos).Line
+	end := b.pkg.FSet.Position(endPos).Line
 
-	for _, file := range l.pkg.Files {
+	for _, file := range b.pkg.Files {
 		for _, group := range file.Comments {
-			if l.pkg.FSet.File(group.Pos()) != nodeFile || !commentTouchesLines(
-				l.pkg.FSet.Position(group.Pos()).Line,
-				l.pkg.FSet.Position(group.End()).Line,
+			if b.pkg.FSet.File(group.Pos()) != nodeFile || !commentTouchesLines(
+				b.pkg.FSet.Position(group.Pos()).Line,
+				b.pkg.FSet.Position(group.End()).Line,
 				start,
 				end,
 			) {
@@ -53,25 +45,25 @@ func (l *Runner) behaviorCloneSuppressedRange(startPos, endPos token.Pos) bool {
 	return false
 }
 
-func (l *Runner) behaviorCloneSuppressedStatements(stmts []ast.Stmt, start, end int) bool {
+func (b behaviorPackage) behaviorCloneSuppressedStatements(stmts []ast.Stmt, start, end int) bool {
 	if start < 0 || start >= end || end > len(stmts) {
 		return false
 	}
 
-	if l.behaviorCloneSuppressedRange(stmts[start].Pos(), stmts[end-1].End()) {
+	if b.behaviorCloneSuppressedRange(stmts[start].Pos(), stmts[end-1].End()) {
 		return true
 	}
 
 	nextStart := stmts[start].Pos()
 	for idx := start - 1; idx >= 0; idx-- {
-		previousEndLine := l.pkg.FSet.Position(stmts[idx].End()).Line
-		nextStartLine := l.pkg.FSet.Position(nextStart).Line
+		previousEndLine := b.pkg.FSet.Position(stmts[idx].End()).Line
+		nextStartLine := b.pkg.FSet.Position(nextStart).Line
 
 		if previousEndLine < nextStartLine-1 {
 			break
 		}
 
-		if l.behaviorCloneSuppressed(stmts[idx]) {
+		if b.behaviorCloneSuppressed(stmts[idx]) {
 			return true
 		}
 
@@ -96,12 +88,8 @@ func behaviorCloneIgnoreComment(text string) bool {
 	return ok && strings.TrimSpace(reason) != ""
 }
 
-func (l *Runner) behaviorGenerated(node ast.Node) bool {
-	if node == nil {
-		return false
-	}
-
-	for _, file := range l.pkg.ProductionFiles {
+func (b behaviorPackage) behaviorGenerated(node ast.Node) bool {
+	for _, file := range b.pkg.ProductionFiles {
 		if file.Pos() <= node.Pos() && node.End() <= file.End() {
 			return ast.IsGenerated(file)
 		}
@@ -110,10 +98,10 @@ func (l *Runner) behaviorGenerated(node ast.Node) bool {
 	return false
 }
 
-func (l *Runner) behaviorAutoSuppressedClosures() map[*ast.FuncLit]struct{} {
+func (b behaviorPackage) behaviorAutoSuppressedClosures() map[*ast.FuncLit]struct{} {
 	suppressed := make(map[*ast.FuncLit]struct{})
 
-	for _, file := range l.pkg.ProductionFiles {
+	for _, file := range b.pkg.ProductionFiles {
 		if ast.IsGenerated(file) {
 			continue
 		}
@@ -124,8 +112,8 @@ func (l *Runner) behaviorAutoSuppressedClosures() map[*ast.FuncLit]struct{} {
 				return true
 			}
 
-			if l.behaviorDeferredCleanupClosure(lit, stack) ||
-				l.behaviorSortComparatorClosure(lit, stack) {
+			if behaviorDeferredCleanupClosure(b.pkg.TypesInfo, lit, stack) ||
+				behaviorSortComparatorClosure(b.pkg.TypesInfo, lit, stack) {
 				suppressed[lit] = struct{}{}
 			}
 
@@ -136,7 +124,7 @@ func (l *Runner) behaviorAutoSuppressedClosures() map[*ast.FuncLit]struct{} {
 	return suppressed
 }
 
-func (l *Runner) behaviorDeferredCleanupClosure(lit *ast.FuncLit, stack []ast.Node) bool {
+func behaviorDeferredCleanupClosure(info *types.Info, lit *ast.FuncLit, stack []ast.Node) bool {
 	if len(stack) < 2 || len(lit.Body.List) != 1 {
 		return false
 	}
@@ -155,16 +143,16 @@ func (l *Runner) behaviorDeferredCleanupClosure(lit *ast.FuncLit, stack []ast.No
 	case *ast.ExprStmt:
 		cleanup, ok := ast.Unparen(stmt.X).(*ast.CallExpr)
 
-		return ok && l.behaviorCleanupCall(cleanup)
+		return ok && behaviorCleanupCall(info, cleanup)
 	case *ast.AssignStmt:
-		return l.behaviorCleanupErrorAssignment(stmt)
+		return behaviorCleanupErrorAssignment(info, stmt)
 	default:
 		return false
 	}
 }
 
-func (l *Runner) behaviorCleanupCall(call *ast.CallExpr) bool {
-	fn, _, ok := l.calledFunc(call)
+func behaviorCleanupCall(info *types.Info, call *ast.CallExpr) bool {
+	fn, _, ok := calledFunc(info, call)
 	if !ok {
 		return false
 	}
@@ -177,7 +165,7 @@ func (l *Runner) behaviorCleanupCall(call *ast.CallExpr) bool {
 	}
 }
 
-func (l *Runner) behaviorCleanupErrorAssignment(stmt *ast.AssignStmt) bool {
+func behaviorCleanupErrorAssignment(info *types.Info, stmt *ast.AssignStmt) bool {
 	if stmt.Tok != token.ASSIGN || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
 		return false
 	}
@@ -193,19 +181,18 @@ func (l *Runner) behaviorCleanupErrorAssignment(stmt *ast.AssignStmt) bool {
 	}
 
 	if lhs.Name == "_" {
-		return l.behaviorCleanupCall(call)
+		return behaviorCleanupCall(info, call)
 	}
 
-	return l.behaviorCleanupJoinAssignment(lhs, call)
+	return behaviorCleanupJoinAssignment(info, lhs, call)
 }
 
-func (l *Runner) behaviorCleanupJoinAssignment(lhs *ast.Ident, call *ast.CallExpr) bool {
-	fn, _, ok := l.calledFunc(call)
-	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "errors" || fn.Name() != "Join" {
+func behaviorCleanupJoinAssignment(info *types.Info, lhs *ast.Ident, call *ast.CallExpr) bool {
+	if !isPackageFuncCall(info, call, errorsPkgPath, "Join") {
 		return false
 	}
 
-	lhsObject := l.pkg.TypesInfo.ObjectOf(lhs)
+	lhsObject := info.ObjectOf(lhs)
 	hasAccumulator := false
 	hasCleanup := false
 
@@ -213,9 +200,9 @@ func (l *Runner) behaviorCleanupJoinAssignment(lhs *ast.Ident, call *ast.CallExp
 		ast.Inspect(arg, func(node ast.Node) bool {
 			switch node := node.(type) {
 			case *ast.Ident:
-				hasAccumulator = hasAccumulator || l.pkg.TypesInfo.ObjectOf(node) == lhsObject
+				hasAccumulator = hasAccumulator || info.ObjectOf(node) == lhsObject
 			case *ast.CallExpr:
-				hasCleanup = hasCleanup || l.behaviorCleanupCall(node)
+				hasCleanup = hasCleanup || behaviorCleanupCall(info, node)
 			}
 
 			return true
@@ -225,7 +212,7 @@ func (l *Runner) behaviorCleanupJoinAssignment(lhs *ast.Ident, call *ast.CallExp
 	return lhsObject != nil && hasAccumulator && hasCleanup
 }
 
-func (l *Runner) behaviorSortComparatorClosure(lit *ast.FuncLit, stack []ast.Node) bool {
+func behaviorSortComparatorClosure(info *types.Info, lit *ast.FuncLit, stack []ast.Node) bool {
 	if len(stack) == 0 || len(lit.Body.List) != 1 {
 		return false
 	}
@@ -248,14 +235,8 @@ func (l *Runner) behaviorSortComparatorClosure(lit *ast.FuncLit, stack []ast.Nod
 		return false
 	}
 
-	return l.behaviorSortCall(call)
-}
-
-func (l *Runner) behaviorSortCall(call *ast.CallExpr) bool {
-	fn, _, ok := l.calledFunc(call)
-
-	return ok && fn.Pkg() != nil && fn.Pkg().Path() == "sort" &&
-		(fn.Name() == "Slice" || fn.Name() == "SliceStable")
+	return isPackageFuncCall(info, call, "sort", "Slice") ||
+		isPackageFuncCall(info, call, "sort", "SliceStable")
 }
 
 func behaviorCallHasArg(call *ast.CallExpr, target ast.Expr) bool {
@@ -307,7 +288,8 @@ func behaviorInterfaces(pkgs []*Package) []*types.Interface {
 	return interfaces
 }
 
-func (l *Runner) behaviorInterfaceForwarder(
+func behaviorInterfaceForwarder(
+	info *types.Info,
 	function behaviorSSAFunction,
 	interfaces []*types.Interface,
 ) bool {
@@ -325,9 +307,9 @@ func (l *Runner) behaviorInterfaceForwarder(
 		return false
 	}
 
-	call, ok := l.trivialForwarderBodyCall(decl, function.obj)
+	_, ok = forwardedBodyCall(info, decl, function.obj)
 
-	return ok && l.validForwardTarget(function.obj, call)
+	return ok
 }
 
 func behaviorMethodRequiredByInterface(

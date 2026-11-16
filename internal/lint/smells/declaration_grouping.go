@@ -35,13 +35,19 @@ type declGroupRun struct {
 	prefix map[string]int
 }
 
-func (l *Runner) checkDeclarationGrouping() {
+// declGroupingCheck reports long ungrouped declaration runs and const runs
+// that mix name prefixes.
+type declGroupingCheck struct {
+	ruleEnv
+}
+
+func (l declGroupingCheck) check() {
 	for _, file := range l.pkg.Files {
 		l.checkDeclRuns(file.Decls)
 	}
 }
 
-func (l *Runner) checkDeclRuns(decls []ast.Decl) {
+func (l declGroupingCheck) checkDeclRuns(decls []ast.Decl) {
 	var run declGroupRun
 
 	var previous ast.Decl
@@ -75,7 +81,8 @@ func (l *Runner) checkDeclRuns(decls []ast.Decl) {
 			continue
 		}
 
-		if previous == nil || gen.Tok != run.rule.token || l.declNodeStartsGroup(previous, gen) {
+		if previous == nil || gen.Tok != run.rule.token ||
+			declNodeStartsGroup(l.pkg.FSet, previous, gen) {
 			l.reportDeclGroupRun(run)
 			run = newDeclGroupRun(gen.Pos(), rule)
 		}
@@ -87,13 +94,13 @@ func (l *Runner) checkDeclRuns(decls []ast.Decl) {
 	l.reportDeclGroupRun(run)
 }
 
-func (l *Runner) checkGroupedDeclItems(decl *ast.GenDecl, rule declGroupingRule) {
+func (l declGroupingCheck) checkGroupedDeclItems(decl *ast.GenDecl, rule declGroupingRule) {
 	run := declGroupRun{}
 
 	var previous ast.Spec
 
 	for _, spec := range decl.Specs {
-		if previous == nil || l.declNodeStartsGroup(previous, spec) {
+		if previous == nil || declNodeStartsGroup(l.pkg.FSet, previous, spec) {
 			l.reportDeclGroupRun(run)
 			run = newDeclGroupRun(spec.Pos(), rule)
 		}
@@ -127,13 +134,9 @@ func (run *declGroupRun) addNames(names []string) {
 	}
 }
 
-func (l *Runner) declNodeStartsGroup(previous ast.Node, current ast.Node) bool {
-	if previous == nil || current == nil || l.pkg.FSet == nil {
-		return false
-	}
-
-	previousEndLine := l.pkg.FSet.Position(previous.End()).Line
-	currentStartLine := l.pkg.FSet.Position(current.Pos()).Line
+func declNodeStartsGroup(fset *token.FileSet, previous ast.Node, current ast.Node) bool {
+	previousEndLine := fset.Position(previous.End()).Line
+	currentStartLine := fset.Position(current.Pos()).Line
 
 	// Line gaps cover blank lines and standalone comments between decl items.
 	return currentStartLine > previousEndLine+1
@@ -145,14 +148,10 @@ func declSpecNames(specs []ast.Spec) []string {
 	for _, spec := range specs {
 		switch spec := spec.(type) {
 		case *ast.TypeSpec:
-			if spec.Name != nil {
-				names = append(names, spec.Name.Name)
-			}
+			names = append(names, spec.Name.Name)
 		case *ast.ValueSpec:
 			for _, name := range spec.Names {
-				if name != nil {
-					names = append(names, name.Name)
-				}
+				names = append(names, name.Name)
 			}
 		}
 	}
@@ -160,7 +159,7 @@ func declSpecNames(specs []ast.Spec) []string {
 	return names
 }
 
-func (l *Runner) reportDeclGroupRun(run declGroupRun) {
+func (l declGroupingCheck) reportDeclGroupRun(run declGroupRun) {
 	if run.pos == token.NoPos {
 		return
 	}
@@ -181,7 +180,7 @@ func (l *Runner) reportDeclGroupRun(run declGroupRun) {
 	l.reportMixedConstPrefixes(run)
 }
 
-func (l *Runner) reportMixedConstPrefixes(run declGroupRun) {
+func (l declGroupingCheck) reportMixedConstPrefixes(run declGroupRun) {
 	if run.rule.token != token.CONST || run.count < mixedConstPrefixItemMinimum {
 		return
 	}

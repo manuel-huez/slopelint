@@ -9,10 +9,16 @@ import (
 	"strings"
 )
 
-func (l *Runner) checkProductionErrorPanics() {
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if fn == nil || fn.Body == nil || fn.Name == nil {
-			return
+// errorCheck reports production panics with errors, dropped errors, and
+// sentinel errors used as callback stop signals.
+type errorCheck struct {
+	ruleEnv
+}
+
+func (l errorCheck) checkPanics() {
+	for _, fn := range l.pkg.ProductionFuncs {
+		if fn.Body == nil {
+			continue
 		}
 
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -20,7 +26,8 @@ func (l *Runner) checkProductionErrorPanics() {
 			case *ast.FuncLit:
 				return false
 			case *ast.CallExpr:
-				if !l.isPanicWithError(node) {
+				if len(node.Args) != 1 || !isBuiltinCall(l.pkg.TypesInfo, node, panicText) ||
+					!isErrorType(l.pkg.TypesInfo.TypeOf(node.Args[0])) {
 					return true
 				}
 
@@ -37,19 +44,7 @@ func (l *Runner) checkProductionErrorPanics() {
 
 			return true
 		})
-	})
-}
-
-func (l *Runner) isPanicWithError(call *ast.CallExpr) bool {
-	if call == nil || len(call.Args) != 1 {
-		return false
 	}
-
-	if !l.isBuiltinCall(call, panicText) {
-		return false
-	}
-
-	return isErrorType(l.pkg.TypesInfo.TypeOf(call.Args[0]))
 }
 
 // DroppedErrorCandidate marks an `if err != nil` that drops the error. The
@@ -57,30 +52,31 @@ func (l *Runner) isPanicWithError(call *ast.CallExpr) bool {
 // standalone code review asks the model whether the fallback is safe.
 const DroppedErrorCandidate = "dropped_error_candidate"
 
-func (l *Runner) checkSwallowedErrors() {
+func (l errorCheck) checkSwallowed() {
 	l.forEachHandwrittenProductionFunc(func(fn *ast.FuncDecl) {
-		l.checkSwallowedErrorsIn(fn.Body)
+		l.checkSwallowedIn(fn.Body)
 	})
 }
 
-// checkSwallowedErrorsIn checks one function scope. Nested literals are their
-// own scope.
-func (l *Runner) checkSwallowedErrorsIn(body *ast.BlockStmt) {
+// checkSwallowedIn checks one function scope. Nested literals are their own
+// scope.
+func (l errorCheck) checkSwallowedIn(body *ast.BlockStmt) {
 	if body == nil {
 		return
 	}
 
+	info := l.pkg.TypesInfo
 	following := followingStatements(body)
 
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.FuncLit:
-			l.checkSwallowedErrorsIn(node.Body)
+			l.checkSwallowedIn(node.Body)
 			return false
 		case *ast.IfStmt:
-			errObj := l.nonNilErrorCheck(node.Cond)
-			if errObj != nil && l.blockDiscardsError(node.Body) &&
-				!l.droppedErrorReadLater(body, node, errObj, following[node]) {
+			errObj := nonNilErrorCheck(info, node.Cond)
+			if errObj != nil && blockDiscardsError(info, node.Body) &&
+				!droppedErrorReadLater(info, body, node, errObj, following[node]) {
 				l.report(node.Pos(), DroppedErrorCandidate, errObj.Name())
 			}
 		}
@@ -125,34 +121,36 @@ func followingStatements(body *ast.BlockStmt) map[*ast.IfStmt][]ast.Stmt {
 // variables, errors declared outside the innermost loop around ifStmt (a later
 // iteration can read them), and errors a closure captures or whose address is
 // taken all count as read.
-func (l *Runner) droppedErrorReadLater(
+func droppedErrorReadLater(
+	info *types.Info,
 	body *ast.BlockStmt,
 	ifStmt *ast.IfStmt,
 	errObj types.Object,
 	following []ast.Stmt,
 ) bool {
 	if errObj.Pos() < body.Pos() || errObj.Pos() > body.End() ||
-		l.errorEscapesScope(body, ifStmt, errObj) {
+		errorEscapesScope(info, body, ifStmt, errObj) {
 		return true
 	}
 
 	var first *ast.Ident
 
 	inspectNodesBetween(body, ifStmt.End(), body.End(), func(node ast.Node) bool {
-		if ident, ok := node.(*ast.Ident); ok && l.pkg.TypesInfo.ObjectOf(ident) == errObj {
+		if ident, ok := node.(*ast.Ident); ok && info.ObjectOf(ident) == errObj {
 			first = ident
 		}
 
 		return first == nil
 	})
 
-	return first != nil && !l.overwritesDroppedError(ifStmt, first, errObj, following)
+	return first != nil && !overwritesDroppedError(info, ifStmt, first, errObj, following)
 }
 
 // errorEscapesScope reports whether errObj lives across iterations of the
 // innermost loop around ifStmt, is captured by a function literal, or has its
 // address taken.
-func (l *Runner) errorEscapesScope(
+func errorEscapesScope(
+	info *types.Info,
 	body *ast.BlockStmt,
 	ifStmt *ast.IfStmt,
 	errObj types.Object,
@@ -162,10 +160,10 @@ func (l *Runner) errorEscapesScope(
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.FuncLit:
-			escapes = escapes || nodeUsesObject(node.Body, errObj, l.pkg.TypesInfo)
+			escapes = escapes || nodeUsesObject(node.Body, errObj, info)
 			return false
 		case *ast.UnaryExpr:
-			escapes = escapes || node.Op == token.AND && l.identObject(node.X) == errObj
+			escapes = escapes || node.Op == token.AND && identObject(info, node.X) == errObj
 		case *ast.ForStmt, *ast.RangeStmt:
 			// Declared inside the innermost loop means inside every enclosing one.
 			if node.Pos() <= ifStmt.Pos() && ifStmt.End() <= node.End() {
@@ -182,7 +180,8 @@ func (l *Runner) errorEscapesScope(
 // overwritesDroppedError reports whether the first later mention is a plain
 // overwrite such as `_, err = g()` by a following statement in the same block,
 // reached without jumps.
-func (l *Runner) overwritesDroppedError(
+func overwritesDroppedError(
+	info *types.Info,
 	ifStmt *ast.IfStmt,
 	first *ast.Ident,
 	errObj types.Object,
@@ -209,7 +208,7 @@ func (l *Runner) overwritesDroppedError(
 
 		return ok && slices.Contains(assign.Lhs, ast.Expr(first)) &&
 			!slices.ContainsFunc(assign.Rhs, func(rhs ast.Expr) bool {
-				return nodeUsesObject(rhs, errObj, l.pkg.TypesInfo)
+				return nodeUsesObject(rhs, errObj, info)
 			})
 	}
 
@@ -230,13 +229,13 @@ func containsBranch(node ast.Node) bool {
 }
 
 // nonNilErrorCheck returns the error variable of an exact `err != nil` condition.
-func (l *Runner) nonNilErrorCheck(cond ast.Expr) types.Object {
+func nonNilErrorCheck(info *types.Info, cond ast.Expr) types.Object {
 	binary, ok := ast.Unparen(cond).(*ast.BinaryExpr)
-	if !ok || binary.Op != token.NEQ || !l.pkg.TypesInfo.Types[binary.Y].IsNil() {
+	if !ok || binary.Op != token.NEQ || !info.Types[binary.Y].IsNil() {
 		return nil
 	}
 
-	obj, ok := l.identObject(binary.X).(*types.Var)
+	obj, ok := identObject(info, binary.X).(*types.Var)
 	if !ok || !isErrorType(obj.Type()) {
 		return nil
 	}
@@ -248,7 +247,7 @@ func (l *Runner) nonNilErrorCheck(cond ast.Expr) types.Object {
 // or `return ..., false` contract. Any use of the checked error is itself an
 // error value. Nested function literals run later or elsewhere, so they do not
 // count.
-func (l *Runner) blockDiscardsError(block *ast.BlockStmt) bool {
+func blockDiscardsError(info *types.Info, block *ast.BlockStmt) bool {
 	falseObj := types.Universe.Lookup(boolFalseText)
 	discards := true
 
@@ -262,12 +261,12 @@ func (l *Runner) blockDiscardsError(block *ast.BlockStmt) bool {
 			return false
 		case *ast.ReturnStmt:
 			last := len(node.Results) - 1
-			discards = last < 0 || l.identObject(node.Results[last]) != falseObj
+			discards = last < 0 || identObject(info, node.Results[last]) != falseObj
 		case *ast.CallExpr:
-			discards = !l.isBuiltinCall(node, panicText) && !l.isProcessStopCall(node) &&
-				!l.isErrorValue(node)
+			discards = !isBuiltinCall(info, node, panicText) && !isProcessStopCall(info, node) &&
+				!isErrorValue(info, node)
 		case ast.Expr:
-			discards = !l.isErrorValue(node)
+			discards = !isErrorValue(info, node)
 		}
 
 		return discards
@@ -276,14 +275,14 @@ func (l *Runner) blockDiscardsError(block *ast.BlockStmt) bool {
 	return discards
 }
 
-func (l *Runner) isErrorValue(expr ast.Expr) bool {
-	value, ok := l.pkg.TypesInfo.Types[expr]
+func isErrorValue(info *types.Info, expr ast.Expr) bool {
+	value, ok := info.Types[expr]
 
 	return ok && value.IsValue() && !value.IsNil() && isErrorType(value.Type)
 }
 
-func (l *Runner) isProcessStopCall(call *ast.CallExpr) bool {
-	fn, _, ok := l.calledFunc(call)
+func isProcessStopCall(info *types.Info, call *ast.CallExpr) bool {
+	fn, _, ok := calledFunc(info, call)
 	if !ok || fn.Pkg() == nil {
 		return false
 	}
@@ -323,24 +322,21 @@ type errorSentinelCondition struct {
 	polarity errorSentinelPolarity
 }
 
-func (l *Runner) checkSentinelErrorBreaks() {
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if fn == nil || fn.Body == nil {
-			return
+func (l errorCheck) checkSentinelBreaks() {
+	for _, fn := range l.pkg.ProductionFuncs {
+		if fn.Body == nil {
+			continue
 		}
 
 		suppressed := l.suppressedErrorSentinels(fn.Body)
 		if len(suppressed) == 0 {
-			return
+			continue
 		}
 
 		for _, returned := range l.callbackSentinelReturns(fn.Body) {
-			if returned.errObj == nil {
-				continue
-			}
-
 			suppressionPos, ok := suppressed[returned.errObj][returned.text]
-			if !ok || suppressionPos <= returned.assignedEnd || l.objectAssignedBetween(
+			if !ok || suppressionPos <= returned.assignedEnd || objectAssignedBetween(
+				l.pkg.TypesInfo,
 				fn.Body,
 				returned.errObj,
 				returned.assignedEnd,
@@ -358,10 +354,10 @@ func (l *Runner) checkSentinelErrorBreaks() {
 				),
 			)
 		}
-	})
+	}
 }
 
-func (l *Runner) suppressedErrorSentinels(
+func (l errorCheck) suppressedErrorSentinels(
 	body *ast.BlockStmt,
 ) map[types.Object]map[string]token.Pos {
 	out := make(map[types.Object]map[string]token.Pos)
@@ -375,7 +371,7 @@ func (l *Runner) suppressedErrorSentinels(
 				node.Cond,
 				errorSentinelPositive,
 			) {
-				if !l.ifSuppressesErrorSentinel(node, condition) {
+				if !ifSuppressesErrorSentinel(l.pkg.TypesInfo, node, condition) {
 					continue
 				}
 
@@ -389,8 +385,6 @@ func (l *Runner) suppressedErrorSentinels(
 					out[condition.errObj][condition.text] = node.Pos()
 				}
 			}
-
-			return true
 		}
 
 		return true
@@ -399,7 +393,7 @@ func (l *Runner) suppressedErrorSentinels(
 	return out
 }
 
-func (l *Runner) errorSentinelConditions(
+func (l errorCheck) errorSentinelConditions(
 	expr ast.Expr,
 	polarity errorSentinelPolarity,
 ) []errorSentinelCondition {
@@ -422,11 +416,12 @@ func (l *Runner) errorSentinelConditions(
 
 		return conditions
 	case *ast.CallExpr:
-		if len(node.Args) != 2 || !l.isErrorsIsCall(node) {
+		if len(node.Args) != 2 ||
+			!isPackageFuncCall(l.pkg.TypesInfo, node, errorsPkgPath, errorsIsFuncName) {
 			return nil
 		}
 
-		errObj := l.identObject(node.Args[0])
+		errObj := identObject(l.pkg.TypesInfo, node.Args[0])
 		if errObj == nil {
 			return nil
 		}
@@ -456,37 +451,28 @@ func oppositeErrorSentinelPolarity(
 	return errorSentinelPositive
 }
 
-func (l *Runner) ifSuppressesErrorSentinel(
+// ifSuppressesErrorSentinel reports whether the sentinel case is swallowed: an
+// `errors.Is` branch returns without the error, or a `!errors.Is` branch
+// returns the error so the sentinel case falls through.
+func ifSuppressesErrorSentinel(
+	info *types.Info,
 	ifStmt *ast.IfStmt,
 	condition errorSentinelCondition,
 ) bool {
-	if condition.errObj == nil || condition.text == "" {
-		return false
-	}
+	return blockHasReturnMatching(ifStmt.Body, func(ret *ast.ReturnStmt) bool {
+		includes := returnIncludesObject(info, ret, condition.errObj)
+		if condition.polarity == errorSentinelNegated {
+			return includes
+		}
 
-	if condition.polarity == errorSentinelNegated {
-		return l.blockHasReturnMatching(
-			ifStmt.Body,
-			func(ret *ast.ReturnStmt) bool {
-				return l.returnIncludesObject(ret, condition.errObj)
-			},
-		)
-	}
-
-	return l.blockHasReturnMatching(ifStmt.Body, func(ret *ast.ReturnStmt) bool {
-		return !l.returnIncludesObject(ret, condition.errObj) &&
-			returnSuppressesError(ret)
+		return !includes && returnSuppressesError(ret)
 	})
 }
 
-func (l *Runner) blockHasReturnMatching(
+func blockHasReturnMatching(
 	block *ast.BlockStmt,
 	match func(*ast.ReturnStmt) bool,
 ) bool {
-	if block == nil || match == nil {
-		return false
-	}
-
 	found := false
 
 	ast.Inspect(block, func(n ast.Node) bool {
@@ -510,13 +496,9 @@ func (l *Runner) blockHasReturnMatching(
 	return found
 }
 
-func (l *Runner) returnIncludesObject(ret *ast.ReturnStmt, obj types.Object) bool {
-	if ret == nil || obj == nil {
-		return false
-	}
-
+func returnIncludesObject(info *types.Info, ret *ast.ReturnStmt, obj types.Object) bool {
 	for _, result := range ret.Results {
-		if l.identObject(result) == obj {
+		if identObject(info, result) == obj {
 			return true
 		}
 	}
@@ -525,10 +507,6 @@ func (l *Runner) returnIncludesObject(ret *ast.ReturnStmt, obj types.Object) boo
 }
 
 func returnSuppressesError(ret *ast.ReturnStmt) bool {
-	if ret == nil {
-		return false
-	}
-
 	if len(ret.Results) == 0 {
 		return true
 	}
@@ -536,11 +514,11 @@ func returnSuppressesError(ret *ast.ReturnStmt) bool {
 	return slices.ContainsFunc(ret.Results, func(result ast.Expr) bool {
 		ident, ok := result.(*ast.Ident)
 
-		return ok && ident != nil && ident.Name == nilText
+		return ok && ident.Name == nilText
 	})
 }
 
-func (l *Runner) callbackSentinelReturns(body *ast.BlockStmt) []sentinelReturn {
+func (l errorCheck) callbackSentinelReturns(body *ast.BlockStmt) []sentinelReturn {
 	out := make([]sentinelReturn, 0)
 
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -558,13 +536,13 @@ func (l *Runner) callbackSentinelReturns(body *ast.BlockStmt) []sentinelReturn {
 	return out
 }
 
-func (l *Runner) callbackSentinelReturnsFromAssign(
+func (l errorCheck) callbackSentinelReturnsFromAssign(
 	assign *ast.AssignStmt,
 ) []sentinelReturn {
 	out := make([]sentinelReturn, 0)
 
 	for rhsIndex, rhs := range assign.Rhs {
-		errObj := l.assignedErrorObject(assign, rhsIndex)
+		errObj := assignedErrorObject(l.pkg.TypesInfo, assign, rhsIndex)
 		if errObj == nil {
 			continue
 		}
@@ -579,7 +557,8 @@ func (l *Runner) callbackSentinelReturnsFromAssign(
 	return out
 }
 
-func (l *Runner) objectAssignedBetween(
+func objectAssignedBetween(
+	info *types.Info,
 	body *ast.BlockStmt,
 	obj types.Object,
 	after token.Pos,
@@ -591,13 +570,13 @@ func (l *Runner) objectAssignedBetween(
 		switch node := node.(type) {
 		case *ast.AssignStmt:
 			for _, lhs := range node.Lhs {
-				if l.identObject(lhs) == obj {
+				if identObject(info, lhs) == obj {
 					found = true
 					return false
 				}
 			}
 		case *ast.IncDecStmt:
-			found = l.identObject(node.X) == obj
+			found = identObject(info, node.X) == obj
 		}
 
 		return !found
@@ -606,14 +585,10 @@ func (l *Runner) objectAssignedBetween(
 	return found
 }
 
-func (l *Runner) assignedErrorObject(assign *ast.AssignStmt, rhsIndex int) types.Object {
-	if assign == nil || rhsIndex < 0 || rhsIndex >= len(assign.Rhs) {
-		return nil
-	}
-
+func assignedErrorObject(info *types.Info, assign *ast.AssignStmt, rhsIndex int) types.Object {
 	if len(assign.Rhs) == 1 {
 		for _, lhs := range assign.Lhs {
-			obj := l.identObject(lhs)
+			obj := identObject(info, lhs)
 			if obj != nil && isErrorType(obj.Type()) {
 				return obj
 			}
@@ -626,7 +601,7 @@ func (l *Runner) assignedErrorObject(assign *ast.AssignStmt, rhsIndex int) types
 		return nil
 	}
 
-	obj := l.identObject(assign.Lhs[rhsIndex])
+	obj := identObject(info, assign.Lhs[rhsIndex])
 	if obj == nil || !isErrorType(obj.Type()) {
 		return nil
 	}
@@ -634,7 +609,7 @@ func (l *Runner) assignedErrorObject(assign *ast.AssignStmt, rhsIndex int) types
 	return obj
 }
 
-func (l *Runner) callbackSentinelReturnsInExpr(expr ast.Expr) []sentinelReturn {
+func (l errorCheck) callbackSentinelReturnsInExpr(expr ast.Expr) []sentinelReturn {
 	out := make([]sentinelReturn, 0)
 
 	ast.Inspect(expr, func(n ast.Node) bool {
@@ -643,12 +618,9 @@ func (l *Runner) callbackSentinelReturnsInExpr(expr ast.Expr) []sentinelReturn {
 			return false
 		case *ast.CallExpr:
 			for _, arg := range node.Args {
-				lit, ok := ast.Unparen(arg).(*ast.FuncLit)
-				if !ok || lit.Body == nil {
-					continue
+				if lit, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
+					out = append(out, l.callbackSentinelReturnsInFuncLit(lit)...)
 				}
-
-				out = append(out, l.callbackSentinelReturnsInFuncLit(lit)...)
 			}
 		}
 
@@ -658,7 +630,7 @@ func (l *Runner) callbackSentinelReturnsInExpr(expr ast.Expr) []sentinelReturn {
 	return out
 }
 
-func (l *Runner) callbackSentinelReturnsInFuncLit(lit *ast.FuncLit) []sentinelReturn {
+func (l errorCheck) callbackSentinelReturnsInFuncLit(lit *ast.FuncLit) []sentinelReturn {
 	out := make([]sentinelReturn, 0)
 
 	ast.Inspect(lit.Body, func(inner ast.Node) bool {
@@ -687,23 +659,10 @@ func (l *Runner) callbackSentinelReturnsInFuncLit(lit *ast.FuncLit) []sentinelRe
 	return out
 }
 
-func (l *Runner) identObject(expr ast.Expr) types.Object {
-	ident, ok := ast.Unparen(expr).(*ast.Ident)
-	if !ok || ident == nil {
-		return nil
-	}
-
-	return l.pkg.TypesInfo.ObjectOf(ident)
-}
-
-func (l *Runner) isErrorsIsCall(call *ast.CallExpr) bool {
-	return l.isPackageFuncCall(call, errorsPkgPath, errorsIsFuncName)
-}
-
-func (l *Runner) errorSentinelText(expr ast.Expr) string {
+func (l errorCheck) errorSentinelText(expr ast.Expr) string {
 	expr = ast.Unparen(expr)
 
-	if ident, ok := expr.(*ast.Ident); ok && ident != nil {
+	if ident, ok := expr.(*ast.Ident); ok {
 		if ident.Name == "nil" || ident.Name == "err" {
 			return ""
 		}
@@ -714,7 +673,7 @@ func (l *Runner) errorSentinelText(expr ast.Expr) string {
 	}
 
 	rendered := l.render(expr)
-	if rendered == "" || strings.Contains(rendered, "\n") {
+	if strings.Contains(rendered, "\n") {
 		return ""
 	}
 

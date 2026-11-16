@@ -39,24 +39,26 @@ var restatementNoiseWords = map[string]struct{}{
 	"value":    {},
 }
 
-func (l *Runner) checkRestatementComments() {
+// commentCheck reports doc comments that restate a private name and complexity
+// suppressions on functions without decisions.
+type commentCheck struct {
+	ruleEnv
+}
+
+func (l commentCheck) checkRestatements() {
 	for _, file := range l.pkg.Files {
 		for _, decl := range file.Decls {
 			switch decl := decl.(type) {
 			case *ast.FuncDecl:
-				l.checkFuncRestatementComment(decl)
+				l.checkFuncRestatement(decl)
 			case *ast.GenDecl:
-				l.checkGenDeclRestatementComment(decl)
+				l.checkGenDeclRestatement(decl)
 			}
 		}
 	}
 }
 
-func (l *Runner) checkFuncRestatementComment(fn *ast.FuncDecl) {
-	if fn == nil || fn.Name == nil || fn.Doc == nil {
-		return
-	}
-
+func (l commentCheck) checkFuncRestatement(fn *ast.FuncDecl) {
 	if ast.IsExported(fn.Name.Name) || !isRestatementCommentGroup(fn.Doc) {
 		return
 	}
@@ -65,10 +67,10 @@ func (l *Runner) checkFuncRestatementComment(fn *ast.FuncDecl) {
 		return
 	}
 
-	l.reportRestatementComment(fn.Doc, fn.Name.Name)
+	l.reportRestatement(fn.Doc, fn.Name.Name)
 }
 
-func (l *Runner) checkGenDeclRestatementComment(decl *ast.GenDecl) {
+func (l commentCheck) checkGenDeclRestatement(decl *ast.GenDecl) {
 	name, doc, ok := privateDeclNameAndDoc(decl)
 	if !ok || !isRestatementCommentGroup(doc) {
 		return
@@ -78,11 +80,11 @@ func (l *Runner) checkGenDeclRestatementComment(decl *ast.GenDecl) {
 		return
 	}
 
-	l.reportRestatementComment(doc, name)
+	l.reportRestatement(doc, name)
 }
 
 func privateDeclNameAndDoc(decl *ast.GenDecl) (string, *ast.CommentGroup, bool) {
-	if decl == nil || len(decl.Specs) != 1 {
+	if len(decl.Specs) != 1 {
 		return "", nil, false
 	}
 
@@ -100,7 +102,7 @@ func privateTypeDeclNameAndDoc(
 	decl *ast.GenDecl,
 	spec *ast.TypeSpec,
 ) (string, *ast.CommentGroup, bool) {
-	if spec == nil || spec.Name == nil || ast.IsExported(spec.Name.Name) {
+	if ast.IsExported(spec.Name.Name) {
 		return "", nil, false
 	}
 
@@ -113,7 +115,7 @@ func privateValueDeclNameAndDoc(
 	decl *ast.GenDecl,
 	spec *ast.ValueSpec,
 ) (string, *ast.CommentGroup, bool) {
-	if spec == nil || len(spec.Names) != 1 || spec.Names[0] == nil {
+	if len(spec.Names) != 1 {
 		return "", nil, false
 	}
 
@@ -135,7 +137,7 @@ func docOrDeclDoc(doc *ast.CommentGroup, declDoc *ast.CommentGroup) *ast.Comment
 	return declDoc
 }
 
-func (l *Runner) reportRestatementComment(doc *ast.CommentGroup, name string) {
+func (l commentCheck) reportRestatement(doc *ast.CommentGroup, name string) {
 	l.report(
 		doc.Pos(),
 		"comment_noise",
@@ -245,14 +247,10 @@ func restatementWordsMatch(commentWord, identWord string) bool {
 	return false
 }
 
-func (l *Runner) checkStaleComplexitySuppressions() {
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if fn == nil || fn.Body == nil || !hasComplexitySuppression(fn.Doc) {
-			return
-		}
-
-		if funcBodyHasDecision(fn.Body) {
-			return
+func (l commentCheck) checkStaleComplexitySuppressions() {
+	for _, fn := range l.pkg.ProductionFuncs {
+		if fn.Body == nil || !hasComplexitySuppression(fn.Doc) || funcBodyHasDecision(fn.Body) {
+			continue
 		}
 
 		l.report(
@@ -263,7 +261,7 @@ func (l *Runner) checkStaleComplexitySuppressions() {
 				fn.Name.Name,
 			),
 		)
-	})
+	}
 }
 
 func hasComplexitySuppression(doc *ast.CommentGroup) bool {

@@ -72,39 +72,6 @@ type behaviorPackageSources struct {
 	maximumStart int
 }
 
-func (l *Runner) checkBehaviorClones(comparableSignatures map[string]struct{}) {
-	analysis := buildBehaviorSSAAnalysis([]*Package{l.pkg})
-	l.behaviorCalls = analysis.objectSummary
-
-	if comparableSignatures == nil {
-		comparableSignatures = behaviorComparableSignatures(analysis.candidates[l.pkg])
-	}
-
-	candidates := append(
-		l.functionBehaviorCandidatesFrom(
-			analysis.candidates[l.pkg],
-			comparableSignatures,
-			analysis,
-		),
-		l.blockBehaviorCandidates()...,
-	)
-	matches := exactBehaviorMatches(candidates)
-	covered := make([]behaviorSpan, 0, len(matches))
-
-	for _, match := range matches {
-		if behaviorSpanCovered(match.target, covered) {
-			continue
-		}
-
-		l.report(
-			match.target.pos,
-			behaviorCloneKind,
-			l.behaviorCloneMessage(match),
-		)
-		covered = append(covered, behaviorSpan{start: match.target.pos, end: match.target.end})
-	}
-}
-
 // RunBehaviorRepo reports behavior clones across every supplied package.
 func RunBehaviorRepo(pkgs []*Package) map[*Package][]Finding {
 	pkgs = append([]*Package(nil), pkgs...)
@@ -136,47 +103,59 @@ func RunBehaviorRepo(pkgs []*Package) map[*Package][]Finding {
 					return
 				}
 
-				r := newRunner(pkgs[index])
-				r.behaviorCalls = analysis.objectSummary
-				perPackage[index] = append(r.functionBehaviorCandidatesFrom(
-					analysis.candidates[pkgs[index]],
-					comparableSignatures,
-					analysis,
-				), r.blockBehaviorCandidates()...)
+				b := behaviorPackage{pkg: pkgs[index], calls: analysis.objectSummary}
+				perPackage[index] = b.candidates(comparableSignatures, analysis)
 			}
 		})
 	}
 
 	wg.Wait()
 
-	candidates := slices.Concat(perPackage...)
+	return reportBehaviorClones(slices.Concat(perPackage...))
+}
 
-	matches := exactBehaviorMatches(candidates)
+func (b behaviorPackage) candidates(
+	comparableSignatures map[string]struct{},
+	analysis *behaviorSSAAnalysis,
+) []behaviorCandidate {
+	return append(
+		b.functionBehaviorCandidatesFrom(
+			analysis.candidates[b.pkg],
+			comparableSignatures,
+			analysis,
+		),
+		b.blockBehaviorCandidates()...,
+	)
+}
+
+// reportBehaviorClones reports each match once per target package, skipping
+// targets inside a span an earlier, stronger match already reported.
+func reportBehaviorClones(candidates []behaviorCandidate) map[*Package][]Finding {
 	covered := make(map[*Package][]behaviorSpan)
-	runners := make(map[*Package]*Runner)
+	sinks := make(map[*Package]*findingSink)
 
-	for _, match := range matches {
+	for _, match := range exactBehaviorMatches(candidates) {
 		pkg := match.target.pkg
 		if behaviorSpanCovered(match.target, covered[pkg]) {
 			continue
 		}
 
-		r := runners[pkg]
-		if r == nil {
-			r = newRunner(pkg)
-			runners[pkg] = r
+		sink := sinks[pkg]
+		if sink == nil {
+			sink = newFindingSink(pkg.FSet)
+			sinks[pkg] = sink
 		}
 
-		r.report(match.target.pos, behaviorCloneKind, r.behaviorCloneMessage(match))
+		sink.report(match.target.pos, behaviorCloneKind, behaviorCloneMessage(match))
 		covered[pkg] = append(
 			covered[pkg],
 			behaviorSpan{start: match.target.pos, end: match.target.end},
 		)
 	}
 
-	findings := make(map[*Package][]Finding, len(runners))
-	for pkg, r := range runners {
-		findings[pkg] = r.findings
+	findings := make(map[*Package][]Finding, len(sinks))
+	for pkg, sink := range sinks {
+		findings[pkg] = sink.findings
 	}
 
 	return findings
@@ -360,7 +339,7 @@ func behaviorSpanCovered(candidate *behaviorCandidate, covered []behaviorSpan) b
 	return false
 }
 
-func (l *Runner) behaviorCloneMessage(match behaviorMatch) string {
+func behaviorCloneMessage(match behaviorMatch) string {
 	effects := match.target.effects.String()
 	if match.target.kind == behaviorCandidateFunction &&
 		match.source.kind == behaviorCandidateFunction {

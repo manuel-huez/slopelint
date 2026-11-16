@@ -16,15 +16,21 @@ type normalizationOccurrence struct {
 	count   int
 }
 
-func (l *Runner) checkRepeatedNormalizationCallsPackage() {
+// normalizationCheck reports a strings normalization computed twice on the
+// same unchanged inputs in one function.
+type normalizationCheck struct {
+	ruleEnv
+}
+
+func (l normalizationCheck) check() {
 	for _, file := range l.pkg.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch fn := n.(type) {
 			case *ast.FuncDecl:
-				l.checkRepeatedNormalizationCalls(fn.Body)
+				l.checkBody(fn.Body)
 				return false
 			case *ast.FuncLit:
-				l.checkRepeatedNormalizationCalls(fn.Body)
+				l.checkBody(fn.Body)
 				return false
 			default:
 				return true
@@ -33,7 +39,7 @@ func (l *Runner) checkRepeatedNormalizationCallsPackage() {
 	}
 }
 
-func (l *Runner) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
+func (l normalizationCheck) checkBody(body *ast.BlockStmt) {
 	if body == nil {
 		return
 	}
@@ -43,16 +49,15 @@ func (l *Runner) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
-			l.checkRepeatedNormalizationCalls(n.Body)
+			l.checkBody(n.Body)
 
 			return false
 		case *ast.CallExpr:
-			call, ok := l.normalizationCall(n)
-			if !ok {
+			if !isNormalizationCall(l.pkg.TypesInfo, n) {
 				return true
 			}
 
-			occurrences = l.recordNormalizationCall(body, occurrences, call)
+			occurrences = l.recordCall(body, occurrences, n)
 
 			return false
 		default:
@@ -61,13 +66,13 @@ func (l *Runner) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
 	})
 }
 
-func (l *Runner) recordNormalizationCall(
+func (l normalizationCheck) recordCall(
 	body *ast.BlockStmt,
 	occurrences []normalizationOccurrence,
 	call *ast.CallExpr,
 ) []normalizationOccurrence {
 	key := l.render(call)
-	deps := l.normalizationDependencies(call)
+	deps := normalizationDependencies(l.pkg.TypesInfo, call)
 	index := normalizationOccurrenceIndex(occurrences, key, deps)
 
 	if index < 0 {
@@ -81,7 +86,13 @@ func (l *Runner) recordNormalizationCall(
 
 	occurrence := &occurrences[index]
 	// Binding once is safe only while every input object keeps the same value.
-	if l.normalizationDependenciesMayChange(body, occurrence.lastEnd, call.Pos(), deps) {
+	if normalizationDependenciesMayChange(
+		l.pkg.TypesInfo,
+		body,
+		occurrence.lastEnd,
+		call.Pos(),
+		deps,
+	) {
 		occurrence.lastEnd = call.End()
 		occurrence.count = 1
 
@@ -105,7 +116,7 @@ func (l *Runner) recordNormalizationCall(
 	return occurrences
 }
 
-func (l *Runner) normalizationDependencies(call *ast.CallExpr) map[types.Object]struct{} {
+func normalizationDependencies(info *types.Info, call *ast.CallExpr) map[types.Object]struct{} {
 	out := make(map[types.Object]struct{})
 
 	for node := range ast.Preorder(call) {
@@ -114,7 +125,7 @@ func (l *Runner) normalizationDependencies(call *ast.CallExpr) map[types.Object]
 			continue
 		}
 
-		if obj, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Var); ok && obj != nil {
+		if obj, ok := info.ObjectOf(ident).(*types.Var); ok {
 			out[obj] = struct{}{}
 		}
 	}
@@ -150,7 +161,8 @@ func sameObjectSet(left, right map[types.Object]struct{}) bool {
 	return true
 }
 
-func (l *Runner) normalizationDependenciesMayChange(
+func normalizationDependenciesMayChange(
+	info *types.Info,
 	body *ast.BlockStmt,
 	after token.Pos,
 	before token.Pos,
@@ -162,23 +174,23 @@ func (l *Runner) normalizationDependenciesMayChange(
 		switch node := node.(type) {
 		case *ast.AssignStmt:
 			for _, lhs := range node.Lhs {
-				if _, ok := deps[l.mutationRootObject(lhs)]; ok {
+				if _, ok := deps[mutationRootObject(info, lhs)]; ok {
 					changed = true
 					return false
 				}
 			}
 		case *ast.IncDecStmt:
-			_, changed = deps[l.mutationRootObject(node.X)]
+			_, changed = deps[mutationRootObject(info, node.X)]
 		case *ast.CallExpr:
 			for _, arg := range node.Args {
-				if _, ok := deps[l.mutationRootObject(arg)]; ok {
+				if _, ok := deps[mutationRootObject(info, arg)]; ok {
 					changed = true
 					return false
 				}
 			}
 
 			if selector, ok := ast.Unparen(node.Fun).(*ast.SelectorExpr); ok {
-				_, changed = deps[l.mutationRootObject(selector.X)]
+				_, changed = deps[mutationRootObject(info, selector.X)]
 			}
 		}
 
@@ -188,61 +200,42 @@ func (l *Runner) normalizationDependenciesMayChange(
 	return changed
 }
 
-func (l *Runner) mutationRootObject(expr ast.Expr) types.Object {
+func mutationRootObject(info *types.Info, expr ast.Expr) types.Object {
 	switch expr := ast.Unparen(expr).(type) {
 	case *ast.Ident:
-		return l.pkg.TypesInfo.ObjectOf(expr)
+		return info.ObjectOf(expr)
 	case *ast.SelectorExpr:
-		return l.mutationRootObject(expr.X)
+		return mutationRootObject(info, expr.X)
 	case *ast.IndexExpr:
-		return l.mutationRootObject(expr.X)
+		return mutationRootObject(info, expr.X)
 	case *ast.StarExpr:
-		return l.mutationRootObject(expr.X)
+		return mutationRootObject(info, expr.X)
 	case *ast.UnaryExpr:
 		if expr.Op == token.AND {
-			return l.mutationRootObject(expr.X)
+			return mutationRootObject(info, expr.X)
 		}
 	}
 
 	return nil
 }
 
-func (l *Runner) normalizationCall(call *ast.CallExpr) (*ast.CallExpr, bool) {
-	fn, _, ok := l.calledFunc(call)
-	if !ok || fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != stringsImportPath {
-		return nil, false
+// isNormalizationCall matches strings.TrimSpace(x) and ToLower or ToUpper of
+// strings.TrimSpace(x).
+func isNormalizationCall(info *types.Info, call *ast.CallExpr) bool {
+	fn, _, ok := calledFunc(info, call)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != stringsImportPath || len(call.Args) != 1 {
+		return false
 	}
 
 	switch fn.Name() {
 	case "TrimSpace":
-		if len(call.Args) != 1 {
-			return nil, false
-		}
-
-		return call, true
+		return true
 	case "ToLower", "ToUpper":
-		if len(call.Args) != 1 || !l.isTrimSpaceCall(call.Args[0]) {
-			return nil, false
-		}
+		inner, ok := ast.Unparen(call.Args[0]).(*ast.CallExpr)
 
-		return call, true
+		return ok && len(inner.Args) == 1 &&
+			isPackageFuncCall(info, inner, stringsImportPath, "TrimSpace")
 	default:
-		return nil, false
-	}
-}
-
-func (l *Runner) isTrimSpaceCall(expr ast.Expr) bool {
-	call, ok := ast.Unparen(expr).(*ast.CallExpr)
-	if !ok {
 		return false
 	}
-
-	fn, _, ok := l.calledFunc(call)
-
-	return ok &&
-		fn != nil &&
-		fn.Pkg() != nil &&
-		fn.Pkg().Path() == "strings" &&
-		fn.Name() == "TrimSpace" &&
-		len(call.Args) == 1
 }

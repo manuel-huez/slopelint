@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"go/types"
 )
 
 const (
@@ -12,12 +11,17 @@ const (
 	privateHelperMaxParams    = 2
 )
 
-func (l *Runner) checkSingleUsePrivateHelpers() {
+// singleUseHelperCheck reports tiny private functions with one production use.
+type singleUseHelperCheck struct {
+	ruleEnv
+}
+
+func (l singleUseHelperCheck) check() {
 	useCounts := l.productionPackageFuncUseCounts()
 
-	l.forEachProductionFunc(func(fn *ast.FuncDecl) {
-		if !l.isSingleUsePrivateHelper(fn, useCounts) {
-			return
+	for _, fn := range l.pkg.ProductionFuncs {
+		if !l.isSingleUseHelper(fn, useCounts) {
+			continue
 		}
 
 		l.report(
@@ -29,24 +33,20 @@ func (l *Runner) checkSingleUsePrivateHelpers() {
 			),
 		)
 
-		l.reportGenericNameForHelper(fn, "one tiny use")
-	})
+		reportGenericNameForHelper(l.findingSink, fn, "one tiny use")
+	}
 }
 
-func (l *Runner) isSingleUsePrivateHelper(
+func (l singleUseHelperCheck) isSingleUseHelper(
 	fn *ast.FuncDecl,
 	useCounts map[string]int,
 ) bool {
-	if !isEligiblePrivateSmellFunc(fn) || fn.Name.Name == initFuncName {
+	if fn.Recv != nil || funcParamCount(fn.Type.Params) > privateHelperMaxParams {
 		return false
 	}
 
-	if funcParamCount(fn.Type.Params) > privateHelperMaxParams {
-		return false
-	}
-
-	obj, ok := l.pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func)
-	if !ok || obj == nil || useCounts[funcObjectKey(obj)] != 1 {
+	obj, ok := privateFuncObject(l.pkg.TypesInfo, fn)
+	if !ok || useCounts[funcObjectKey(obj)] != 1 {
 		return false
 	}
 
@@ -54,23 +54,14 @@ func (l *Runner) isSingleUsePrivateHelper(
 		return false
 	}
 
-	if l.privateHelperOverlapsTrivialForwarder(fn, obj) {
+	if _, forwards := forwardedBodyCall(l.pkg.TypesInfo, fn, obj); forwards {
 		return false
 	}
 
-	return l.privateHelperBodyIsTiny(fn)
+	return l.bodyIsTiny(fn)
 }
 
-func (l *Runner) privateHelperOverlapsTrivialForwarder(fn *ast.FuncDecl, obj *types.Func) bool {
-	call, ok := l.trivialForwarderBodyCall(fn, obj)
-	if !ok {
-		return false
-	}
-
-	return l.validForwardTarget(obj, call)
-}
-
-func (l *Runner) privateHelperBodyIsTiny(fn *ast.FuncDecl) bool {
+func (l singleUseHelperCheck) bodyIsTiny(fn *ast.FuncDecl) bool {
 	if l.hasAttachedComment(fn.Body, fn.Doc) {
 		return false
 	}

@@ -11,7 +11,12 @@ import (
 const tableTestCaseLimit = 10
 const repeatedFixtureMinLength = 16
 
-func (l *Runner) checkUnnamedLargeTableTests() {
+// tableTestCheck reports large unnamed table tests and repeated fixture text.
+type tableTestCheck struct {
+	ruleEnv
+}
+
+func (l tableTestCheck) checkUnnamedLargeTables() {
 	for _, file := range l.pkg.Files {
 		if !l.fileIsTest(file) {
 			continue
@@ -23,27 +28,24 @@ func (l *Runner) checkUnnamedLargeTableTests() {
 				return true
 			}
 
-			l.checkUnnamedLargeTableTest(lit)
+			structType, ok := anonymousStructSliceType(lit.Type)
+			if !ok || len(lit.Elts) <= tableTestCaseLimit ||
+				structTypeHasCaseNameField(structType) {
+				return true
+			}
+
+			l.report(
+				lit.Pos(),
+				"table_test_grouping",
+				fmt.Sprintf(
+					"table test has %d cases without name/desc field; add case names so failures identify scenarios",
+					len(lit.Elts),
+				),
+			)
 
 			return true
 		})
 	}
-}
-
-func (l *Runner) checkUnnamedLargeTableTest(lit *ast.CompositeLit) {
-	structType, ok := anonymousStructSliceType(lit.Type)
-	if !ok || len(lit.Elts) <= tableTestCaseLimit || structTypeHasCaseNameField(structType) {
-		return
-	}
-
-	l.report(
-		lit.Pos(),
-		"table_test_grouping",
-		fmt.Sprintf(
-			"table test has %d cases without name/desc field; add case names so failures identify scenarios",
-			len(lit.Elts),
-		),
-	)
 }
 
 func anonymousStructSliceType(expr ast.Expr) (*ast.StructType, bool) {
@@ -58,13 +60,9 @@ func anonymousStructSliceType(expr ast.Expr) (*ast.StructType, bool) {
 }
 
 func structTypeHasCaseNameField(structType *ast.StructType) bool {
-	if structType == nil || structType.Fields == nil {
-		return false
-	}
-
 	for _, field := range structType.Fields.List {
 		for _, name := range field.Names {
-			if name != nil && caseNameField(name.Name) {
+			if caseNameField(name.Name) {
 				return true
 			}
 		}
@@ -82,7 +80,7 @@ func caseNameField(name string) bool {
 	}
 }
 
-func (l *Runner) checkRepeatedTestFixtures() {
+func (l tableTestCheck) checkRepeatedFixtures() {
 	const reportCount = 3
 
 	counts := make(map[string]int)
@@ -90,7 +88,7 @@ func (l *Runner) checkRepeatedTestFixtures() {
 	for _, file := range l.pkg.TestFiles {
 		ast.Inspect(file, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok || len(call.Args) != 3 || !l.testFixtureWriteCall(call) {
+			if !ok || len(call.Args) != 3 || !isTestFixtureWriteCall(l.pkg.TypesInfo, call) {
 				return true
 			}
 
@@ -121,13 +119,13 @@ func (l *Runner) checkRepeatedTestFixtures() {
 	}
 }
 
-func (l *Runner) testFixtureWriteCall(call *ast.CallExpr) bool {
+func isTestFixtureWriteCall(info *types.Info, call *ast.CallExpr) bool {
 	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
 	if !ok || ident.Name != "writeFile" {
 		return false
 	}
 
-	fn, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Func)
+	_, ok = info.ObjectOf(ident).(*types.Func)
 
-	return ok && fn != nil
+	return ok
 }

@@ -43,34 +43,22 @@ type tokenRange struct {
 	end   token.Pos
 }
 
-func (l *Runner) functionBehaviorCandidatesFrom(
+func (b behaviorPackage) functionBehaviorCandidatesFrom(
 	functions []behaviorSSAFunction,
 	comparableSignatures map[string]struct{},
 	analysis *behaviorSSAAnalysis,
 ) []behaviorCandidate {
-	if comparableSignatures == nil {
-		comparableSignatures = behaviorComparableSignatures(functions)
-	}
-
-	if len(comparableSignatures) == 0 {
-		return nil
-	}
-
-	if len(functions) == 0 {
-		return nil
-	}
-
 	candidates := make([]behaviorCandidate, 0, len(functions))
 	for _, function := range functions {
 		if _, comparable := comparableSignatures[function.signature]; !comparable {
 			continue
 		}
 
-		if l.behaviorCloneSuppressed(function.syntax) {
+		if b.behaviorCloneSuppressed(function.syntax) {
 			continue
 		}
 
-		if l.behaviorInterfaceForwarder(function, analysis.interfaces) {
+		if behaviorInterfaceForwarder(b.pkg.TypesInfo, function, analysis.interfaces) {
 			continue
 		}
 
@@ -85,7 +73,7 @@ func (l *Runner) functionBehaviorCandidatesFrom(
 		}
 
 		candidates = append(candidates, newBehaviorCandidate(behaviorCandidate{
-			pkg:     l.pkg,
+			pkg:     b.pkg,
 			key:     "function|" + encoded.text,
 			name:    function.name,
 			pos:     function.pos.start,
@@ -155,11 +143,11 @@ func buildBehaviorSSAAnalysis(pkgs []*Package) *behaviorSSAAnalysis {
 	ssaPkgs := buildBehaviorSSAPackages(pkgs)
 
 	for _, pkg := range pkgs {
-		r := newRunner(pkg)
-		roots := r.behaviorSSAFunctions(ssaPkgs[pkg])
+		b := behaviorPackage{pkg: pkg}
+		roots := b.behaviorSSAFunctions(ssaPkgs[pkg])
 		functions := behaviorSSAFunctionClosure(roots)
 		analysis.functions = append(analysis.functions, functions...)
-		analysis.candidates[pkg] = append(roots, r.behaviorClosureCandidates(functions)...)
+		analysis.candidates[pkg] = append(roots, b.behaviorClosureCandidates(functions)...)
 
 		for _, root := range roots {
 			if root.obj != nil {
@@ -223,9 +211,11 @@ func behaviorSSAFunctionOperands(fn *ssa.Function) []*ssa.Function {
 	return functions
 }
 
-func (l *Runner) behaviorClosureCandidates(functions []*ssa.Function) []behaviorSSAFunction {
+func (b behaviorPackage) behaviorClosureCandidates(
+	functions []*ssa.Function,
+) []behaviorSSAFunction {
 	candidates := make([]behaviorSSAFunction, 0)
-	autoSuppressed := l.behaviorAutoSuppressedClosures()
+	autoSuppressed := b.behaviorAutoSuppressedClosures()
 
 	for _, fn := range functions {
 		syntax, ok := fn.Syntax().(*ast.FuncLit)
@@ -283,14 +273,14 @@ func buildBehaviorSSAPackages(pkgs []*Package) map[*Package]*ssa.Package {
 	return ssaPkgs
 }
 
-func (l *Runner) behaviorSSAFunctions(ssaPkg *ssa.Package) []behaviorSSAFunction {
-	functions := make([]behaviorSSAFunction, 0, len(l.pkg.ProductionFuncs))
-	for _, decl := range l.pkg.ProductionFuncs {
-		if decl.Body == nil || l.behaviorGenerated(decl) {
+func (b behaviorPackage) behaviorSSAFunctions(ssaPkg *ssa.Package) []behaviorSSAFunction {
+	functions := make([]behaviorSSAFunction, 0, len(b.pkg.ProductionFuncs))
+	for _, decl := range b.pkg.ProductionFuncs {
+		if decl.Body == nil || b.behaviorGenerated(decl) {
 			continue
 		}
 
-		obj, ok := l.pkg.TypesInfo.Defs[decl.Name].(*types.Func)
+		obj, ok := b.pkg.TypesInfo.Defs[decl.Name].(*types.Func)
 		if !ok {
 			continue
 		}

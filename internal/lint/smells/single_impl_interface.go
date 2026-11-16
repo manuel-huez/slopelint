@@ -13,7 +13,12 @@ type privateInterfaceDecl struct {
 	obj  *types.TypeName
 }
 
-func (l *Runner) checkSingleImplInterfaces() {
+// singleImplCheck reports private interfaces with one in-package implementation.
+type singleImplCheck struct {
+	ruleEnv
+}
+
+func (l singleImplCheck) check() {
 	interfaces := l.privateInterfaces()
 	if len(interfaces) == 0 {
 		return
@@ -44,21 +49,21 @@ func (l *Runner) checkSingleImplInterfaces() {
 	}
 }
 
-func (l *Runner) privateInterfaces() []privateInterfaceDecl {
+func (l singleImplCheck) privateInterfaces() []privateInterfaceDecl {
 	out := make([]privateInterfaceDecl, 0)
 
-	l.forEachProductionTypeSpec(func(typeSpec *ast.TypeSpec) {
-		if typeSpec.Name == nil || ast.IsExported(typeSpec.Name.Name) {
-			return
+	for _, typeSpec := range l.pkg.ProductionTypes {
+		if ast.IsExported(typeSpec.Name.Name) {
+			continue
 		}
 
 		if _, ok := typeSpec.Type.(*ast.InterfaceType); !ok {
-			return
+			continue
 		}
 
 		obj, ok := l.pkg.TypesInfo.Defs[typeSpec.Name].(*types.TypeName)
-		if !ok || obj == nil {
-			return
+		if !ok {
+			continue
 		}
 
 		out = append(out, privateInterfaceDecl{
@@ -66,13 +71,13 @@ func (l *Runner) privateInterfaces() []privateInterfaceDecl {
 			pos:  typeSpec.Name.Pos(),
 			obj:  obj,
 		})
-	})
+	}
 
 	return out
 }
 
 func interfaceEligibleForSingleImpl(iface *types.Interface) bool {
-	if iface == nil || iface.NumEmbeddeds() != 0 || iface.NumMethods() == 0 {
+	if iface.NumEmbeddeds() != 0 || iface.NumMethods() == 0 {
 		return false
 	}
 
@@ -88,7 +93,7 @@ func interfaceEligibleForSingleImpl(iface *types.Interface) bool {
 	return hasPackagePrivateMethod
 }
 
-func (l *Runner) namedConcreteTypes() []*types.Named {
+func (l singleImplCheck) namedConcreteTypes() []*types.Named {
 	out := make([]*types.Named, 0)
 
 	for _, file := range l.pkg.Files {
@@ -100,12 +105,12 @@ func (l *Runner) namedConcreteTypes() []*types.Named {
 
 			for _, spec := range gen.Specs {
 				typeSpec, ok := spec.(*ast.TypeSpec)
-				if !ok || typeSpec.Name == nil {
+				if !ok {
 					continue
 				}
 
 				obj, ok := l.pkg.TypesInfo.Defs[typeSpec.Name].(*types.TypeName)
-				if !ok || obj == nil {
+				if !ok {
 					continue
 				}
 

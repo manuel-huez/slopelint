@@ -1,13 +1,13 @@
 {
   "schema": 12,
-  "source_digest": "dbf36cee2e85ce32b6811e16d83518bf902d05b8c556944026e5b9cdf1a68854",
-  "repository_digest": "90f66d0223d3d1ed8f58ff4e04d0527b6466e7edbfd946db761f9edd9f38246f",
+  "source_digest": "a204f9c0ee33b49bd1f55157a0864bdeaef0b6118b56efc136263b1de1d94380",
+  "repository_digest": "969755a550ed5424d46a1b6851819bce028f9b1b4a44be4d6ea253e53efb822c",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "96307667c1d2d96d9a755ec63c695d53b5e90f081cb40d1ed013ba12baf3a277",
+  "description_digest": "e2da7785185b48a71876a77d3c2232dc3686ff19dc045b747d01c37ba481a5a8",
   "review": {
     "schema": 5,
     "model": "gpt-6.1-terra",

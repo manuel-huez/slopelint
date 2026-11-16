@@ -13,7 +13,8 @@ import (
 func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
-	mature := now.Add(-2 * cacheConcurrentWriteGrace)
+	mature := now.Add(-2 * time.Hour)
+	staleUnknown := now.Add(-2 * cacheUnknownRetention)
 	expired := now.Add(-2 * cacheUnusedRetention)
 
 	obsoleteAnalysis := filepath.Join(
@@ -65,9 +66,9 @@ func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 		currentAnalysis:    mature,
 		expiredSnapshot:    expired,
 		currentSnapshot:    mature,
-		legacySnapshot:     mature,
-		legacyManifest:     mature,
-		recentUnknown:      now,
+		legacySnapshot:     staleUnknown,
+		legacyManifest:     staleUnknown,
+		recentUnknown:      mature,
 		expiredVector:      expired,
 		expiredDescription: expired,
 		expiredReview:      expired,

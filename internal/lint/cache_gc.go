@@ -12,22 +12,24 @@ import (
 )
 
 const (
-	cachePruneInterval        = 24 * time.Hour
-	cacheUnusedRetention      = 30 * 24 * time.Hour
-	cacheConcurrentWriteGrace = time.Hour
-	cachePruneLockStaleAfter  = time.Hour
-	cachePruneMarkerName      = ".last-prune"
-	cachePruneLockName        = ".prune-lock"
+	cachePruneInterval   = 24 * time.Hour
+	cacheUnusedRetention = 30 * 24 * time.Hour
+	// Unknown files may belong to a newer slopelint sharing this cache during an
+	// upgrade, or to a concurrent writer; keep them long enough for both.
+	cacheUnknownRetention    = 7 * 24 * time.Hour
+	cachePruneLockStaleAfter = time.Hour
+	cachePruneMarkerName     = ".last-prune"
+	cachePruneLockName       = ".prune-lock"
 )
 
 type cachePrunePolicy struct {
-	unusedRetention time.Duration
-	writeGrace      time.Duration
+	unusedRetention  time.Duration
+	unknownRetention time.Duration
 }
 
 var defaultCachePrunePolicy = cachePrunePolicy{
-	unusedRetention: cacheUnusedRetention,
-	writeGrace:      cacheConcurrentWriteGrace,
+	unusedRetention:  cacheUnusedRetention,
+	unknownRetention: cacheUnknownRetention,
 }
 
 type cachePruneEntryKind uint8
@@ -267,16 +269,17 @@ func pruneUnusedCacheEntries(
 	now time.Time,
 	policy cachePrunePolicy,
 ) {
-	oldest := now.Add(-policy.unusedRetention)
-	recent := now.Add(-policy.writeGrace)
-
 	for _, entry := range entries {
-		if entry.modified.After(recent) ||
-			entry.kind == cachePruneVector || entry.kind == cachePruneCodexRecord {
+		if entry.kind == cachePruneVector || entry.kind == cachePruneCodexRecord {
 			continue
 		}
 
-		if entry.kind == cachePruneUnknown || entry.modified.Before(oldest) {
+		retention := policy.unusedRetention
+		if entry.kind == cachePruneUnknown {
+			retention = policy.unknownRetention
+		}
+
+		if entry.modified.Before(now.Add(-retention)) {
 			_ = os.Remove(entry.path)
 		}
 	}

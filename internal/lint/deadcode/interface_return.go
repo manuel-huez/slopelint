@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-func (graph deadCodeGraph) assignInterfaceMethodUses(
+func assignInterfaceMethodUses(
 	l *packageLinter,
 	assign *ast.AssignStmt,
 ) map[string]struct{} {
@@ -21,7 +21,7 @@ func (graph deadCodeGraph) assignInterfaceMethodUses(
 			targets = append(targets, l.pkg.TypesInfo.TypeOf(lhs))
 		}
 
-		graph.addInterfaceMethodsForValueTargets(l, out, assign.Rhs[0], targets)
+		addInterfaceMethodsForValueTargets(l, out, assign.Rhs[0], targets)
 
 		return out
 	}
@@ -31,13 +31,13 @@ func (graph deadCodeGraph) assignInterfaceMethodUses(
 			continue
 		}
 
-		graph.addInterfaceMethodsForValue(l, out, rhs, l.pkg.TypesInfo.TypeOf(assign.Lhs[index]))
+		addInterfaceMethodsForValue(l, out, rhs, l.pkg.TypesInfo.TypeOf(assign.Lhs[index]))
 	}
 
 	return out
 }
 
-func (graph deadCodeGraph) funcDeclReturnInterfaceMethodUses(
+func funcDeclReturnInterfaceMethodUses(
 	l *packageLinter,
 	fn *ast.FuncDecl,
 ) map[string]struct{} {
@@ -59,10 +59,10 @@ func (graph deadCodeGraph) funcDeclReturnInterfaceMethodUses(
 		return nil
 	}
 
-	return graph.returnInterfaceMethodUses(l, fn.Body, sig)
+	return returnInterfaceMethodUses(l, fn.Body, sig)
 }
 
-func (graph deadCodeGraph) funcLitReturnInterfaceMethodUses(
+func funcLitReturnInterfaceMethodUses(
 	l *packageLinter,
 	lit *ast.FuncLit,
 ) map[string]struct{} {
@@ -75,10 +75,10 @@ func (graph deadCodeGraph) funcLitReturnInterfaceMethodUses(
 		return nil
 	}
 
-	return graph.returnInterfaceMethodUses(l, lit.Body, sig)
+	return returnInterfaceMethodUses(l, lit.Body, sig)
 }
 
-func (graph deadCodeGraph) returnInterfaceMethodUses(
+func returnInterfaceMethodUses(
 	l *packageLinter,
 	body *ast.BlockStmt,
 	sig *types.Signature,
@@ -101,7 +101,7 @@ func (graph deadCodeGraph) returnInterfaceMethodUses(
 					continue
 				}
 
-				graph.addInterfaceMethodsForValue(l, out, result, targets[index])
+				addInterfaceMethodsForValue(l, out, result, targets[index])
 			}
 		}
 

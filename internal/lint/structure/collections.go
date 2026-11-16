@@ -9,164 +9,141 @@ import (
 
 const builtinLenName = "len"
 
-func (l *Runner) checkRedundantAppendLenGuard(stmt ast.Stmt) {
-	match, ok := l.redundantAppendLenGuard(stmt)
+type rangeGuard struct {
+	source string
+	hasLen bool
+	hasNil bool
+}
+
+// guardShape says how a guard condition proves a collection empty or
+// non-empty: the operator joining its parts, the len comparison it accepts,
+// and the nil comparison operator.
+type guardShape struct {
+	mergeOp   token.Token
+	provesLen func(token.Token, int64) bool
+	nilOp     token.Token
+}
+
+var (
+	nonEmptyGuard = guardShape{token.LAND, lenCompareProvesNonEmpty, token.NEQ}
+	emptyGuard    = guardShape{token.LOR, lenCompareProvesEmpty, token.EQL}
+)
+
+type collectionRules struct {
+	q *pkgQuery
+}
+
+func (r collectionRules) appendLenGuard(stmt ast.Stmt) (Finding, bool) {
+	ifStmt, ok := r.q.plainIfStmt(stmt)
 	if !ok {
-		return
+		return Finding{}, false
 	}
 
-	l.report(
-		match.pos,
-		"append_ceremony",
-		fmt.Sprintf(
+	source, ok := r.lenGuardSource(ifStmt.Cond, lenCompareProvesNonEmpty)
+	if !ok || len(ifStmt.Body.List) != 1 {
+		return Finding{}, false
+	}
+
+	assign, ok := ifStmt.Body.List[0].(*ast.AssignStmt)
+	if !ok || !r.assignAppendsGuardedSlice(assign, source) {
+		return Finding{}, false
+	}
+
+	return Finding{
+		Pos:  ifStmt.If,
+		Kind: "append_ceremony",
+		Message: fmt.Sprintf(
 			`len guard before append(%s...) is redundant; append no-ops for empty variadic slices`,
-			match.source,
+			source,
 		),
-	)
+	}, true
 }
 
-func (l *Runner) redundantAppendLenGuard(stmt ast.Stmt) (appendLenGuardMatch, bool) {
-	ifStmt, ok := l.plainIfStmt(stmt)
+func (r collectionRules) rangeGuard(stmt ast.Stmt) (Finding, bool) {
+	ifStmt, ok := r.q.plainIfStmt(stmt)
 	if !ok {
-		return appendLenGuardMatch{}, false
-	}
-
-	source, ok := l.lenGuardSource(ifStmt.Cond, lenCompareProvesNonEmpty)
-	if !ok {
-		return appendLenGuardMatch{}, false
-	}
-
-	assign, ok := singleAssignStmt(ifStmt.Body.List)
-	if !ok || !l.assignAppendsGuardedSlice(assign, source) {
-		return appendLenGuardMatch{}, false
-	}
-
-	return appendLenGuardMatch{pos: ifStmt.If, source: source}, true
-}
-
-func (l *Runner) checkRedundantRangeGuard(stmt ast.Stmt) {
-	match, ok := l.redundantRangeGuard(stmt)
-	if !ok {
-		return
-	}
-
-	l.report(
-		match.pos,
-		"range_ceremony",
-		fmt.Sprintf(
-			`%s guard before range over %s is redundant; range has no iterations when guarded value is empty`,
-			match.guard,
-			match.source,
-		),
-	)
-}
-
-func (l *Runner) redundantRangeGuard(stmt ast.Stmt) (rangeGuardMatch, bool) {
-	ifStmt, ok := l.plainIfStmt(stmt)
-	if !ok {
-		return rangeGuardMatch{}, false
+		return Finding{}, false
 	}
 
 	loop, ok := singleRangeStmt(ifStmt.Body.List)
 	if !ok {
-		return rangeGuardMatch{}, false
+		return Finding{}, false
 	}
 
-	sourceExpr := ast.Unparen(loop.X)
-	if !l.isCheapTempAliasExpr(sourceExpr) {
-		return rangeGuardMatch{}, false
+	guard, ok := r.guardBeforeRange(ifStmt, loop, nonEmptyGuard)
+	if !ok {
+		return Finding{}, false
 	}
 
-	guard, ok := l.rangeGuardSource(ifStmt.Cond)
-	if !ok ||
-		guard.source != l.render(sourceExpr) ||
-		!l.rangeGuardSafeForExpr(guard, loop.X) {
-		return rangeGuardMatch{}, false
-	}
-
-	return rangeGuardMatch{
-		pos:    ifStmt.If,
-		source: guard.source,
-		guard:  guard.label(),
+	return Finding{
+		Pos:  ifStmt.If,
+		Kind: "range_ceremony",
+		Message: fmt.Sprintf(
+			`%s guard before range over %s is redundant; range has no iterations when guarded value is empty`,
+			guard.label(),
+			guard.source,
+		),
 	}, true
 }
 
-func (l *Runner) checkEmptyRangeReturnGuard(stmts []ast.Stmt, idx int, ctx blockContext) {
-	match, ok := l.emptyRangeReturnGuard(stmts, idx, ctx)
-	if !ok {
-		return
-	}
-
-	l.report(
-		match.pos,
-		"range_ceremony",
-		fmt.Sprintf(
-			`%s return guard before final range over %s is redundant; empty range already ends function`,
-			match.guard,
-			match.source,
-		),
-	)
-}
-
-func (l *Runner) emptyRangeReturnGuard(
+func (r collectionRules) emptyRangeReturnGuard(
 	stmts []ast.Stmt,
 	idx int,
 	ctx blockContext,
-) (emptyRangeGuardMatch, bool) {
+) (Finding, bool) {
 	if !ctx.functionBody || ctx.functionHasResults || idx+1 != len(stmts)-1 {
-		return emptyRangeGuardMatch{}, false
+		return Finding{}, false
 	}
 
-	ifStmt, ok := l.plainIfStmt(stmts[idx])
+	ifStmt, ok := r.q.plainIfStmt(stmts[idx])
 	if !ok || !singleNakedReturn(ifStmt.Body.List) {
-		return emptyRangeGuardMatch{}, false
+		return Finding{}, false
 	}
 
-	loop, ok := singleRangeStmt(stmts[idx+1 : idx+2])
+	loop, ok := singleRangeStmt(stmts[idx+1:])
 	if !ok {
-		return emptyRangeGuardMatch{}, false
+		return Finding{}, false
 	}
 
-	sourceExpr := ast.Unparen(loop.X)
-	if !l.isCheapTempAliasExpr(sourceExpr) {
-		return emptyRangeGuardMatch{}, false
+	guard, ok := r.guardBeforeRange(ifStmt, loop, emptyGuard)
+	if !ok {
+		return Finding{}, false
 	}
 
-	guard, ok := l.emptyRangeGuardSource(ifStmt.Cond)
-	if !ok ||
-		guard.source != l.render(sourceExpr) ||
-		!l.rangeGuardSafeForExpr(guard, loop.X) {
-		return emptyRangeGuardMatch{}, false
-	}
-
-	return emptyRangeGuardMatch{
-		pos:    ifStmt.If,
-		source: guard.source,
-		guard:  guard.label(),
+	return Finding{
+		Pos:  ifStmt.If,
+		Kind: "range_ceremony",
+		Message: fmt.Sprintf(
+			`%s return guard before final range over %s is redundant; empty range already ends function`,
+			guard.label(),
+			guard.source,
+		),
 	}, true
 }
 
-func (l *Runner) plainIfStmt(stmt ast.Stmt) (*ast.IfStmt, bool) {
-	ifStmt, ok := stmt.(*ast.IfStmt)
-	if !ok {
-		return nil, false
+// guardBeforeRange matches an if condition that only tests whether the range
+// source is empty, so the range alone gives the same behavior.
+func (r collectionRules) guardBeforeRange(
+	ifStmt *ast.IfStmt,
+	loop *ast.RangeStmt,
+	shape guardShape,
+) (rangeGuard, bool) {
+	info := r.q.pkg.TypesInfo
+
+	sourceExpr := ast.Unparen(loop.X)
+	if !isCheapTempAliasExpr(info, sourceExpr) {
+		return rangeGuard{}, false
 	}
 
-	if ifStmt.Init != nil || ifStmt.Else != nil || l.hasAttachedComment(ifStmt) {
-		return nil, false
+	guard, ok := r.collectionGuardSource(ifStmt.Cond, shape)
+	if !ok ||
+		guard.source != r.q.render(sourceExpr) ||
+		guard.hasLen && !rangeNoopsWhenEmpty(info, loop.X) ||
+		guard.hasNil && !rangeNoopsWhenNil(info, loop.X) {
+		return rangeGuard{}, false
 	}
 
-	return ifStmt, true
-}
-
-func singleAssignStmt(stmts []ast.Stmt) (*ast.AssignStmt, bool) {
-	if len(stmts) != 1 {
-		return nil, false
-	}
-
-	assign, ok := stmts[0].(*ast.AssignStmt)
-
-	return assign, ok
+	return guard, true
 }
 
 func singleRangeStmt(stmts []ast.Stmt) (*ast.RangeStmt, bool) {
@@ -175,11 +152,8 @@ func singleRangeStmt(stmts []ast.Stmt) (*ast.RangeStmt, bool) {
 	}
 
 	loop, ok := stmts[0].(*ast.RangeStmt)
-	if !ok || loop.Body == nil {
-		return nil, false
-	}
 
-	return loop, true
+	return loop, ok
 }
 
 func singleNakedReturn(stmts []ast.Stmt) bool {
@@ -192,9 +166,15 @@ func singleNakedReturn(stmts []ast.Stmt) bool {
 	return ok && len(ret.Results) == 0
 }
 
-func (l *Runner) assignAppendsGuardedSlice(assign *ast.AssignStmt, source string) bool {
-	call, ok := l.appendAssignCall(assign)
-	if !ok {
+// assignAppendsGuardedSlice matches `x = append(x, source...)`.
+func (r collectionRules) assignAppendsGuardedSlice(assign *ast.AssignStmt, source string) bool {
+	if assign.Tok != token.ASSIGN || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+		return false
+	}
+
+	call, ok := ast.Unparen(assign.Rhs[0]).(*ast.CallExpr)
+	if !ok || call.Ellipsis == token.NoPos || len(call.Args) != 2 ||
+		builtinName(r.q.pkg.TypesInfo, call) != "append" {
 		return false
 	}
 
@@ -202,27 +182,11 @@ func (l *Runner) assignAppendsGuardedSlice(assign *ast.AssignStmt, source string
 		return false
 	}
 
-	return l.render(assign.Lhs[0]) == l.render(call.Args[0]) && l.render(call.Args[1]) == source
+	return r.q.render(assign.Lhs[0]) == r.q.render(call.Args[0]) &&
+		r.q.render(call.Args[1]) == source
 }
 
-func (l *Runner) appendAssignCall(assign *ast.AssignStmt) (*ast.CallExpr, bool) {
-	if assign.Tok != token.ASSIGN || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
-		return nil, false
-	}
-
-	call, ok := ast.Unparen(assign.Rhs[0]).(*ast.CallExpr)
-	if !ok {
-		return nil, false
-	}
-
-	if call.Ellipsis == token.NoPos || len(call.Args) != 2 || !l.isBuiltinCall(call, "append") {
-		return nil, false
-	}
-
-	return call, true
-}
-
-func (l *Runner) lenGuardSource(
+func (r collectionRules) lenGuardSource(
 	expr ast.Expr,
 	proves func(token.Token, int64) bool,
 ) (string, bool) {
@@ -231,36 +195,34 @@ func (l *Runner) lenGuardSource(
 		return "", false
 	}
 
-	if source, limit, ok := l.lenCompareOperand(binary.X, binary.Y); ok {
+	if source, limit, ok := r.lenCompareOperand(binary.X, binary.Y); ok {
 		return source, proves(binary.Op, limit)
 	}
 
-	if source, limit, ok := l.lenCompareOperand(binary.Y, binary.X); ok {
+	if source, limit, ok := r.lenCompareOperand(binary.Y, binary.X); ok {
 		return source, proves(reverseOrderedOp(binary.Op), limit)
 	}
 
 	return "", false
 }
 
-func (l *Runner) lenCompareOperand(lenExpr ast.Expr, limitExpr ast.Expr) (string, int64, bool) {
+func (r collectionRules) lenCompareOperand(
+	lenExpr ast.Expr,
+	limitExpr ast.Expr,
+) (string, int64, bool) {
+	info := r.q.pkg.TypesInfo
+
 	call, ok := ast.Unparen(lenExpr).(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 || !l.isBuiltinCall(call, builtinLenName) {
+	if !ok || len(call.Args) != 1 || builtinName(info, call) != builtinLenName {
 		return "", 0, false
 	}
 
-	limitScalar, ok := l.scalarOf(limitExpr)
-	if !ok || limitScalar.kind != scalarInt {
-		return "", 0, false
-	}
-
-	limit, ok := scalarIntValue(limitScalar)
+	limit, ok := constInt(info, limitExpr)
 	if !ok {
 		return "", 0, false
 	}
 
-	source := ast.Unparen(call.Args[0])
-
-	return l.render(source), limit, true
+	return r.q.render(ast.Unparen(call.Args[0])), limit, true
 }
 
 func lenCompareProvesNonEmpty(op token.Token, limit int64) bool {
@@ -278,10 +240,6 @@ func lenCompareProvesNonEmpty(op token.Token, limit int64) bool {
 	}
 }
 
-func (l *Runner) emptyRangeGuardSource(expr ast.Expr) (rangeGuard, bool) {
-	return l.collectionGuardSource(expr, token.LOR, lenCompareProvesEmpty, token.EQL)
-}
-
 func lenCompareProvesEmpty(op token.Token, limit int64) bool {
 	// token.Token includes operators irrelevant to len guards.
 	//exhaustive:ignore
@@ -295,33 +253,27 @@ func lenCompareProvesEmpty(op token.Token, limit int64) bool {
 	}
 }
 
-func (l *Runner) isBuiltinCall(call *ast.CallExpr, name string) bool {
+// builtinName returns the builtin a call targets, or "" for other calls.
+func builtinName(info *types.Info, call *ast.CallExpr) string {
 	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
-	if !ok || id.Name != name {
-		return false
+	if !ok {
+		return ""
 	}
 
-	obj, ok := l.pkg.TypesInfo.ObjectOf(id).(*types.Builtin)
+	if builtin, ok := info.ObjectOf(id).(*types.Builtin); ok {
+		return builtin.Name()
+	}
 
-	return ok && obj != nil && obj.Name() == name
+	return ""
 }
 
-func (l *Runner) rangeGuardSource(expr ast.Expr) (rangeGuard, bool) {
-	return l.collectionGuardSource(expr, token.LAND, lenCompareProvesNonEmpty, token.NEQ)
-}
-
-func (l *Runner) collectionGuardSource(
-	expr ast.Expr,
-	mergeOp token.Token,
-	lenCheck func(token.Token, int64) bool,
-	nilOp token.Token,
-) (rangeGuard, bool) {
+func (r collectionRules) collectionGuardSource(expr ast.Expr, shape guardShape) (rangeGuard, bool) {
 	expr = ast.Unparen(expr)
 
-	if binary, ok := expr.(*ast.BinaryExpr); ok && binary.Op == mergeOp {
-		left, leftOK := l.collectionGuardSource(binary.X, mergeOp, lenCheck, nilOp)
+	if binary, ok := expr.(*ast.BinaryExpr); ok && binary.Op == shape.mergeOp {
+		left, leftOK := r.collectionGuardSource(binary.X, shape)
 
-		right, rightOK := l.collectionGuardSource(binary.Y, mergeOp, lenCheck, nilOp)
+		right, rightOK := r.collectionGuardSource(binary.Y, shape)
 		if !leftOK || !rightOK || left.source != right.source {
 			return rangeGuard{}, false
 		}
@@ -333,47 +285,35 @@ func (l *Runner) collectionGuardSource(
 		}, true
 	}
 
-	if source, ok := l.lenGuardSource(expr, lenCheck); ok {
-		return rangeGuard{
-			source: source,
-			hasLen: true,
-		}, true
+	if source, ok := r.lenGuardSource(expr, shape.provesLen); ok {
+		return rangeGuard{source: source, hasLen: true}, true
 	}
 
-	if source, ok := l.nilComparisonGuardSource(expr, nilOp); ok {
-		return rangeGuard{
-			source: source,
-			hasNil: true,
-		}, true
+	if source, ok := r.nilGuardSource(expr, shape.nilOp); ok {
+		return rangeGuard{source: source, hasNil: true}, true
 	}
 
 	return rangeGuard{}, false
 }
 
-func (l *Runner) nilComparisonGuardSource(expr ast.Expr, op token.Token) (string, bool) {
-	binary, ok := ast.Unparen(expr).(*ast.BinaryExpr)
+// nilGuardSource matches `x op nil` or `nil op x` and returns rendered x.
+func (r collectionRules) nilGuardSource(expr ast.Expr, op token.Token) (string, bool) {
+	binary, ok := expr.(*ast.BinaryExpr)
 	if !ok || binary.Op != op {
 		return "", false
 	}
 
-	if source, ok := l.nilCompareSource(binary.X, binary.Y); ok {
-		return source, true
+	info := r.q.pkg.TypesInfo
+
+	if isNilValue(info, binary.Y) {
+		return r.q.render(ast.Unparen(binary.X)), true
 	}
 
-	if source, ok := l.nilCompareSource(binary.Y, binary.X); ok {
-		return source, true
+	if isNilValue(info, binary.X) {
+		return r.q.render(ast.Unparen(binary.Y)), true
 	}
 
 	return "", false
-}
-
-func (l *Runner) nilCompareSource(sourceExpr ast.Expr, nilExpr ast.Expr) (string, bool) {
-	value, ok := l.scalarOf(nilExpr)
-	if !ok || value.kind != scalarNil {
-		return "", false
-	}
-
-	return l.render(ast.Unparen(sourceExpr)), true
 }
 
 func (guard rangeGuard) label() string {
@@ -389,18 +329,8 @@ func (guard rangeGuard) label() string {
 	}
 }
 
-func (l *Runner) rangeGuardSafeForExpr(guard rangeGuard, expr ast.Expr) bool {
-	return (!guard.hasLen || l.rangeNoopsWhenEmpty(expr)) &&
-		(!guard.hasNil || l.rangeNoopsWhenNil(expr))
-}
-
-func (l *Runner) rangeNoopsWhenEmpty(expr ast.Expr) bool {
-	typ := l.pkg.TypesInfo.TypeOf(expr)
-	if typ == nil {
-		return false
-	}
-
-	switch typ := types.Unalias(typ).Underlying().(type) {
+func rangeNoopsWhenEmpty(info *types.Info, expr ast.Expr) bool {
+	switch typ := types.Unalias(info.TypeOf(expr)).Underlying().(type) {
 	case *types.Array, *types.Map, *types.Slice:
 		return true
 	case *types.Basic:
@@ -410,13 +340,8 @@ func (l *Runner) rangeNoopsWhenEmpty(expr ast.Expr) bool {
 	}
 }
 
-func (l *Runner) rangeNoopsWhenNil(expr ast.Expr) bool {
-	typ := l.pkg.TypesInfo.TypeOf(expr)
-	if typ == nil {
-		return false
-	}
-
-	switch types.Unalias(typ).Underlying().(type) {
+func rangeNoopsWhenNil(info *types.Info, expr ast.Expr) bool {
+	switch types.Unalias(info.TypeOf(expr)).Underlying().(type) {
 	case *types.Map, *types.Slice:
 		return true
 	default:

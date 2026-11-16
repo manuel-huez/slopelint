@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"iter"
+	"slices"
 	"strings"
 )
 
@@ -14,14 +16,13 @@ const (
 )
 
 type loopScope struct {
+	info          *types.Info
 	body          *ast.BlockStmt
 	source        ast.Expr
 	value         types.Object
 	loopVars      map[types.Object]struct{}
 	dependentVars map[types.Object]struct{}
 	mutatedVars   map[types.Object]struct{}
-	loopStart     token.Pos
-	loopEnd       token.Pos
 }
 
 type loopBinding struct {
@@ -29,93 +30,85 @@ type loopBinding struct {
 	values  []ast.Expr
 }
 
-func (l *Runner) checkRangeLoopPerformance(loop *ast.RangeStmt) {
-	if loop == nil || loop.Body == nil {
-		return
-	}
-
-	scope := l.loopScope(loop.Body, loop.X, loop.Key, loop.Value)
-	l.checkLoopPerformance(scope)
-	l.checkNestedLookupLoops(scope)
-	l.checkPairwiseComparisonLoops(scope)
+type loopRules struct {
+	q *pkgQuery
 }
 
-func (l *Runner) checkForLoopPerformance(loop *ast.ForStmt) {
-	if loop == nil || loop.Body == nil {
-		return
-	}
+func (r loopRules) rangeLoop(loop *ast.RangeStmt) []Finding {
+	scope := newLoopScope(r.q.pkg.TypesInfo, loop.Body, loop.X, loop.Key, loop.Value)
+	out := r.loopCalls(scope)
+	out = append(out, r.nestedLookupLoops(scope)...)
 
-	scope := l.loopScope(loop.Body, nil, l.loopDefinedObjects(loop.Init)...)
-	l.checkLoopPerformance(scope)
+	return append(out, r.pairwiseComparisonLoops(scope)...)
 }
 
-func (l *Runner) loopScope(body *ast.BlockStmt, source ast.Expr, vars ...ast.Expr) loopScope {
-	objects := make(map[types.Object]struct{})
+func (r loopRules) forLoop(loop *ast.ForStmt) []Finding {
+	var vars []ast.Expr
+	if assign, ok := loop.Init.(*ast.AssignStmt); ok && assign.Tok == token.DEFINE {
+		vars = assign.Lhs
+	}
+
+	return r.loopCalls(newLoopScope(r.q.pkg.TypesInfo, loop.Body, nil, vars...))
+}
+
+func newLoopScope(
+	info *types.Info,
+	body *ast.BlockStmt,
+	source ast.Expr,
+	vars ...ast.Expr,
+) loopScope {
+	scope := loopScope{
+		info:          info,
+		body:          body,
+		source:        source,
+		loopVars:      make(map[types.Object]struct{}),
+		dependentVars: make(map[types.Object]struct{}),
+		mutatedVars:   make(map[types.Object]struct{}),
+	}
 
 	for _, expr := range vars {
-		if obj := l.objectForLoopVar(expr); obj != nil {
-			objects[obj] = struct{}{}
+		if obj := objectForLoopVar(info, expr); obj != nil {
+			scope.loopVars[obj] = struct{}{}
 		}
 	}
 
-	scope := loopScope{
-		body:          body,
-		source:        source,
-		value:         l.objectForLoopVar(lastExpr(vars)),
-		loopVars:      objects,
-		dependentVars: make(map[types.Object]struct{}),
-		mutatedVars:   make(map[types.Object]struct{}),
-		loopStart:     body.Lbrace,
-		loopEnd:       body.Rbrace,
+	if len(vars) != 0 {
+		scope.value = objectForLoopVar(info, vars[len(vars)-1])
 	}
 
-	l.collectLoopObjectFacts(&scope)
+	// Loop-local aliases can hide per-iteration inputs; propagate simple assignment deps.
+	bindings := currentLoopBindings(body)
+	scope.addMutatedObjects(bindings)
+	scope.addCallMutatedObjects()
+	scope.addDependentObjects(bindings)
 
 	return scope
 }
 
-func lastExpr(exprs []ast.Expr) ast.Expr {
-	if len(exprs) == 0 {
-		return nil
-	}
-
-	return exprs[len(exprs)-1]
-}
-
-func (l *Runner) loopDefinedObjects(stmt ast.Stmt) []ast.Expr {
-	assign, ok := stmt.(*ast.AssignStmt)
-	if !ok || assign.Tok != token.DEFINE {
-		return nil
-	}
-
-	out := make([]ast.Expr, 0, len(assign.Lhs))
-	out = append(out, assign.Lhs...)
-
-	return out
-}
-
-func (l *Runner) objectForLoopVar(expr ast.Expr) types.Object {
+func objectForLoopVar(info *types.Info, expr ast.Expr) types.Object {
 	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok || ident.Name == "_" {
 		return nil
 	}
 
-	return l.pkg.TypesInfo.ObjectOf(ident)
+	return info.ObjectOf(ident)
 }
 
-func (l *Runner) objectForMutationRoot(expr ast.Expr) types.Object {
+// objectForMutationRoot returns the variable a write through expr changes,
+// such as x for x.f[i] or *x.
+func objectForMutationRoot(info *types.Info, expr ast.Expr) types.Object {
 	switch expr := ast.Unparen(expr).(type) {
 	case *ast.Ident:
-		return l.objectForLoopVar(expr)
+		return objectForLoopVar(info, expr)
 	case *ast.IndexExpr:
-		return l.objectForMutationRoot(expr.X)
+		return objectForMutationRoot(info, expr.X)
 	case *ast.SelectorExpr:
-		return l.objectForMutationRoot(expr.X)
+		return objectForMutationRoot(info, expr.X)
 	case *ast.StarExpr:
-		return l.objectForMutationRoot(expr.X)
+		return objectForMutationRoot(info, expr.X)
 	case *ast.UnaryExpr:
 		if expr.Op == token.AND {
-			return l.objectForMutationRoot(expr.X)
+			return objectForMutationRoot(info, expr.X)
 		}
 
 		return nil
@@ -124,50 +117,77 @@ func (l *Runner) objectForMutationRoot(expr ast.Expr) types.Object {
 	}
 }
 
-func (l *Runner) checkLoopPerformance(scope loopScope) {
-	if scope.body == nil {
-		return
-	}
+func (r loopRules) loopCalls(scope loopScope) []Finding {
+	var out []Finding
 
-	l.inspectCurrentLoop(scope.body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+	inspectCurrentLoop(scope.body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			out = r.appendLoopCallFindings(out, scope, call)
 		}
-
-		l.checkLoopMembershipScan(scope, call)
-		l.checkLoopSort(scope, call)
-		l.checkLoopExternalCall(scope, call)
-		l.checkLoopInvariantCall(scope, call)
 
 		return true
 	})
+
+	return out
 }
 
-func (l *Runner) checkLoopMembershipScan(scope loopScope, call *ast.CallExpr) {
-	collection, helper, ok := l.membershipScanCall(call)
-	if !ok || !l.invariantLoopExpr(scope, collection) {
-		return
+func (r loopRules) appendLoopCallFindings(
+	out []Finding,
+	scope loopScope,
+	call *ast.CallExpr,
+) []Finding {
+	info := scope.info
+
+	if collection, helper, ok := membershipScanCall(info, call); ok && scope.invariant(collection) {
+		out = append(out, Finding{
+			Pos:  call.Pos(),
+			Kind: "loop_membership_scan",
+			Message: fmt.Sprintf(
+				`%s scans invariant collection %s inside loop; build a set before the loop`,
+				helper,
+				r.q.render(collection),
+			),
+		})
 	}
 
-	l.report(
-		call.Pos(),
-		"loop_membership_scan",
-		fmt.Sprintf(
-			`%s scans invariant collection %s inside loop; build a set before the loop`,
-			helper,
-			l.render(collection),
-		),
-	)
+	if target, helper, ok := sortCallTarget(info, call); ok &&
+		scope.invariant(target) && !scope.usesDependent(call) {
+		out = append(out, Finding{
+			Pos:  call.Pos(),
+			Kind: "loop_sort",
+			Message: fmt.Sprintf(
+				`%s orders %s inside loop; sort once outside or maintain order incrementally`,
+				helper,
+				r.q.render(target),
+			),
+		})
+	}
+
+	if kind, ok := externalCallKind(info, call); ok && scope.usesDependent(call) &&
+		!strings.HasSuffix(r.q.pkg.FSet.Position(call.Pos()).Filename, "_test.go") {
+		out = append(out, Finding{
+			Pos:  call.Pos(),
+			Kind: "loop_external_call",
+			Message: kind + " " + r.q.render(
+				call.Fun,
+			) + ` inside loop can become N+1 work; batch fetch or move request outside loop`,
+		})
+	}
+
+	if label, ok := invariantWorkCallLabel(info, call); ok && scope.invariant(call) {
+		out = append(out, Finding{
+			Pos:     call.Pos(),
+			Kind:    "loop_invariant_work",
+			Message: label + ` is recomputed inside loop without loop inputs; compute it before the loop`,
+		})
+	}
+
+	return out
 }
 
-func (l *Runner) membershipScanCall(call *ast.CallExpr) (ast.Expr, string, bool) {
-	name, pkgPath, ok := l.callPackageFunc(call)
-	if !ok || pkgPath != "slices" {
-		return nil, "", false
-	}
-
-	if len(call.Args) < membershipScanMinArgs {
+func membershipScanCall(info *types.Info, call *ast.CallExpr) (ast.Expr, string, bool) {
+	name, pkgPath, ok := callPackageFunc(info, call)
+	if !ok || pkgPath != "slices" || len(call.Args) < membershipScanMinArgs {
 		return nil, "", false
 	}
 
@@ -179,27 +199,8 @@ func (l *Runner) membershipScanCall(call *ast.CallExpr) (ast.Expr, string, bool)
 	}
 }
 
-func (l *Runner) checkLoopSort(scope loopScope, call *ast.CallExpr) {
-	target, helper, ok := l.sortCallTarget(call)
-	if !ok ||
-		!l.invariantLoopExpr(scope, target) ||
-		l.nodeUsesLoopDependentObjects(scope, call) {
-		return
-	}
-
-	l.report(
-		call.Pos(),
-		"loop_sort",
-		fmt.Sprintf(
-			`%s orders %s inside loop; sort once outside or maintain order incrementally`,
-			helper,
-			l.render(target),
-		),
-	)
-}
-
-func (l *Runner) sortCallTarget(call *ast.CallExpr) (ast.Expr, string, bool) {
-	name, pkgPath, ok := l.callPackageFunc(call)
+func sortCallTarget(info *types.Info, call *ast.CallExpr) (ast.Expr, string, bool) {
+	name, pkgPath, ok := callPackageFunc(info, call)
 	if !ok || len(call.Args) == 0 {
 		return nil, "", false
 	}
@@ -221,72 +222,36 @@ func (l *Runner) sortCallTarget(call *ast.CallExpr) (ast.Expr, string, bool) {
 	return nil, "", false
 }
 
-func (l *Runner) checkLoopExternalCall(scope loopScope, call *ast.CallExpr) {
-	label, ok := l.externalCallLabel(call)
-	if !ok || !l.nodeUsesLoopDependentObjects(scope, call) {
-		return
-	}
-
-	if l.nodeInTestFile(call) {
-		return
-	}
-
-	l.report(
-		call.Pos(),
-		"loop_external_call",
-		label+` inside loop can become N+1 work; batch fetch or move request outside loop`,
-	)
-}
-
-func (l *Runner) externalCallLabel(call *ast.CallExpr) (string, bool) {
-	name, pkgPath, ok := l.callPackageFunc(call)
+// externalCallKind names calls that leave the process, such as network or
+// database requests.
+func externalCallKind(info *types.Info, call *ast.CallExpr) (string, bool) {
+	name, pkgPath, ok := callPackageFunc(info, call)
 	if !ok {
 		return "", false
 	}
 
 	if pkgPath == "net/http" {
 		// Package and method name alone also match in-memory reads such as Header.Get.
-		switch l.funcObject(call.Fun).FullName() {
+		switch funcObject(info, call.Fun).FullName() {
 		case "net/http.Get", "net/http.Head", "net/http.Post", "net/http.PostForm",
 			"(*net/http.Client).Do", "(*net/http.Client).Get", "(*net/http.Client).Head",
 			"(*net/http.Client).Post", "(*net/http.Client).PostForm":
-			return "network call " + l.render(call.Fun), true
+			return "network call", true
 		}
 	}
 
 	if pkgPath == "database/sql" {
 		switch name {
 		case "Exec", "ExecContext", "Query", "QueryContext", "QueryRow", "QueryRowContext":
-			return "database call " + l.render(call.Fun), true
+			return "database call", true
 		}
 	}
 
 	return "", false
 }
 
-func (l *Runner) nodeInTestFile(node ast.Node) bool {
-	if node == nil || l.pkg.FSet == nil {
-		return false
-	}
-
-	return strings.HasSuffix(l.pkg.FSet.Position(node.Pos()).Filename, "_test.go")
-}
-
-func (l *Runner) checkLoopInvariantCall(scope loopScope, call *ast.CallExpr) {
-	label, ok := l.invariantWorkCallLabel(call)
-	if !ok || !l.invariantLoopExpr(scope, call) {
-		return
-	}
-
-	l.report(
-		call.Pos(),
-		"loop_invariant_work",
-		label+` is recomputed inside loop without loop inputs; compute it before the loop`,
-	)
-}
-
-func (l *Runner) invariantWorkCallLabel(call *ast.CallExpr) (string, bool) {
-	name, pkgPath, ok := l.callPackageFunc(call)
+func invariantWorkCallLabel(info *types.Info, call *ast.CallExpr) (string, bool) {
+	name, pkgPath, ok := callPackageFunc(info, call)
 	if !ok {
 		return "", false
 	}
@@ -312,115 +277,114 @@ func (l *Runner) invariantWorkCallLabel(call *ast.CallExpr) (string, bool) {
 	return "", false
 }
 
-func (l *Runner) checkNestedLookupLoops(scope loopScope) {
-	outerValue := l.singleLoopValueObject(scope)
-	if outerValue == nil {
-		return
-	}
+func (r loopRules) nestedLookupLoops(scope loopScope) []Finding {
+	var out []Finding
 
-	l.forEachInnerRangeValue(scope, func(inner *ast.RangeStmt, innerValue types.Object) {
-		if len(inner.Body.List) > lookupLoopMaxBodyStmts {
-			return
+	for inner, innerValue := range scope.innerRanges() {
+		if len(inner.Body.List) > lookupLoopMaxBodyStmts ||
+			r.sameRenderedExpr(scope.source, inner.X) || !scope.invariant(inner.X) ||
+			!lookupLoopHasMatchBreak(scope.info, inner.Body, scope.value, innerValue) {
+			continue
 		}
 
-		if l.sameRenderedExpr(scope.source, inner.X) || !l.invariantLoopExpr(scope, inner.X) {
-			return
-		}
-
-		if !l.lookupLoopHasMatchBreak(inner.Body, outerValue, innerValue) {
-			return
-		}
-
-		l.report(
-			inner.For,
-			"nested_lookup_loop",
-			fmt.Sprintf(
+		out = append(out, Finding{
+			Pos:  inner.For,
+			Kind: "nested_lookup_loop",
+			Message: fmt.Sprintf(
 				`nested range scans %s for each %s item; build a lookup map before the outer loop`,
-				l.render(inner.X),
-				l.render(scope.source),
+				r.q.render(inner.X),
+				r.q.render(scope.source),
 			),
-		)
-	})
-}
-
-func (l *Runner) checkPairwiseComparisonLoops(scope loopScope) {
-	outerValue := l.singleLoopValueObject(scope)
-	if outerValue == nil {
-		return
+		})
 	}
 
-	l.forEachInnerRangeValue(scope, func(inner *ast.RangeStmt, innerValue types.Object) {
-		if !l.sameRenderedExpr(scope.source, inner.X) || !l.invariantLoopExpr(scope, inner.X) {
-			return
+	return out
+}
+
+func (r loopRules) pairwiseComparisonLoops(scope loopScope) []Finding {
+	var out []Finding
+
+	for inner, innerValue := range scope.innerRanges() {
+		if !r.sameRenderedExpr(scope.source, inner.X) || !scope.invariant(inner.X) ||
+			!bodyComparesObjects(scope.info, inner.Body, scope.value, innerValue) {
+			continue
 		}
 
-		if !l.bodyComparesObjects(inner.Body, outerValue, innerValue) {
-			return
-		}
-
-		l.report(
-			inner.For,
-			"pairwise_comparison_loop",
-			fmt.Sprintf(
+		out = append(out, Finding{
+			Pos:  inner.For,
+			Kind: "pairwise_comparison_loop",
+			Message: fmt.Sprintf(
 				`nested range compares pairs from %s; consider sort/two-pointer, sweep line, or bucketing for growing inputs`,
-				l.render(scope.source),
+				r.q.render(scope.source),
 			),
-		)
-	})
+		})
+	}
+
+	return out
 }
 
-func (l *Runner) forEachInnerRangeValue(
-	scope loopScope,
-	fn func(*ast.RangeStmt, types.Object),
-) {
-	for _, stmt := range scope.body.List {
-		inner, ok := stmt.(*ast.RangeStmt)
-		if !ok || inner.Body == nil {
-			continue
+// innerRanges yields range loops directly in the body that bind a value
+// variable, when the outer loop binds one too.
+func (s loopScope) innerRanges() iter.Seq2[*ast.RangeStmt, types.Object] {
+	return func(yield func(*ast.RangeStmt, types.Object) bool) {
+		if s.value == nil {
+			return
 		}
 
-		innerValue := l.rangeValueObject(inner)
-		if innerValue == nil {
-			continue
-		}
+		for _, stmt := range s.body.List {
+			inner, ok := stmt.(*ast.RangeStmt)
+			if !ok {
+				continue
+			}
 
-		fn(inner, innerValue)
+			if innerValue := objectForLoopVar(s.info, inner.Value); innerValue != nil &&
+				!yield(inner, innerValue) {
+				return
+			}
+		}
 	}
 }
 
-func (l *Runner) lookupLoopHasMatchBreak(
+func lookupLoopHasMatchBreak(
+	info *types.Info,
 	body *ast.BlockStmt,
 	outerValue types.Object,
 	innerValue types.Object,
 ) bool {
-	if body == nil || len(body.List) != 1 {
+	if len(body.List) != 1 {
 		return false
 	}
 
 	ifStmt, ok := body.List[0].(*ast.IfStmt)
-	if !ok || ifStmt.Init != nil || ifStmt.Else != nil || ifStmt.Body == nil {
+	if !ok || ifStmt.Init != nil || ifStmt.Else != nil {
 		return false
 	}
 
-	if !l.exprComparesObjects(ifStmt.Cond, outerValue, innerValue) {
+	if !exprComparesObjects(info, ifStmt.Cond, outerValue, innerValue) {
 		return false
 	}
 
 	return blockHasBranch(ifStmt.Body, token.BREAK) || blockHasReturn(ifStmt.Body)
 }
 
-func (l *Runner) bodyComparesObjects(
+func bodyComparesObjects(
+	info *types.Info,
 	body *ast.BlockStmt,
 	left types.Object,
 	right types.Object,
 ) bool {
 	return blockContains(body, func(n ast.Node) bool {
 		binary, ok := n.(*ast.BinaryExpr)
-		return ok && l.binaryComparesObjects(binary, left, right)
+		return ok && binaryComparesObjects(info, binary, left, right)
 	})
 }
 
-func (l *Runner) exprComparesObjects(expr ast.Expr, left types.Object, right types.Object) bool {
+func exprComparesObjects(
+	info *types.Info,
+	expr ast.Expr,
+	left types.Object,
+	right types.Object,
+) bool {
 	found := false
 
 	ast.Inspect(expr, func(n ast.Node) bool {
@@ -433,7 +397,7 @@ func (l *Runner) exprComparesObjects(expr ast.Expr, left types.Object, right typ
 			return true
 		}
 
-		found = l.binaryComparesObjects(binary, left, right)
+		found = binaryComparesObjects(info, binary, left, right)
 
 		return !found
 	})
@@ -441,34 +405,23 @@ func (l *Runner) exprComparesObjects(expr ast.Expr, left types.Object, right typ
 	return found
 }
 
-func (l *Runner) binaryComparesObjects(
+func binaryComparesObjects(
+	info *types.Info,
 	expr *ast.BinaryExpr,
 	left types.Object,
 	right types.Object,
 ) bool {
-	if expr == nil || expr.Op != token.EQL && expr.Op != token.NEQ && expr.Op != token.LSS &&
+	if expr.Op != token.EQL && expr.Op != token.NEQ && expr.Op != token.LSS &&
 		expr.Op != token.LEQ && expr.Op != token.GTR && expr.Op != token.GEQ {
 		return false
 	}
 
-	leftX := nodeUsesObject(expr.X, left, l.pkg.TypesInfo)
-	rightX := nodeUsesObject(expr.X, right, l.pkg.TypesInfo)
-	leftY := nodeUsesObject(expr.Y, left, l.pkg.TypesInfo)
-	rightY := nodeUsesObject(expr.Y, right, l.pkg.TypesInfo)
+	leftX := nodeUsesObject(expr.X, left, info)
+	rightX := nodeUsesObject(expr.X, right, info)
+	leftY := nodeUsesObject(expr.Y, left, info)
+	rightY := nodeUsesObject(expr.Y, right, info)
 
 	return leftX && rightY || rightX && leftY
-}
-
-func (l *Runner) singleLoopValueObject(scope loopScope) types.Object {
-	return scope.value
-}
-
-func (l *Runner) rangeValueObject(loop *ast.RangeStmt) types.Object {
-	if loop == nil {
-		return nil
-	}
-
-	return l.objectForLoopVar(loop.Value)
 }
 
 func blockHasBranch(body *ast.BlockStmt, tok token.Token) bool {
@@ -520,31 +473,20 @@ func blockHasReturn(body *ast.BlockStmt) bool {
 	return found
 }
 
-func (l *Runner) invariantLoopExpr(scope loopScope, node ast.Node) bool {
-	return node != nil &&
-		!l.nodeUsesLoopDependentObjects(scope, node) &&
-		!l.nodeUsesMutatedObjects(scope, node) &&
-		!l.nodeUsesObjectDeclaredInsideLoop(scope, node)
+// invariant reports whether node gives the same value in every iteration.
+func (s loopScope) invariant(node ast.Node) bool {
+	return !s.usesDependent(node) &&
+		!nodeUsesAnyObject(s.info, node, s.mutatedVars) &&
+		!s.usesObjectDeclaredInside(node)
 }
 
-func (l *Runner) nodeUsesLoopObjects(scope loopScope, node ast.Node) bool {
-	return l.nodeUsesAnyObject(node, scope.loopVars)
+func (s loopScope) usesDependent(node ast.Node) bool {
+	return nodeUsesAnyObject(s.info, node, s.loopVars) ||
+		nodeUsesAnyObject(s.info, node, s.dependentVars)
 }
 
-func (l *Runner) nodeUsesLoopDependentObjects(scope loopScope, node ast.Node) bool {
-	return l.nodeUsesLoopObjects(scope, node) ||
-		l.nodeUsesAnyObject(node, scope.dependentVars)
-}
-
-func (l *Runner) nodeUsesMutatedObjects(scope loopScope, node ast.Node) bool {
-	return l.nodeUsesAnyObject(node, scope.mutatedVars)
-}
-
-func (l *Runner) nodeUsesAnyObject(
-	node ast.Node,
-	objects map[types.Object]struct{},
-) bool {
-	if len(objects) == 0 || node == nil {
+func nodeUsesAnyObject(info *types.Info, node ast.Node, objects map[types.Object]struct{}) bool {
+	if len(objects) == 0 {
 		return false
 	}
 
@@ -560,7 +502,7 @@ func (l *Runner) nodeUsesAnyObject(
 			return true
 		}
 
-		_, found = objects[l.pkg.TypesInfo.ObjectOf(ident)]
+		_, found = objects[info.ObjectOf(ident)]
 
 		return !found
 	})
@@ -568,22 +510,10 @@ func (l *Runner) nodeUsesAnyObject(
 	return found
 }
 
-func (l *Runner) collectLoopObjectFacts(scope *loopScope) {
-	if scope == nil || scope.body == nil {
-		return
-	}
-
-	// Loop-local aliases can hide per-iteration inputs; propagate simple assignment deps.
-	bindings := l.currentLoopBindings(scope.body)
-	l.addLoopMutatedObjects(scope, bindings)
-	l.addLoopCallMutatedObjects(scope)
-	l.addLoopDependentObjects(scope, bindings)
-}
-
-func (l *Runner) currentLoopBindings(body *ast.BlockStmt) []loopBinding {
+func currentLoopBindings(body *ast.BlockStmt) []loopBinding {
 	bindings := make([]loopBinding, 0)
 
-	l.inspectCurrentLoop(body, func(n ast.Node) bool {
+	inspectCurrentLoop(body, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.AssignStmt:
 			bindings = append(bindings, loopBinding{
@@ -608,31 +538,26 @@ func (l *Runner) currentLoopBindings(body *ast.BlockStmt) []loopBinding {
 	return bindings
 }
 
-func (l *Runner) addLoopMutatedObjects(
-	scope *loopScope,
-	bindings []loopBinding,
-) {
+func (s *loopScope) addMutatedObjects(bindings []loopBinding) {
 	for _, binding := range bindings {
 		for _, lhs := range binding.targets {
-			obj := l.objectForMutationRoot(lhs)
-			if obj != nil {
-				scope.mutatedVars[obj] = struct{}{}
+			if obj := objectForMutationRoot(s.info, lhs); obj != nil {
+				s.mutatedVars[obj] = struct{}{}
 			}
 		}
 	}
 }
 
-func (l *Runner) addLoopCallMutatedObjects(scope *loopScope) {
-	l.inspectCurrentLoop(scope.body, func(n ast.Node) bool {
+func (s *loopScope) addCallMutatedObjects() {
+	inspectCurrentLoop(s.body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
-		if !ok || !l.callArgsMayMutate(call) {
+		if !ok || !callArgsMayMutate(s.info, call) {
 			return true
 		}
 
 		for _, arg := range call.Args {
-			obj := l.objectForMutationRoot(arg)
-			if obj != nil {
-				scope.mutatedVars[obj] = struct{}{}
+			if obj := objectForMutationRoot(s.info, arg); obj != nil {
+				s.mutatedVars[obj] = struct{}{}
 			}
 		}
 
@@ -640,38 +565,27 @@ func (l *Runner) addLoopCallMutatedObjects(scope *loopScope) {
 	})
 }
 
-func (l *Runner) callArgsMayMutate(call *ast.CallExpr) bool {
-	if l.pureBuiltinCall(call) {
+// callArgsMayMutate is false for calls known to only read their arguments.
+func callArgsMayMutate(info *types.Info, call *ast.CallExpr) bool {
+	if pureBuiltinCall(info, call) {
 		return false
 	}
 
-	if _, _, ok := l.membershipScanCall(call); ok {
+	if _, _, ok := membershipScanCall(info, call); ok {
 		return false
 	}
 
-	if _, _, ok := l.sortCallTarget(call); ok {
+	if _, _, ok := sortCallTarget(info, call); ok {
 		return false
 	}
 
-	if _, ok := l.invariantWorkCallLabel(call); ok {
-		return false
-	}
+	_, ok := invariantWorkCallLabel(info, call)
 
-	return true
+	return !ok
 }
 
-func (l *Runner) pureBuiltinCall(call *ast.CallExpr) bool {
-	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
-	if !ok {
-		return false
-	}
-
-	obj, _ := l.pkg.TypesInfo.ObjectOf(ident).(*types.Builtin)
-	if obj == nil {
-		return false
-	}
-
-	switch obj.Name() {
+func pureBuiltinCall(info *types.Info, call *ast.CallExpr) bool {
+	switch builtinName(info, call) {
 	case "cap", "complex", "imag", builtinLenName, "max", "min",
 		"panic", "print", "println", "real", "recover":
 		return true
@@ -680,29 +594,29 @@ func (l *Runner) pureBuiltinCall(call *ast.CallExpr) bool {
 	}
 }
 
-func (l *Runner) addLoopDependentObjects(
-	scope *loopScope,
-	bindings []loopBinding,
-) {
+func (s *loopScope) addDependentObjects(bindings []loopBinding) {
 	for {
 		changed := false
 
 		for _, binding := range bindings {
-			if !l.bindingUsesLoopDependency(*scope, binding) {
+			if !slices.ContainsFunc(
+				binding.values,
+				func(rhs ast.Expr) bool { return s.usesDependent(rhs) },
+			) {
 				continue
 			}
 
 			for _, lhs := range binding.targets {
-				obj := l.objectForMutationRoot(lhs)
+				obj := objectForMutationRoot(s.info, lhs)
 				if obj == nil {
 					continue
 				}
 
-				if _, ok := scope.dependentVars[obj]; ok {
+				if _, ok := s.dependentVars[obj]; ok {
 					continue
 				}
 
-				scope.dependentVars[obj] = struct{}{}
+				s.dependentVars[obj] = struct{}{}
 				changed = true
 			}
 		}
@@ -713,20 +627,7 @@ func (l *Runner) addLoopDependentObjects(
 	}
 }
 
-func (l *Runner) bindingUsesLoopDependency(
-	scope loopScope,
-	binding loopBinding,
-) bool {
-	for _, rhs := range binding.values {
-		if l.nodeUsesLoopDependentObjects(scope, rhs) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (l *Runner) nodeUsesObjectDeclaredInsideLoop(scope loopScope, node ast.Node) bool {
+func (s loopScope) usesObjectDeclaredInside(node ast.Node) bool {
 	found := false
 
 	ast.Inspect(node, func(n ast.Node) bool {
@@ -739,13 +640,12 @@ func (l *Runner) nodeUsesObjectDeclaredInsideLoop(scope loopScope, node ast.Node
 			return true
 		}
 
-		obj := l.pkg.TypesInfo.ObjectOf(ident)
+		obj := s.info.ObjectOf(ident)
 		if obj == nil {
 			return true
 		}
 
-		pos := obj.Pos()
-		found = pos > scope.loopStart && pos < scope.loopEnd
+		found = obj.Pos() > s.body.Lbrace && obj.Pos() < s.body.Rbrace
 
 		return !found
 	})
@@ -753,25 +653,17 @@ func (l *Runner) nodeUsesObjectDeclaredInsideLoop(scope loopScope, node ast.Node
 	return found
 }
 
-func (l *Runner) sameRenderedExpr(left ast.Expr, right ast.Expr) bool {
-	if left == nil || right == nil {
-		return false
-	}
-
-	return l.render(ast.Unparen(left)) == l.render(ast.Unparen(right))
+func (r loopRules) sameRenderedExpr(left ast.Expr, right ast.Expr) bool {
+	return r.q.render(ast.Unparen(left)) == r.q.render(ast.Unparen(right))
 }
 
-func (l *Runner) inspectCurrentLoop(body *ast.BlockStmt, fn func(ast.Node) bool) {
-	if body == nil {
-		return
-	}
-
+// inspectCurrentLoop visits the loop body without entering nested loops or
+// function literals, which run on their own iterations.
+func inspectCurrentLoop(body *ast.BlockStmt, fn func(ast.Node) bool) {
 	ast.Inspect(body, func(n ast.Node) bool {
-		if n == nil {
-			return true
-		}
-
 		switch n.(type) {
+		case nil:
+			return true
 		case *ast.FuncLit:
 			return false
 		case *ast.ForStmt, *ast.RangeStmt:
@@ -782,8 +674,8 @@ func (l *Runner) inspectCurrentLoop(body *ast.BlockStmt, fn func(ast.Node) bool)
 	})
 }
 
-func (l *Runner) callPackageFunc(call *ast.CallExpr) (string, string, bool) {
-	fn := l.funcObject(call.Fun)
+func callPackageFunc(info *types.Info, call *ast.CallExpr) (string, string, bool) {
+	fn := funcObject(info, call.Fun)
 	if fn == nil || fn.Pkg() == nil {
 		return "", "", false
 	}
@@ -791,32 +683,28 @@ func (l *Runner) callPackageFunc(call *ast.CallExpr) (string, string, bool) {
 	return fn.Name(), fn.Pkg().Path(), true
 }
 
-func (l *Runner) funcObject(expr ast.Expr) *types.Func {
+func funcObject(info *types.Info, expr ast.Expr) *types.Func {
 	switch expr := ast.Unparen(expr).(type) {
 	case *ast.IndexExpr:
-		return l.funcObject(expr.X)
+		return funcObject(info, expr.X)
 	case *ast.IndexListExpr:
-		return l.funcObject(expr.X)
+		return funcObject(info, expr.X)
 	case *ast.SelectorExpr:
-		return l.selectorFuncObject(expr)
-	case *ast.Ident:
-		obj, _ := l.pkg.TypesInfo.ObjectOf(expr).(*types.Func)
+		obj := info.ObjectOf(expr.Sel)
+		if selection := info.Selections[expr]; selection != nil {
+			obj = selection.Obj()
+		}
 
-		return obj
+		fn, _ := obj.(*types.Func)
+
+		return fn
+	case *ast.Ident:
+		fn, _ := info.ObjectOf(expr).(*types.Func)
+
+		return fn
 	default:
 		return nil
 	}
-}
-
-func (l *Runner) selectorFuncObject(expr *ast.SelectorExpr) *types.Func {
-	obj := l.pkg.TypesInfo.ObjectOf(expr.Sel)
-	if selection := l.pkg.TypesInfo.Selections[expr]; selection != nil {
-		obj = selection.Obj()
-	}
-
-	fn, _ := obj.(*types.Func)
-
-	return fn
 }
 
 func shortPackagePath(path string) string {

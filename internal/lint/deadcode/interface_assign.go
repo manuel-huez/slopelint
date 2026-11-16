@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-func (graph deadCodeGraph) addInterfaceMethodsForValueTargets(
+func addInterfaceMethodsForValueTargets(
 	l *packageLinter,
 	out map[string]struct{},
 	expr ast.Expr,
@@ -17,40 +17,40 @@ func (graph deadCodeGraph) addInterfaceMethodsForValueTargets(
 				continue
 			}
 
-			graph.addInterfaceMethodsForType(l, out, tuple.At(index).Type(), target)
+			addInterfaceMethodsForType(l, out, tuple.At(index).Type(), target)
 		}
 
 		return
 	}
 
 	for _, target := range targets {
-		graph.addInterfaceMethodsForValue(l, out, expr, target)
+		addInterfaceMethodsForValue(l, out, expr, target)
 	}
 }
 
-func (graph deadCodeGraph) addInterfaceMethodsForValue(
+func addInterfaceMethodsForValue(
 	l *packageLinter,
 	out map[string]struct{},
 	expr ast.Expr,
 	target types.Type,
 ) {
-	for key := range graph.interfaceMethodsForValue(l, expr, target) {
+	for key := range interfaceMethodsForValue(l, expr, target) {
 		out[key] = struct{}{}
 	}
 }
 
-func (graph deadCodeGraph) interfaceMethodsForValue(
+func interfaceMethodsForValue(
 	l *packageLinter,
 	expr ast.Expr,
 	target types.Type,
 ) map[string]struct{} {
 	out := make(map[string]struct{})
-	graph.addInterfaceMethodsForType(l, out, l.pkg.TypesInfo.TypeOf(expr), target)
+	addInterfaceMethodsForType(l, out, l.pkg.TypesInfo.TypeOf(expr), target)
 
 	return out
 }
 
-func (graph deadCodeGraph) typeAssertInterfaceMethodUses(
+func (iface ifaceUses) typeAssertInterfaceMethodUses(
 	l *packageLinter,
 	expr *ast.TypeAssertExpr,
 ) map[string]struct{} {
@@ -62,12 +62,12 @@ func (graph deadCodeGraph) typeAssertInterfaceMethodUses(
 	target := l.pkg.TypesInfo.TypeOf(expr.Type)
 	out := make(map[string]struct{})
 
-	graph.addInterfaceMethodsForAssertedType(l, out, source, target)
+	iface.addInterfaceMethodsForAssertedType(l, out, source, target)
 
 	return out
 }
 
-func (graph deadCodeGraph) typeSwitchInterfaceMethodUses(
+func (iface ifaceUses) typeSwitchInterfaceMethodUses(
 	l *packageLinter,
 	stmt *ast.TypeSwitchStmt,
 ) map[string]struct{} {
@@ -89,7 +89,7 @@ func (graph deadCodeGraph) typeSwitchInterfaceMethodUses(
 		}
 
 		for _, expr := range clause.List {
-			graph.addInterfaceMethodsForAssertedType(
+			iface.addInterfaceMethodsForAssertedType(
 				l,
 				out,
 				source,
@@ -122,7 +122,7 @@ func typeSwitchSourceType(info *types.Info, stmt ast.Stmt) types.Type {
 	return info.TypeOf(expr.X)
 }
 
-func (graph deadCodeGraph) addInterfaceMethodsForAssertedType(
+func (iface ifaceUses) addInterfaceMethodsForAssertedType(
 	l *packageLinter,
 	out map[string]struct{},
 	source types.Type,
@@ -133,25 +133,25 @@ func (graph deadCodeGraph) addInterfaceMethodsForAssertedType(
 	}
 
 	if !typeIsInterface(source) {
-		graph.addInterfaceMethodsForType(l, out, source, target)
+		addInterfaceMethodsForType(l, out, source, target)
 		return
 	}
 
-	for _, receiver := range graph.candidateReceiverTypes() {
+	for _, receiver := range iface.candidateReceiverTypes() {
 		if !typeSatisfiesInterface(l, receiver, source) ||
 			!typeSatisfiesInterface(l, receiver, target) {
 			continue
 		}
 
-		graph.addInterfaceMethodsForType(l, out, receiver, target)
+		addInterfaceMethodsForType(l, out, receiver, target)
 	}
 }
 
-func (graph deadCodeGraph) candidateReceiverTypes() []types.Type {
+func (iface ifaceUses) candidateReceiverTypes() []types.Type {
 	seen := make(map[string]struct{})
 	receivers := make([]types.Type, 0)
 
-	for _, decl := range graph.candidates {
+	for _, decl := range iface.candidates {
 		receiver := deadCodeMethodReceiverType(decl.obj)
 		if receiver == nil {
 			continue
@@ -184,7 +184,7 @@ func deadCodeMethodReceiverType(obj types.Object) types.Type {
 	return sig.Recv().Type()
 }
 
-func (graph deadCodeGraph) addInterfaceMethodsForType(
+func addInterfaceMethodsForType(
 	l *packageLinter,
 	out map[string]struct{},
 	source types.Type,

@@ -25,23 +25,10 @@ type deadCodeDecl struct {
 }
 
 type deadCodeGraph struct {
-	candidates                   map[string]deadCodeDecl
-	edges                        map[string]map[string]struct{}
-	roots                        map[string]struct{}
-	rootUses                     []deadCodeRootUse
-	ignored                      map[*Package]map[token.Pos]struct{}
-	packages                     map[string]*Package
-	fmtStringerForwarded         map[string][]fmtStringerParamUse
-	fmtStringerResults           map[string]fmtStringerResultState
-	fmtStringerVarValues         map[string][]types.Type
-	fmtStringerVarSlices         map[string][]types.Type
-	fmtStringerVarUnknown        map[string]struct{}
-	fmtStringerSummary           map[string]struct{}
-	fmtStringerLive              map[string]struct{}
-	funcDeclCache                map[*types.Func]*ast.FuncDecl
-	funcDeclMisses               map[*types.Func]struct{}
-	reflectedWrapperDecodeCache  map[string]reflectedWrapperSummary
-	reflectedWrapperMarshalCache map[string]reflectedWrapperSummary
+	candidates map[string]deadCodeDecl
+	rootUses   []deadCodeRootUse
+	roots      map[string]struct{}
+	edges      map[string]map[string]struct{}
 }
 
 type deadCodeRootUse struct {
@@ -49,102 +36,99 @@ type deadCodeRootUse struct {
 	node ast.Node
 }
 
+// funcDeclIndex finds source declarations of functions in the analyzed
+// packages. Lookups are cached for the whole run.
+type funcDeclIndex struct {
+	packages map[string]*Package
+	cache    map[*types.Func]*ast.FuncDecl
+	misses   map[*types.Func]struct{}
+}
+
 // Private reports production-dead private declarations within one package.
 func Private(pkg *Package) []Finding {
-	if pkg == nil {
-		return nil
-	}
-
-	graph := newPackageLinter(pkg).deadPrivateDeclGraph()
-
-	return graph.findings()
+	return findDeadCode([]*Package{pkg}, deadCodePrivate)
 }
 
 // Repo reports declarations unreachable from repository entrypoints.
 func Repo(pkgs []*Package) []Finding {
-	graph := newDeadCodeGraph()
+	return findDeadCode(pkgs, deadCodeRepo)
+}
 
-	for _, pkg := range pkgs {
-		if pkg == nil {
-			continue
-		}
+func findDeadCode(pkgs []*Package, mode deadCodeMode) []Finding {
+	graph := &deadCodeGraph{
+		candidates: make(map[string]deadCodeDecl),
+		rootUses:   make([]deadCodeRootUse, 0),
+		roots:      make(map[string]struct{}),
+		edges:      make(map[string]map[string]struct{}),
+	}
+	decls := &funcDeclIndex{
+		packages: make(map[string]*Package),
+		cache:    make(map[*types.Func]*ast.FuncDecl),
+		misses:   make(map[*types.Func]struct{}),
+	}
+	iface := ifaceUses{candidates: graph.candidates}
 
-		graph.registerPackage(pkg)
+	uses := &useCollector{
+		ignored: make(map[*Package]map[token.Pos]struct{}),
+		iface:   iface,
+		fmt: fmtConcreteFlow{
+			iface: iface,
+			decls: decls,
+			params: fmtParamFlow{
+				decls:     decls,
+				forwarded: make(map[string][]fmtStringerParamUse),
+				results:   make(map[string]fmtStringerResultState),
+			},
+			summaries: &fmtVarSummaries{
+				values:  make(map[string][]types.Type),
+				slices:  make(map[string][]types.Type),
+				unknown: make(map[string]struct{}),
+			},
+		},
+		reflect: reflectionUses{
+			decls: decls,
+			wrappers: reflectedWrappers{
+				decls:        decls,
+				decodeCache:  make(map[string]reflectedWrapperSummary),
+				marshalCache: make(map[string]reflectedWrapperSummary),
+			},
+			typeParams: reflectedTypeParams{decls: decls},
+		},
 	}
 
 	for _, pkg := range pkgs {
-		if pkg == nil {
-			continue
+		if pkg != nil {
+			decls.packages[pkg.ImportPath] = pkg
+			uses.ignored[pkg] = newPackageLinter(pkg).deadCodeIgnoredIdentPositions()
 		}
-
-		graph.addPackageDecls(newPackageLinter(pkg), deadCodeRepo)
 	}
 
-	graph.indexEdges()
+	index := declIndex{graph: graph, uses: uses}
 
-	return graph.findings()
-}
-
-func (l *packageLinter) deadPrivateDeclGraph() deadCodeGraph {
-	graph := newDeadCodeGraph()
-	graph.registerPackage(l.pkg)
-	graph.addPackageDecls(l, deadCodePrivate)
-	graph.indexEdges()
-
-	return graph
-}
-
-func newDeadCodeGraph() deadCodeGraph {
-	return deadCodeGraph{
-		candidates:                   make(map[string]deadCodeDecl),
-		edges:                        make(map[string]map[string]struct{}),
-		roots:                        make(map[string]struct{}),
-		rootUses:                     make([]deadCodeRootUse, 0),
-		ignored:                      make(map[*Package]map[token.Pos]struct{}),
-		packages:                     make(map[string]*Package),
-		fmtStringerForwarded:         make(map[string][]fmtStringerParamUse),
-		fmtStringerResults:           make(map[string]fmtStringerResultState),
-		fmtStringerVarValues:         make(map[string][]types.Type),
-		fmtStringerVarSlices:         make(map[string][]types.Type),
-		fmtStringerVarUnknown:        make(map[string]struct{}),
-		fmtStringerSummary:           make(map[string]struct{}),
-		funcDeclCache:                make(map[*types.Func]*ast.FuncDecl),
-		funcDeclMisses:               make(map[*types.Func]struct{}),
-		reflectedWrapperDecodeCache:  make(map[string]reflectedWrapperSummary),
-		reflectedWrapperMarshalCache: make(map[string]reflectedWrapperSummary),
-	}
-}
-
-func (graph *deadCodeGraph) registerPackage(pkg *Package) {
-	l := newPackageLinter(pkg)
-
-	graph.packages[pkg.ImportPath] = pkg
-	graph.ignored[pkg] = l.deadCodeIgnoredIdentPositions()
-}
-
-func (graph *deadCodeGraph) addPackageDecls(l *packageLinter, mode deadCodeMode) {
-	l.forEachProductionDecl(func(decl ast.Decl) {
-		if _, ok := l.pkg.GeneratedDecls[decl]; ok {
-			graph.addRootUses(l, decl)
-			return
+	for _, pkg := range pkgs {
+		if pkg != nil {
+			index.addPackageDecls(newPackageLinter(pkg), mode)
 		}
-
-		graph.addDecl(l, decl, mode)
-	})
-}
-
-func (graph *deadCodeGraph) indexEdges() {
-	graph.reindexRootUses()
-
-	for obj, decl := range graph.candidates {
-		l := newPackageLinter(decl.pkg)
-		graph.edges[obj] = graph.usesFrom(l, decl.node)
 	}
+
+	graph.indexEdges(uses)
+
+	return graph.findings(uses)
 }
 
-func (graph *deadCodeGraph) reindexRootUses() {
+func (graph *deadCodeGraph) indexEdges(uses *useCollector) {
 	graph.roots = make(map[string]struct{})
 	for _, root := range graph.rootUses {
-		graph.addRootUseEdges(root.pkg, root.node)
+		graph.addRootUseEdges(uses, root.pkg, root.node)
+	}
+
+	for obj, decl := range graph.candidates {
+		graph.edges[obj] = uses.usesFrom(newPackageLinter(decl.pkg), decl.node)
+	}
+}
+
+func (graph *deadCodeGraph) addRootUseEdges(uses *useCollector, pkg *Package, node ast.Node) {
+	for key := range uses.usesFrom(newPackageLinter(pkg), node) {
+		graph.roots[key] = struct{}{}
 	}
 }

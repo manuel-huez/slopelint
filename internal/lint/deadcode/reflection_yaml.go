@@ -18,7 +18,7 @@ func (walk reflectedUseWalk) yamlMarshalReturnUses(hook *types.Func, typ types.T
 		return
 	}
 
-	hookL := walk.graph.packageLinterForFunc(hook)
+	hookL := walk.decls.packageLinterForFunc(hook)
 	if hookL == nil {
 		return
 	}
@@ -534,8 +534,8 @@ func (scan yamlMarshalReturnScan) returnTypeUses(typ types.Type) {
 	)
 }
 
-func (graph deadCodeGraph) packageLinterForFunc(fn *types.Func) *packageLinter {
-	pkg := graph.packageForFunc(fn)
+func (decls *funcDeclIndex) packageLinterForFunc(fn *types.Func) *packageLinter {
+	pkg := decls.packageForFunc(fn)
 	if pkg == nil {
 		return nil
 	}

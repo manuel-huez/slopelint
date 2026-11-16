@@ -49,7 +49,7 @@ const (
 	reflectedMarshalAddressable
 )
 
-func (graph deadCodeGraph) reflectedUses(
+func (refl reflectionUses) reflectedUses(
 	l *packageLinter,
 	call *ast.CallExpr,
 ) map[string]struct{} {
@@ -61,7 +61,7 @@ func (graph deadCodeGraph) reflectedUses(
 	out := make(map[string]struct{})
 	walk := func(codec reflectedCodecUse) reflectedUseWalk {
 		return reflectedUseWalk{
-			graph: graph,
+			decls: refl.decls,
 			l:     l,
 			out:   out,
 			codec: codec,
@@ -70,9 +70,9 @@ func (graph deadCodeGraph) reflectedUses(
 		}
 	}
 
-	targets := graph.reflectedDecodeTargetTypes(l, fn, call)
+	targets := refl.reflectedDecodeTargetTypes(l, fn, call)
 
-	targets = append(targets, graph.reflectedGenericDecodeTypes(l, fn, call)...)
+	targets = append(targets, refl.reflectedGenericDecodeTypes(l, fn, call)...)
 	for _, target := range targets {
 		if target.mapKey {
 			if !l.addReflectedDecodeHookUse(
@@ -91,9 +91,9 @@ func (graph deadCodeGraph) reflectedUses(
 		walk(target.codec).decodeUses(target.typ)
 	}
 
-	marshalTargets := graph.reflectedMarshalTargetTypes(l, fn, call)
+	marshalTargets := refl.reflectedMarshalTargetTypes(l, fn, call)
 
-	marshalTargets = append(marshalTargets, graph.reflectedGenericMarshalTypes(l, fn, call)...)
+	marshalTargets = append(marshalTargets, refl.reflectedGenericMarshalTypes(l, fn, call)...)
 	for _, target := range marshalTargets {
 		walk(target.codec).marshalUses(target.typ, target.addressable)
 	}
@@ -101,10 +101,18 @@ func (graph deadCodeGraph) reflectedUses(
 	return out
 }
 
+// reflectionUses finds struct fields and hook methods that codec calls such
+// as json.Unmarshal reach through reflection.
+type reflectionUses struct {
+	decls      *funcDeclIndex
+	wrappers   reflectedWrappers
+	typeParams reflectedTypeParams
+}
+
 // reflectedUseWalk is the state of one reflected codec traversal: uses go to
 // out, and seen guards recursive named types on the current path.
 type reflectedUseWalk struct {
-	graph deadCodeGraph
+	decls *funcDeclIndex
 	l     *packageLinter
 	out   map[string]struct{}
 	codec reflectedCodecUse
@@ -131,14 +139,14 @@ func inspectReflectedCalls(node ast.Node, visit func(*ast.CallExpr)) {
 	})
 }
 
-func (graph deadCodeGraph) reflectedDecodeTargetTypes(
+func (refl reflectionUses) reflectedDecodeTargetTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
 ) []reflectedDecodeTarget {
 	codec, ok := reflectedDecodeFuncCodec(fn)
 	if !ok || len(call.Args) == 0 {
-		return graph.reflectedWrapperDecodeTargetTypes(l, fn, call)
+		return refl.wrappers.reflectedWrapperDecodeTargetTypes(l, fn, call)
 	}
 
 	argIndex := reflectedDecodeTargetArgIndex(fn, call)
@@ -156,14 +164,14 @@ func (graph deadCodeGraph) reflectedDecodeTargetTypes(
 	return []reflectedDecodeTarget{{typ: typ, codec: codec}}
 }
 
-func (graph deadCodeGraph) reflectedMarshalTargetTypes(
+func (refl reflectionUses) reflectedMarshalTargetTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
 ) []reflectedMarshalTarget {
 	codec, ok := reflectedMarshalFuncCodec(fn)
 	if !ok || len(call.Args) == 0 {
-		return graph.reflectedWrapperMarshalTargetTypes(l, fn, call)
+		return refl.wrappers.reflectedWrapperMarshalTargetTypes(l, fn, call)
 	}
 
 	argIndex := reflectedMarshalTargetArgIndex(fn, call)
@@ -278,7 +286,7 @@ func (l *packageLinter) addReflectedDecodeHookUse(
 	codec reflectedCodecUse,
 	context reflectedHookContext,
 ) bool {
-	return l.addReflectedHookUse(
+	return addReflectedHookUse(
 		out,
 		typ,
 		reflectedHookNames(codec.hookTag, reflectedDecodeStructFields, context),
@@ -287,7 +295,7 @@ func (l *packageLinter) addReflectedDecodeHookUse(
 }
 
 func (walk reflectedUseWalk) marshalMapKeyUses(typ types.Type) {
-	if walk.l.addReflectedMarshalHookUse(
+	if addReflectedMarshalHookUse(
 		walk.out,
 		typ,
 		reflectedHookNames(walk.codec.hookTag, reflectedMarshalStructFields, reflectedMapKeyHook),
@@ -435,14 +443,14 @@ func (l *packageLinter) addReflectedStructFieldAttrHookUse(
 ) {
 	switch mode {
 	case reflectedDecodeStructFields:
-		l.addReflectedHookUse(
+		addReflectedHookUse(
 			out,
 			typ,
 			reflectedHookNames(codec.hookTag, reflectedDecodeStructFields, reflectedAttrHook),
 			codec.hookTag,
 		)
 	case reflectedMarshalStructFields:
-		l.addReflectedMarshalHookUse(
+		addReflectedMarshalHookUse(
 			out,
 			typ,
 			reflectedHookNames(codec.hookTag, reflectedMarshalStructFields, reflectedAttrHook),
@@ -452,7 +460,7 @@ func (l *packageLinter) addReflectedStructFieldAttrHookUse(
 	}
 }
 
-func (l *packageLinter) addReflectedHookUse(
+func addReflectedHookUse(
 	out map[string]struct{},
 	typ types.Type,
 	names []string,
@@ -471,7 +479,7 @@ func (l *packageLinter) addReflectedHookUse(
 	return true
 }
 
-func (l *packageLinter) addReflectedMarshalHookUse(
+func addReflectedMarshalHookUse(
 	out map[string]struct{},
 	typ types.Type,
 	names []string,

@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-func (graph deadCodeGraph) genericInstanceInterfaceMethodUses(
+func genericInstanceInterfaceMethodUses(
 	l *packageLinter,
 	ident *ast.Ident,
 ) map[string]struct{} {
@@ -25,7 +25,7 @@ func (graph deadCodeGraph) genericInstanceInterfaceMethodUses(
 
 	out := make(map[string]struct{})
 	for index := range min(typeParams.Len(), instance.TypeArgs.Len()) {
-		graph.addInterfaceMethodsForType(
+		addInterfaceMethodsForType(
 			l,
 			out,
 			instance.TypeArgs.At(index),

@@ -10,56 +10,68 @@ import (
 	"unicode"
 )
 
-func (l *Runner) checkSingleUseTempAlias(stmts []ast.Stmt, idx int) {
-	decl, ok := l.singleUseTempAlias(stmts, idx)
-	if !ok {
-		return
-	}
+const (
+	ancestorStackCap  = 8
+	identifierWordCap = 4
+)
 
-	l.report(
-		decl.name.Pos(),
-		"temp_alias",
-		fmt.Sprintf(
-			`local %q only renames cheap expression %q for one use; inline expression`,
-			decl.name.Name,
-			l.render(decl.rhs),
-		),
-	)
+type tempAliasDecl struct {
+	name *ast.Ident
+	obj  types.Object
+	rhs  ast.Expr
 }
 
-func (l *Runner) singleUseTempAlias(stmts []ast.Stmt, idx int) (tempAliasDecl, bool) {
+type objectUseSummary struct {
+	reads  int
+	unsafe bool
+}
+
+type tempAliasRules struct {
+	q *pkgQuery
+}
+
+// singleUseAt matches a local at stmts[idx] that only renames a cheap
+// expression and is read once, in the next statement.
+func (r tempAliasRules) singleUseAt(stmts []ast.Stmt, idx int) (Finding, bool) {
 	if idx+1 >= len(stmts) {
-		return tempAliasDecl{}, false
+		return Finding{}, false
 	}
 
-	decl, ok := l.tempAliasDeclFromStmt(stmts[idx])
-	if !ok || l.hasAttachedComment(stmts[idx]) {
-		return tempAliasDecl{}, false
+	info := r.q.pkg.TypesInfo
+
+	decl, ok := tempAliasDeclFromStmt(info, stmts[idx])
+	if !ok || r.q.hasAttachedComment(stmts[idx]) ||
+		!tempAliasNameLooksDisposable(decl.name.Name, decl.rhs) {
+		return Finding{}, false
 	}
 
-	if !tempAliasNameLooksDisposable(decl.name.Name, decl.rhs) {
-		return tempAliasDecl{}, false
-	}
-
-	nextUse := l.objectUseSummary(stmts[idx+1], decl.obj)
+	nextUse := summarizeObjectUse(info, stmts[idx+1], decl.obj)
 	if nextUse.unsafe || nextUse.reads != 1 {
-		return tempAliasDecl{}, false
+		return Finding{}, false
 	}
 	// Inlining must not replace the captured value with a later field or variable value.
-	if l.nodeMayMutateTempAliasSource(stmts[idx+1], decl.rhs) {
-		return tempAliasDecl{}, false
+	if nodeMayMutateTempAliasSource(info, stmts[idx+1], decl.rhs) {
+		return Finding{}, false
 	}
 
 	for _, later := range stmts[idx+2:] {
-		if nodeUsesObject(later, decl.obj, l.pkg.TypesInfo) {
-			return tempAliasDecl{}, false
+		if nodeUsesObject(later, decl.obj, info) {
+			return Finding{}, false
 		}
 	}
 
-	return decl, true
+	return Finding{
+		Pos:  decl.name.Pos(),
+		Kind: "temp_alias",
+		Message: fmt.Sprintf(
+			`local %q only renames cheap expression %q for one use; inline expression`,
+			decl.name.Name,
+			r.q.render(decl.rhs),
+		),
+	}, true
 }
 
-func (l *Runner) nodeMayMutateTempAliasSource(node ast.Node, source ast.Expr) bool {
+func nodeMayMutateTempAliasSource(info *types.Info, node ast.Node, source ast.Expr) bool {
 	objects := make(map[types.Object]struct{})
 
 	ast.Inspect(source, func(node ast.Node) bool {
@@ -68,8 +80,7 @@ func (l *Runner) nodeMayMutateTempAliasSource(node ast.Node, source ast.Expr) bo
 			return true
 		}
 
-		obj, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Var)
-		if ok && obj != nil {
+		if obj, ok := info.ObjectOf(ident).(*types.Var); ok {
 			objects[obj] = struct{}{}
 		}
 
@@ -81,7 +92,7 @@ func (l *Runner) nodeMayMutateTempAliasSource(node ast.Node, source ast.Expr) bo
 	}
 
 	for candidate := range ast.Preorder(node) {
-		if l.mutationTargetsObject(candidate, objects) {
+		if mutationTargetsObject(info, candidate, objects) {
 			return true
 		}
 	}
@@ -89,106 +100,89 @@ func (l *Runner) nodeMayMutateTempAliasSource(node ast.Node, source ast.Expr) bo
 	return false
 }
 
-func (l *Runner) mutationTargetsObject(
+func mutationTargetsObject(
+	info *types.Info,
 	node ast.Node,
 	objects map[types.Object]struct{},
 ) bool {
-	switch node := node.(type) {
-	case *ast.AssignStmt:
-		return l.anyMutationRootMatches(node.Lhs, objects)
-	case *ast.IncDecStmt:
-		_, ok := objects[l.objectForMutationRoot(node.X)]
+	rootMatches := func(expr ast.Expr) bool {
+		_, ok := objects[objectForMutationRoot(info, expr)]
 
 		return ok
+	}
+
+	switch node := node.(type) {
+	case *ast.AssignStmt:
+		return slices.ContainsFunc(node.Lhs, rootMatches)
+	case *ast.IncDecStmt:
+		return rootMatches(node.X)
 	case *ast.CallExpr:
-		if l.anyMutationRootMatches(node.Args, objects) {
+		if slices.ContainsFunc(node.Args, rootMatches) {
 			return true
 		}
 
 		selector, ok := ast.Unparen(node.Fun).(*ast.SelectorExpr)
-		if !ok {
-			return false
-		}
 
-		_, ok = objects[l.objectForMutationRoot(selector.X)]
-
-		return ok
+		return ok && rootMatches(selector.X)
 	default:
 		return false
 	}
 }
 
-func (l *Runner) anyMutationRootMatches(
-	exprs []ast.Expr,
-	objects map[types.Object]struct{},
-) bool {
-	return slices.ContainsFunc(exprs, func(expr ast.Expr) bool {
-		_, ok := objects[l.objectForMutationRoot(expr)]
-
-		return ok
-	})
-}
-
-func (l *Runner) tempAliasDeclFromStmt(stmt ast.Stmt) (tempAliasDecl, bool) {
-	assign, ok := stmt.(*ast.AssignStmt)
-	if ok {
-		return l.tempAliasDeclFromAssign(assign)
-	}
-
-	decl, ok := stmt.(*ast.DeclStmt)
-	if ok {
-		return l.tempAliasDeclFromDecl(decl)
-	}
-
-	return tempAliasDecl{}, false
-}
-
-func (l *Runner) tempAliasDeclFromAssign(stmt *ast.AssignStmt) (tempAliasDecl, bool) {
-	if stmt.Tok != token.DEFINE || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
+func tempAliasDeclFromStmt(info *types.Info, stmt ast.Stmt) (tempAliasDecl, bool) {
+	name, rhs, ok := singleLocalDecl(stmt)
+	if !ok || name.Name == "_" {
 		return tempAliasDecl{}, false
 	}
 
-	name, ok := stmt.Lhs[0].(*ast.Ident)
-	if !ok {
-		return tempAliasDecl{}, false
-	}
-
-	return l.tempAliasDecl(name, stmt.Rhs[0])
-}
-
-func (l *Runner) tempAliasDeclFromDecl(stmt *ast.DeclStmt) (tempAliasDecl, bool) {
-	decl, ok := stmt.Decl.(*ast.GenDecl)
-	if !ok || decl.Tok != token.VAR || len(decl.Specs) != 1 {
-		return tempAliasDecl{}, false
-	}
-
-	spec, ok := decl.Specs[0].(*ast.ValueSpec)
-	if !ok || spec.Type != nil || len(spec.Names) != 1 || len(spec.Values) != 1 {
-		return tempAliasDecl{}, false
-	}
-
-	return l.tempAliasDecl(spec.Names[0], spec.Values[0])
-}
-
-func (l *Runner) tempAliasDecl(name *ast.Ident, rhs ast.Expr) (tempAliasDecl, bool) {
-	if name == nil || name.Name == "_" {
-		return tempAliasDecl{}, false
-	}
-
-	obj, ok := l.pkg.TypesInfo.ObjectOf(name).(*types.Var)
-	if !ok || obj == nil || obj.IsField() {
+	obj, ok := info.ObjectOf(name).(*types.Var)
+	if !ok || obj.IsField() {
 		return tempAliasDecl{}, false
 	}
 
 	rhs = ast.Unparen(rhs)
-	if !l.isCheapTempAliasExpr(rhs) {
+	if !isCheapTempAliasExpr(info, rhs) {
 		return tempAliasDecl{}, false
 	}
 
 	return tempAliasDecl{name: name, obj: obj, rhs: rhs}, true
 }
 
-func (l *Runner) isCheapTempAliasExpr(expr ast.Expr) bool {
+// singleLocalDecl matches `name := rhs` and `var name = rhs`.
+func singleLocalDecl(stmt ast.Stmt) (*ast.Ident, ast.Expr, bool) {
+	switch stmt := stmt.(type) {
+	case *ast.AssignStmt:
+		if stmt.Tok != token.DEFINE || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
+			return nil, nil, false
+		}
+
+		ident, ok := stmt.Lhs[0].(*ast.Ident)
+
+		return ident, stmt.Rhs[0], ok
+	case *ast.DeclStmt:
+		decl, ok := stmt.Decl.(*ast.GenDecl)
+		if !ok || decl.Tok != token.VAR || len(decl.Specs) != 1 {
+			return nil, nil, false
+		}
+
+		return singleUntypedValue(decl.Specs[0])
+	default:
+		return nil, nil, false
+	}
+}
+
+func singleUntypedValue(raw ast.Spec) (*ast.Ident, ast.Expr, bool) {
+	spec, ok := raw.(*ast.ValueSpec)
+	if !ok || spec.Type != nil || len(spec.Names) != 1 || len(spec.Values) != 1 {
+		return nil, nil, false
+	}
+
+	return spec.Names[0], spec.Values[0], true
+}
+
+// isCheapTempAliasExpr matches a variable or a chain of field reads on one,
+// excluding function values.
+func isCheapTempAliasExpr(info *types.Info, expr ast.Expr) bool {
 	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
@@ -197,103 +191,25 @@ func (l *Runner) isCheapTempAliasExpr(expr ast.Expr) bool {
 			return false
 		}
 
-		obj := l.pkg.TypesInfo.ObjectOf(expr)
-		if obj == nil {
+		if _, ok := info.ObjectOf(expr).(*types.PkgName); ok {
 			return false
 		}
 
-		if _, ok := obj.(*types.PkgName); ok {
-			return false
-		}
-
-		_, isFn := types.Unalias(l.pkg.TypesInfo.TypeOf(expr)).Underlying().(*types.Signature)
+		_, isFn := types.Unalias(info.TypeOf(expr)).Underlying().(*types.Signature)
 
 		return !isFn
 	case *ast.SelectorExpr:
-		sel := l.pkg.TypesInfo.Selections[expr]
+		sel := info.Selections[expr]
 		if sel == nil || sel.Kind() != types.FieldVal {
 			return false
 		}
 
-		_, isFn := types.Unalias(l.pkg.TypesInfo.TypeOf(expr)).Underlying().(*types.Signature)
+		_, isFn := types.Unalias(info.TypeOf(expr)).Underlying().(*types.Signature)
 
-		return !isFn && l.isCheapTempAliasExpr(expr.X)
+		return !isFn && isCheapTempAliasExpr(info, expr.X)
 	default:
 		return false
 	}
-}
-
-func (l *Runner) commentTextsInRange(start, end token.Pos) []string {
-	if start == token.NoPos || end == token.NoPos {
-		return nil
-	}
-
-	file := l.pkg.FSet.File(start)
-	if file == nil {
-		return nil
-	}
-
-	out := make([]string, 0)
-
-	for _, astFile := range l.pkg.Files {
-		for _, group := range astFile.Comments {
-			if l.pkg.FSet.File(group.Pos()) != file {
-				continue
-			}
-
-			if group.Pos() < start || group.End() > end {
-				continue
-			}
-
-			text := strings.Join(strings.Fields(strings.TrimSpace(group.Text())), " ")
-			if text == "" {
-				continue
-			}
-
-			out = append(out, text)
-		}
-	}
-
-	return out
-}
-
-func (l *Runner) hasAttachedComment(node ast.Node) bool {
-	if node == nil {
-		return false
-	}
-
-	file := l.pkg.FSet.File(node.Pos())
-	if file == nil {
-		return false
-	}
-
-	start := l.pkg.FSet.Position(node.Pos())
-	end := l.pkg.FSet.Position(node.End())
-
-	for _, astFile := range l.pkg.Files {
-		for _, group := range astFile.Comments {
-			if l.pkg.FSet.File(group.Pos()) != file {
-				continue
-			}
-
-			groupStart := l.pkg.FSet.Position(group.Pos())
-			groupEnd := l.pkg.FSet.Position(group.End())
-
-			if groupStart.Line >= start.Line && groupStart.Line <= end.Line {
-				return true
-			}
-
-			if groupStart.Line == end.Line {
-				return true
-			}
-
-			if groupEnd.Line == start.Line-1 {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func tempAliasNameLooksDisposable(name string, rhs ast.Expr) bool {
@@ -305,7 +221,7 @@ func tempAliasNameLooksDisposable(name string, rhs ast.Expr) bool {
 	nameWords := stripAliasNoise(splitIdentifierWords(name))
 	leafWords := stripAliasNoise(splitIdentifierWords(leaf))
 
-	return len(nameWords) != 0 && sameStrings(nameWords, leafWords)
+	return len(nameWords) != 0 && slices.Equal(nameWords, leafWords)
 }
 
 func tempAliasLeafName(expr ast.Expr) (string, bool) {
@@ -320,10 +236,6 @@ func tempAliasLeafName(expr ast.Expr) (string, bool) {
 }
 
 func splitIdentifierWords(name string) []string {
-	if name == "" {
-		return nil
-	}
-
 	runes := []rune(name)
 	start := 0
 	words := make([]string, 0, identifierWordCap)
@@ -363,19 +275,10 @@ func appendIdentifierWord(runes []rune, start, end int, words *[]string) {
 		return
 	}
 
-	word := strings.ToLower(string(runes[start:end]))
-	if word == "" {
-		return
-	}
-
-	*words = append(*words, word)
+	*words = append(*words, strings.ToLower(string(runes[start:end])))
 }
 
 func stripAliasNoise(words []string) []string {
-	if len(words) == 0 {
-		return nil
-	}
-
 	out := make([]string, 0, len(words))
 	for _, word := range words {
 		switch word {
@@ -389,19 +292,19 @@ func stripAliasNoise(words []string) []string {
 	return out
 }
 
-func (l *Runner) objectUseSummary(node ast.Node, target types.Object) objectUseSummary {
+func summarizeObjectUse(info *types.Info, node ast.Node, target types.Object) objectUseSummary {
 	var out objectUseSummary
 
 	inspectWithAncestors(node, func(n ast.Node, ancestors []ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
-			if nodeUsesObject(n.Body, target, l.pkg.TypesInfo) {
+			if nodeUsesObject(n.Body, target, info) {
 				out.unsafe = true
 			}
 
 			return false
 		case *ast.Ident:
-			if l.pkg.TypesInfo.ObjectOf(n) != target {
+			if info.ObjectOf(n) != target {
 				return !out.unsafe
 			}
 
@@ -492,7 +395,7 @@ func nodeContainedInExprList(target ast.Node, exprs []ast.Expr) bool {
 }
 
 func nodeContains(root, target ast.Node) bool {
-	if root == nil || target == nil {
+	if root == nil {
 		return false
 	}
 

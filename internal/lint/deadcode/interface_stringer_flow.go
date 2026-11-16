@@ -5,7 +5,15 @@ import (
 	"go/types"
 )
 
-func (graph deadCodeGraph) fmtStringerForwardedParamUses(
+// fmtParamFlow finds which parameters and results of a function reach fmt
+// formatting, with per-function caches for the whole run.
+type fmtParamFlow struct {
+	decls     *funcDeclIndex
+	forwarded map[string][]fmtStringerParamUse
+	results   map[string]fmtStringerResultState
+}
+
+func (params fmtParamFlow) fmtStringerForwardedParamUses(
 	pkg *Package,
 	decl *ast.FuncDecl,
 	funcsSeen map[string]struct{},
@@ -26,7 +34,7 @@ func (graph deadCodeGraph) fmtStringerForwardedParamUses(
 
 	key := deadCodeObjectKey(obj)
 	if key != "" {
-		if cached, ok := graph.fmtStringerForwarded[key]; ok {
+		if cached, ok := params.forwarded[key]; ok {
 			return cached
 		}
 
@@ -45,31 +53,31 @@ func (graph deadCodeGraph) fmtStringerForwardedParamUses(
 	walkFmtStringerFlowBlock(
 		state,
 		decl.Body.List,
-		graph.fmtStringerParamFlowOps(pkg.TypesInfo, funcsSeen, seen, &out),
+		params.fmtStringerParamFlowOps(pkg.TypesInfo, funcsSeen, seen, &out),
 	)
 
 	if key != "" {
-		graph.fmtStringerForwarded[key] = out
+		params.forwarded[key] = out
 	}
 
 	return out
 }
 
-func (graph deadCodeGraph) fmtStringerParamFlowOps(
+func (params fmtParamFlow) fmtStringerParamFlowOps(
 	info *types.Info,
 	funcsSeen map[string]struct{},
 	seen map[fmtStringerParamUse]struct{},
 	out *[]fmtStringerParamUse,
 ) fmtStringerFlowOps[fmtStringerParamState] {
-	ops := graph.fmtStringerBaseParamFlowOps(info, funcsSeen)
+	ops := params.fmtStringerBaseParamFlowOps(info, funcsSeen)
 	ops.expr = func(state fmtStringerParamState, node ast.Node) {
-		graph.collectFmtStringerParamExprUses(info, state, node, funcsSeen, seen, out)
+		params.collectFmtStringerParamExprUses(info, state, node, funcsSeen, seen, out)
 	}
 
 	return ops
 }
 
-func (graph deadCodeGraph) collectFmtStringerParamExprUses(
+func (params fmtParamFlow) collectFmtStringerParamExprUses(
 	info *types.Info,
 	state fmtStringerParamState,
 	node ast.Node,
@@ -81,7 +89,7 @@ func (graph deadCodeGraph) collectFmtStringerParamExprUses(
 		appendUniqueFmtStringerParamUses(
 			seen,
 			out,
-			graph.fmtStringerForwardedCallParamUses(
+			params.fmtStringerForwardedCallParamUses(
 				info,
 				state.aliases,
 				state.slices,
@@ -200,7 +208,7 @@ func fmtStringerParamStateForSignature(sig *types.Signature) fmtStringerParamSta
 	return out
 }
 
-func (graph deadCodeGraph) updateFmtStringerAssignAliases(
+func (params fmtParamFlow) updateFmtStringerAssignAliases(
 	info *types.Info,
 	state fmtStringerParamState,
 	left []ast.Expr,
@@ -215,7 +223,7 @@ func (graph deadCodeGraph) updateFmtStringerAssignAliases(
 			continue
 		}
 
-		uses, sliceUses := graph.fmtStringerAssignedParamUses(
+		uses, sliceUses := params.fmtStringerAssignedParamUses(
 			info,
 			snapshot,
 			right,
@@ -242,7 +250,7 @@ func (graph deadCodeGraph) updateFmtStringerAssignAliases(
 	}
 }
 
-func (graph deadCodeGraph) fmtStringerAssignedParamUses(
+func (params fmtParamFlow) fmtStringerAssignedParamUses(
 	info *types.Info,
 	state fmtStringerParamState,
 	right []ast.Expr,
@@ -261,7 +269,7 @@ func (graph deadCodeGraph) fmtStringerAssignedParamUses(
 			resultIndex = index
 		}
 
-		if uses, sliceUses, ok := graph.fmtStringerCallResultParamUses(
+		if uses, sliceUses, ok := params.fmtStringerCallResultParamUses(
 			info,
 			state,
 			rhs,
@@ -280,7 +288,7 @@ func (graph deadCodeGraph) fmtStringerAssignedParamUses(
 	return nil, fmtStringerSliceParamUsesForExpr(info, state.aliases, state.slices, rhs)
 }
 
-func (graph deadCodeGraph) fmtStringerCallResultParamUses(
+func (params fmtParamFlow) fmtStringerCallResultParamUses(
 	info *types.Info,
 	state fmtStringerParamState,
 	expr ast.Expr,
@@ -294,25 +302,25 @@ func (graph deadCodeGraph) fmtStringerCallResultParamUses(
 
 	fn := calledFunc(info, call)
 
-	calleePkg := graph.packageForFunc(fn)
+	calleePkg := params.decls.packageForFunc(fn)
 	if calleePkg == nil {
 		return nil, nil, false
 	}
 
-	decl := graph.funcDeclForObject(calleePkg, fn)
+	decl := params.decls.funcDeclForObject(calleePkg, fn)
 	if decl == nil {
 		return nil, nil, false
 	}
 
-	results := graph.fmtStringerForwardedResultUses(calleePkg, decl, funcsSeen)
+	results := params.fmtStringerForwardedResultUses(calleePkg, decl, funcsSeen)
 
-	return graph.fmtStringerCallerParamUseList(
+	return fmtStringerCallerParamUseList(
 			info,
 			state,
 			call,
 			results.values[resultIndex],
 		),
-		graph.fmtStringerCallerParamUseList(
+		fmtStringerCallerParamUseList(
 			info,
 			state,
 			call,
@@ -321,7 +329,7 @@ func (graph deadCodeGraph) fmtStringerCallResultParamUses(
 		true
 }
 
-func (graph deadCodeGraph) fmtStringerCallerParamUseList(
+func fmtStringerCallerParamUseList(
 	info *types.Info,
 	state fmtStringerParamState,
 	call *ast.CallExpr,
@@ -338,7 +346,7 @@ func (graph deadCodeGraph) fmtStringerCallerParamUseList(
 	return dedupeComparable(out, fmtStringerDedupeMinLen)
 }
 
-func (graph deadCodeGraph) fmtStringerForwardedResultUses(
+func (params fmtParamFlow) fmtStringerForwardedResultUses(
 	pkg *Package,
 	decl *ast.FuncDecl,
 	funcsSeen map[string]struct{},
@@ -360,7 +368,7 @@ func (graph deadCodeGraph) fmtStringerForwardedResultUses(
 
 	key := deadCodeObjectKey(obj)
 	if key != "" {
-		if cached, ok := graph.fmtStringerResults[key]; ok {
+		if cached, ok := params.results[key]; ok {
 			return cached
 		}
 
@@ -379,38 +387,38 @@ func (graph deadCodeGraph) fmtStringerForwardedResultUses(
 	walkFmtStringerFlowBlock(
 		state,
 		decl.Body.List,
-		graph.fmtStringerResultFlowOps(pkg.TypesInfo, funcsSeen, namedResults, &out),
+		params.fmtStringerResultFlowOps(pkg.TypesInfo, funcsSeen, namedResults, &out),
 	)
 
 	if key != "" {
-		graph.fmtStringerResults[key] = out
+		params.results[key] = out
 	}
 
 	return out
 }
 
-func (graph deadCodeGraph) fmtStringerResultFlowOps(
+func (params fmtParamFlow) fmtStringerResultFlowOps(
 	info *types.Info,
 	funcsSeen map[string]struct{},
 	namedResults []*types.Var,
 	out *fmtStringerResultState,
 ) fmtStringerFlowOps[fmtStringerParamState] {
-	ops := graph.fmtStringerBaseParamFlowOps(info, funcsSeen)
+	ops := params.fmtStringerBaseParamFlowOps(info, funcsSeen)
 	ops.expr = func(fmtStringerParamState, ast.Node) {}
 	ops.returns = func(state fmtStringerParamState, stmt *ast.ReturnStmt) {
-		graph.collectFmtStringerResultUses(info, state, stmt, namedResults, out, funcsSeen)
+		params.collectFmtStringerResultUses(info, state, stmt, namedResults, out, funcsSeen)
 	}
 
 	return ops
 }
 
-func (graph deadCodeGraph) fmtStringerBaseParamFlowOps(
+func (params fmtParamFlow) fmtStringerBaseParamFlowOps(
 	info *types.Info,
 	funcsSeen map[string]struct{},
 ) fmtStringerFlowOps[fmtStringerParamState] {
 	return fmtStringerFlowOps[fmtStringerParamState]{
 		assign: func(state fmtStringerParamState, left []ast.Expr, right []ast.Expr) {
-			graph.updateFmtStringerAssignAliases(info, state, left, right, funcsSeen)
+			params.updateFmtStringerAssignAliases(info, state, left, right, funcsSeen)
 		},
 		rangeValue: func(state fmtStringerParamState, stmt *ast.RangeStmt) {
 			updateFmtStringerParamRangeValue(info, state, stmt)
@@ -431,7 +439,7 @@ func (graph deadCodeGraph) fmtStringerBaseParamFlowOps(
 	}
 }
 
-func (graph deadCodeGraph) collectFmtStringerResultUses(
+func (params fmtParamFlow) collectFmtStringerResultUses(
 	info *types.Info,
 	state fmtStringerParamState,
 	stmt *ast.ReturnStmt,
@@ -461,7 +469,7 @@ func (graph deadCodeGraph) collectFmtStringerResultUses(
 	}
 
 	for index := range resultCount {
-		uses, sliceUses := graph.fmtStringerAssignedParamUses(
+		uses, sliceUses := params.fmtStringerAssignedParamUses(
 			info,
 			state,
 			stmt.Results,
@@ -535,7 +543,7 @@ func identExprs(idents []*ast.Ident) []ast.Expr {
 	return out
 }
 
-func (graph deadCodeGraph) fmtStringerForwardedCallParamUses(
+func (params fmtParamFlow) fmtStringerForwardedCallParamUses(
 	info *types.Info,
 	aliases map[fmtStringerVarRef][]fmtStringerParamUse,
 	sliceAliases map[fmtStringerVarRef][]fmtStringerParamUse,
@@ -548,7 +556,7 @@ func (graph deadCodeGraph) fmtStringerForwardedCallParamUses(
 	}
 
 	if fn.Pkg().Path() != fmtPackagePath {
-		return graph.fmtStringerDelegatedCallParamUses(
+		return params.fmtStringerDelegatedCallParamUses(
 			info,
 			aliases,
 			sliceAliases,
@@ -590,7 +598,7 @@ func forEachFmtStringerArg(
 	}
 }
 
-func (graph deadCodeGraph) fmtStringerDelegatedCallParamUses(
+func (params fmtParamFlow) fmtStringerDelegatedCallParamUses(
 	info *types.Info,
 	aliases map[fmtStringerVarRef][]fmtStringerParamUse,
 	sliceAliases map[fmtStringerVarRef][]fmtStringerParamUse,
@@ -598,17 +606,17 @@ func (graph deadCodeGraph) fmtStringerDelegatedCallParamUses(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
 ) []fmtStringerParamUse {
-	calleePkg := graph.packageForFunc(fn)
+	calleePkg := params.decls.packageForFunc(fn)
 	if calleePkg == nil {
 		return nil
 	}
 
-	decl := graph.funcDeclForObject(calleePkg, fn)
+	decl := params.decls.funcDeclForObject(calleePkg, fn)
 	if decl == nil {
 		return nil
 	}
 
-	calleeUses := graph.fmtStringerForwardedParamUses(calleePkg, decl, funcsSeen)
+	calleeUses := params.fmtStringerForwardedParamUses(calleePkg, decl, funcsSeen)
 
 	out := make([]fmtStringerParamUse, 0, len(calleeUses))
 	for _, use := range calleeUses {

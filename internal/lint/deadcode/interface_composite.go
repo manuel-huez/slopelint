@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-func (graph deadCodeGraph) valueSpecInterfaceMethodUses(
+func valueSpecInterfaceMethodUses(
 	l *packageLinter,
 	spec *ast.ValueSpec,
 ) map[string]struct{} {
@@ -26,13 +26,13 @@ func (graph deadCodeGraph) valueSpecInterfaceMethodUses(
 	}
 
 	for _, value := range spec.Values {
-		graph.addInterfaceMethodsForValueTargets(l, out, value, targets)
+		addInterfaceMethodsForValueTargets(l, out, value, targets)
 	}
 
 	return out
 }
 
-func (graph deadCodeGraph) compositeLitInterfaceMethodUses(
+func compositeLitInterfaceMethodUses(
 	l *packageLinter,
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
@@ -41,18 +41,18 @@ func (graph deadCodeGraph) compositeLitInterfaceMethodUses(
 	}
 
 	out := make(map[string]struct{})
-	for key := range graph.compositeLitCollectionInterfaceMethodUses(l, lit) {
+	for key := range compositeLitCollectionInterfaceMethodUses(l, lit) {
 		out[key] = struct{}{}
 	}
 
-	for key := range graph.compositeLitStructInterfaceMethodUses(l, lit) {
+	for key := range compositeLitStructInterfaceMethodUses(l, lit) {
 		out[key] = struct{}{}
 	}
 
 	return out
 }
 
-func (graph deadCodeGraph) compositeLitCollectionInterfaceMethodUses(
+func compositeLitCollectionInterfaceMethodUses(
 	l *packageLinter,
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
@@ -68,13 +68,13 @@ func (graph deadCodeGraph) compositeLitCollectionInterfaceMethodUses(
 			elt = keyValue.Value
 		}
 
-		graph.addInterfaceMethodsForValue(l, out, elt, elemType)
+		addInterfaceMethodsForValue(l, out, elt, elemType)
 	}
 
 	return out
 }
 
-func (graph deadCodeGraph) compositeLitStructInterfaceMethodUses(
+func compositeLitStructInterfaceMethodUses(
 	l *packageLinter,
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
@@ -91,7 +91,7 @@ func (graph deadCodeGraph) compositeLitStructInterfaceMethodUses(
 			target = field.Type()
 		}
 
-		graph.addInterfaceMethodsForValue(l, out, elt, target)
+		addInterfaceMethodsForValue(l, out, elt, target)
 	})
 
 	return out

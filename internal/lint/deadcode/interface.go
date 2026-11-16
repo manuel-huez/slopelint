@@ -4,27 +4,33 @@ import (
 	"go/ast"
 )
 
-func (graph deadCodeGraph) interfaceMethodUses(
+// ifaceUses finds interface methods a value may reach. When the dynamic type
+// is unknown, it checks the receiver types of candidate methods.
+type ifaceUses struct {
+	candidates map[string]deadCodeDecl
+}
+
+func (iface ifaceUses) interfaceMethodUses(
 	l *packageLinter,
 	node ast.Node,
 ) map[string]struct{} {
 	switch node := node.(type) {
 	case *ast.CallExpr:
-		return graph.callInterfaceMethodUses(l, node)
+		return callInterfaceMethodUses(l, node)
 	case *ast.TypeSwitchStmt:
-		return graph.typeSwitchInterfaceMethodUses(l, node)
+		return iface.typeSwitchInterfaceMethodUses(l, node)
 	case *ast.TypeAssertExpr:
-		return graph.typeAssertInterfaceMethodUses(l, node)
+		return iface.typeAssertInterfaceMethodUses(l, node)
 	case *ast.FuncDecl:
-		return graph.funcDeclReturnInterfaceMethodUses(l, node)
+		return funcDeclReturnInterfaceMethodUses(l, node)
 	case *ast.FuncLit:
-		return graph.funcLitReturnInterfaceMethodUses(l, node)
+		return funcLitReturnInterfaceMethodUses(l, node)
 	case *ast.AssignStmt:
-		return graph.assignInterfaceMethodUses(l, node)
+		return assignInterfaceMethodUses(l, node)
 	case *ast.ValueSpec:
-		return graph.valueSpecInterfaceMethodUses(l, node)
+		return valueSpecInterfaceMethodUses(l, node)
 	case *ast.CompositeLit:
-		return graph.compositeLitInterfaceMethodUses(l, node)
+		return compositeLitInterfaceMethodUses(l, node)
 	default:
 		return nil
 	}

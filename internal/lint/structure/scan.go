@@ -2,151 +2,113 @@ package structure
 
 import (
 	"go/ast"
-	"go/token"
-	"go/types"
 )
 
-type boolBranchKind uint8
+// blockFinding is a finding at one statement-list position. points is how
+// many simplifications it counts for in the function complexity score.
+type blockFinding struct {
+	Finding
 
-const (
-	boolBranchInvalid boolBranchKind = iota
-	boolBranchReturn
-	boolBranchAssign
-)
-
-const (
-	ancestorStackCap  = 8
-	identifierWordCap = 4
-)
-
-type boolBranchAction struct {
-	kind     boolBranchKind
-	value    bool
-	targetID string
+	points int
 }
 
-type boolIfThenReturnMatch struct {
-	cond      ast.Expr
-	whenTrue  bool
-	whenFalse bool
-	pos       token.Pos
+// blockFindingsAt runs the statement-list checks at stmts[idx] in report order.
+func (l *Runner) blockFindingsAt(stmts []ast.Stmt, idx int, ctx blockContext) []blockFinding {
+	var out []blockFinding
+
+	add := func(finding Finding, ok bool) {
+		if ok {
+			out = append(out, blockFinding{Finding: finding, points: 1})
+		}
+	}
+
+	add(boolRules{l.q}.ceremonyAt(stmts, idx))
+
+	if finding, guards, ok := (branchRules{l.q}).returnGuardRunAt(stmts, idx); ok {
+		out = append(out, blockFinding{Finding: finding, points: guards})
+	}
+
+	add(tempAliasRules{l.q}.singleUseAt(stmts, idx))
+	add(collectionRules{l.q}.appendLenGuard(stmts[idx]))
+	add(collectionRules{l.q}.rangeGuard(stmts[idx]))
+	add(collectionRules{l.q}.emptyRangeReturnGuard(stmts, idx, ctx))
+	add(branchRules{l.q}.finalIfPyramidAt(stmts, idx, ctx))
+
+	return out
 }
 
-type switchBranchShape struct {
-	clause   *ast.CaseClause
-	key      string
-	comments []string
+func (l *Runner) stmtFindings(stmt ast.Stmt) []Finding {
+	switch stmt := stmt.(type) {
+	case *ast.IfStmt:
+		if finding, ok := (branchRules{l.q}).identicalIf(stmt); ok {
+			return []Finding{finding}
+		}
+	case *ast.ForStmt:
+		return loopRules{l.q}.forLoop(stmt)
+	case *ast.RangeStmt:
+		return loopRules{l.q}.rangeLoop(stmt)
+	case *ast.SwitchStmt:
+		out := branchRules{l.q}.identicalSwitchCases(stmt)
+		if finding, ok := redundantBoolDefault(l.q.pkg.TypesInfo, stmt); ok {
+			out = append(out, finding)
+		}
+
+		return out
+	}
+
+	return nil
 }
 
-type boolSwitchCoverage struct {
-	defaultClause *ast.CaseClause
-	coveredTrue   bool
-	coveredFalse  bool
+// stmtWalker visits a function body in source order. atIndex sees each
+// statement-list position, then atStmt sees the statement there before its
+// nested lists. Else-if and labeled statements sit outside any list, so they
+// reach atStmt only. Nested lists get an empty blockContext.
+type stmtWalker struct {
+	atIndex func(stmts []ast.Stmt, idx int, ctx blockContext)
+	atStmt  func(stmt ast.Stmt)
 }
 
-type tempAliasDecl struct {
-	name *ast.Ident
-	obj  types.Object
-	rhs  ast.Expr
-}
-
-type appendLenGuardMatch struct {
-	pos    token.Pos
-	source string
-}
-
-type rangeGuard struct {
-	source string
-	hasLen bool
-	hasNil bool
-}
-
-type rangeGuardMatch struct {
-	pos    token.Pos
-	source string
-	guard  string
-}
-
-type emptyRangeGuardMatch struct {
-	pos    token.Pos
-	source string
-	guard  string
-}
-
-type objectUseSummary struct {
-	reads  int
-	unsafe bool
-}
-
-func (l *Runner) scanStructuralBlock(stmts []ast.Stmt, ctx blockContext) {
+func (w stmtWalker) walkList(stmts []ast.Stmt, ctx blockContext) {
 	for idx, stmt := range stmts {
-		l.checkRedundantBoolReturn(stmts, idx)
-		l.checkRedundantReturnGuardRun(stmts, idx)
-		l.checkSingleUseTempAlias(stmts, idx)
-		l.checkRedundantAppendLenGuard(stmt)
-		l.checkRedundantRangeGuard(stmt)
-		l.checkEmptyRangeReturnGuard(stmts, idx, ctx)
-		l.checkNestedFinalIfPyramid(stmts, idx, ctx)
-		l.scanStructuralStmt(stmt)
+		w.atIndex(stmts, idx, ctx)
+		w.walkStmt(stmt)
 	}
 }
 
-func (l *Runner) scanStructuralStmt(stmt ast.Stmt) {
+func (w stmtWalker) walkStmt(stmt ast.Stmt) {
+	w.atStmt(stmt)
+
 	switch stmt := stmt.(type) {
 	case *ast.BlockStmt:
-		l.scanStructuralBlock(stmt.List, blockContext{})
+		w.walkList(stmt.List, blockContext{})
 	case *ast.IfStmt:
-		l.scanStructuralIfStmt(stmt)
+		w.walkList(stmt.Body.List, blockContext{})
+
+		if stmt.Else != nil {
+			w.walkStmt(stmt.Else)
+		}
 	case *ast.ForStmt:
-		l.checkForLoopPerformance(stmt)
-		l.scanStructuralBlock(stmt.Body.List, blockContext{})
+		w.walkList(stmt.Body.List, blockContext{})
 	case *ast.RangeStmt:
-		l.checkRangeLoopPerformance(stmt)
-		l.scanStructuralBlock(stmt.Body.List, blockContext{})
+		w.walkList(stmt.Body.List, blockContext{})
 	case *ast.SwitchStmt:
-		l.scanStructuralSwitchStmt(stmt)
+		w.walkClauses(stmt.Body)
 	case *ast.TypeSwitchStmt:
-		l.scanCaseClauseBodies(stmt.Body.List)
+		w.walkClauses(stmt.Body)
 	case *ast.SelectStmt:
-		l.scanCommClauseBodies(stmt.Body.List)
+		w.walkClauses(stmt.Body)
 	case *ast.LabeledStmt:
-		l.scanStructuralStmt(stmt.Stmt)
+		w.walkStmt(stmt.Stmt)
 	}
 }
 
-func (l *Runner) scanStructuralIfStmt(stmt *ast.IfStmt) {
-	l.checkIdenticalIfBranches(stmt)
-	l.scanStructuralBlock(stmt.Body.List, blockContext{})
-
-	if stmt.Else != nil {
-		l.scanStructuralStmt(stmt.Else)
-	}
-}
-
-func (l *Runner) scanStructuralSwitchStmt(stmt *ast.SwitchStmt) {
-	l.checkIdenticalSwitchBranches(stmt)
-	l.checkExhaustiveBoolDefault(stmt)
-	l.scanCaseClauseBodies(stmt.Body.List)
-}
-
-func (l *Runner) scanCaseClauseBodies(list []ast.Stmt) {
-	for _, raw := range list {
-		clause, ok := raw.(*ast.CaseClause)
-		if !ok {
-			continue
+func (w stmtWalker) walkClauses(body *ast.BlockStmt) {
+	for _, raw := range body.List {
+		switch clause := raw.(type) {
+		case *ast.CaseClause:
+			w.walkList(clause.Body, blockContext{})
+		case *ast.CommClause:
+			w.walkList(clause.Body, blockContext{})
 		}
-
-		l.scanStructuralBlock(clause.Body, blockContext{})
-	}
-}
-
-func (l *Runner) scanCommClauseBodies(list []ast.Stmt) {
-	for _, raw := range list {
-		clause, ok := raw.(*ast.CommClause)
-		if !ok {
-			continue
-		}
-
-		l.scanStructuralBlock(clause.Body, blockContext{})
 	}
 }

@@ -6,7 +6,13 @@ import (
 	"strings"
 )
 
-func (graph deadCodeGraph) reflectedGenericDecodeTypes(
+// reflectedTypeParams finds which type parameters of a generic function
+// reach codec calls, following delegated calls and function literal args.
+type reflectedTypeParams struct {
+	decls *funcDeclIndex
+}
+
+func (refl reflectionUses) reflectedGenericDecodeTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
@@ -21,7 +27,7 @@ func (graph deadCodeGraph) reflectedGenericDecodeTypes(
 	}
 
 	// Source inspection wins; name fallback is only for external generic codecs.
-	decodes, inspected := graph.reflectedDecodeTypeParamDecodes(fn)
+	decodes, inspected := refl.typeParams.reflectedDecodeTypeParamDecodes(fn)
 	if !inspected {
 		decodes = fallbackGenericDecodeTypeParamDecodes(fn, typeArgs.Len(), l.pkg)
 	}
@@ -29,7 +35,7 @@ func (graph deadCodeGraph) reflectedGenericDecodeTypes(
 	return reflectedGenericTargetsForTypeArgs(typeArgs, decodes)
 }
 
-func (graph deadCodeGraph) reflectedGenericMarshalTypes(
+func (refl reflectionUses) reflectedGenericMarshalTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
@@ -43,7 +49,7 @@ func (graph deadCodeGraph) reflectedGenericMarshalTypes(
 		return nil
 	}
 
-	marshals, inspected := graph.reflectedMarshalTypeParamUses(fn)
+	marshals, inspected := refl.typeParams.reflectedMarshalTypeParamUses(fn)
 	if !inspected {
 		marshals = fallbackGenericMarshalTypeParamUses(fn, l.pkg)
 	}
@@ -360,19 +366,19 @@ func genericCodecFallbackNamePath(fn *types.Func) (string, string, bool) {
 	return name, path, true
 }
 
-func (graph deadCodeGraph) reflectedDecodeTypeParamDecodes(
+func (typeParams reflectedTypeParams) reflectedDecodeTypeParamDecodes(
 	fn *types.Func,
 ) ([]reflectedTypeParamUse, bool) {
-	return graph.reflectedDecodeTypeParamDecodesSeen(fn, make(map[string]struct{}))
+	return typeParams.reflectedDecodeTypeParamDecodesSeen(fn, make(map[string]struct{}))
 }
 
-func (graph deadCodeGraph) reflectedDecodeTypeParamDecodesSeen(
+func (typeParams reflectedTypeParams) reflectedDecodeTypeParamDecodesSeen(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
 ) ([]reflectedTypeParamUse, bool) {
 	out := make([]reflectedTypeParamUse, 0)
 
-	inspected := graph.inspectReflectedFuncTypeParamUsesSeen(
+	inspected := typeParams.inspectReflectedFuncTypeParamUsesSeen(
 		fn,
 		funcsSeen,
 		func(
@@ -381,7 +387,7 @@ func (graph deadCodeGraph) reflectedDecodeTypeParamDecodesSeen(
 			typeParamIndexes map[*types.TypeParam]int,
 			scope *ast.BlockStmt,
 		) {
-			graph.collectReflectedDecodeCallTypeParamDecodes(
+			typeParams.collectReflectedDecodeCallTypeParamDecodes(
 				pkg,
 				call,
 				typeParamIndexes,
@@ -398,19 +404,19 @@ func (graph deadCodeGraph) reflectedDecodeTypeParamDecodesSeen(
 	return dedupeComparable(out, reflectedDedupeMinLen), true
 }
 
-func (graph deadCodeGraph) reflectedMarshalTypeParamUses(
+func (typeParams reflectedTypeParams) reflectedMarshalTypeParamUses(
 	fn *types.Func,
 ) ([]reflectedMarshalTypeParamUse, bool) {
-	return graph.reflectedMarshalTypeParamUsesSeen(fn, make(map[string]struct{}))
+	return typeParams.reflectedMarshalTypeParamUsesSeen(fn, make(map[string]struct{}))
 }
 
-func (graph deadCodeGraph) reflectedMarshalTypeParamUsesSeen(
+func (typeParams reflectedTypeParams) reflectedMarshalTypeParamUsesSeen(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
 ) ([]reflectedMarshalTypeParamUse, bool) {
 	out := make([]reflectedMarshalTypeParamUse, 0)
 
-	inspected := graph.inspectReflectedFuncTypeParamUsesSeen(
+	inspected := typeParams.inspectReflectedFuncTypeParamUsesSeen(
 		fn,
 		funcsSeen,
 		func(
@@ -419,7 +425,7 @@ func (graph deadCodeGraph) reflectedMarshalTypeParamUsesSeen(
 			typeParamIndexes map[*types.TypeParam]int,
 			scope *ast.BlockStmt,
 		) {
-			graph.collectReflectedMarshalCallTypeParamUses(
+			typeParams.collectReflectedMarshalCallTypeParamUses(
 				pkg,
 				call,
 				typeParamIndexes,
@@ -436,17 +442,17 @@ func (graph deadCodeGraph) reflectedMarshalTypeParamUsesSeen(
 	return dedupeReflectedMarshalTypeParamUses(out), true
 }
 
-func (graph deadCodeGraph) inspectReflectedFuncTypeParamUsesSeen(
+func (typeParams reflectedTypeParams) inspectReflectedFuncTypeParamUsesSeen(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
 	visit func(*Package, *ast.CallExpr, map[*types.TypeParam]int, *ast.BlockStmt),
 ) bool {
-	pkg := graph.packageForFunc(fn)
+	pkg := typeParams.decls.packageForFunc(fn)
 	if pkg == nil {
 		return false
 	}
 
-	decl := graph.funcDeclForObject(pkg, fn)
+	decl := typeParams.decls.funcDeclForObject(pkg, fn)
 	if decl == nil || decl.Body == nil {
 		return false
 	}
@@ -473,7 +479,7 @@ func (graph deadCodeGraph) inspectReflectedFuncTypeParamUsesSeen(
 	return true
 }
 
-func (graph deadCodeGraph) collectReflectedDecodeCallTypeParamDecodes(
+func (typeParams reflectedTypeParams) collectReflectedDecodeCallTypeParamDecodes(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
@@ -499,14 +505,14 @@ func (graph deadCodeGraph) collectReflectedDecodeCallTypeParamDecodes(
 		return
 	}
 
-	graph.collectDelegatedReflectedTypeParamDecodes(
+	typeParams.collectDelegatedReflectedTypeParamDecodes(
 		pkg,
 		call,
 		typeParamIndexes,
 		funcsSeen,
 		out,
 	)
-	graph.collectFuncLitArgReflectedTypeParamDecodes(
+	typeParams.collectFuncLitArgReflectedTypeParamDecodes(
 		pkg,
 		call,
 		typeParamIndexes,
@@ -516,7 +522,7 @@ func (graph deadCodeGraph) collectReflectedDecodeCallTypeParamDecodes(
 	)
 }
 
-func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
+func (typeParams reflectedTypeParams) collectDelegatedReflectedTypeParamDecodes(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
@@ -530,7 +536,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 
 	callee := calledFunc(pkg.TypesInfo, call)
 
-	decodes, inspected := graph.reflectedDecodeTypeParamDecodesSeen(callee, funcsSeen)
+	decodes, inspected := typeParams.reflectedDecodeTypeParamDecodesSeen(callee, funcsSeen)
 	if !inspected {
 		decodes = fallbackGenericDecodeTypeParamDecodes(callee, typeArgs.Len(), pkg)
 	}
@@ -575,7 +581,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamDecodes(
 	}
 }
 
-func (graph deadCodeGraph) collectReflectedMarshalCallTypeParamUses(
+func (typeParams reflectedTypeParams) collectReflectedMarshalCallTypeParamUses(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
@@ -599,14 +605,14 @@ func (graph deadCodeGraph) collectReflectedMarshalCallTypeParamUses(
 		return
 	}
 
-	graph.collectDelegatedReflectedTypeParamMarshals(
+	typeParams.collectDelegatedReflectedTypeParamMarshals(
 		pkg,
 		call,
 		typeParamIndexes,
 		funcsSeen,
 		out,
 	)
-	graph.collectFuncLitArgReflectedTypeParamMarshals(
+	typeParams.collectFuncLitArgReflectedTypeParamMarshals(
 		pkg,
 		call,
 		typeParamIndexes,
@@ -616,7 +622,7 @@ func (graph deadCodeGraph) collectReflectedMarshalCallTypeParamUses(
 	)
 }
 
-func (graph deadCodeGraph) collectDelegatedReflectedTypeParamMarshals(
+func (typeParams reflectedTypeParams) collectDelegatedReflectedTypeParamMarshals(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
@@ -630,7 +636,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedTypeParamMarshals(
 
 	callee := calledFunc(pkg.TypesInfo, call)
 
-	marshals, inspected := graph.reflectedMarshalTypeParamUsesSeen(callee, funcsSeen)
+	marshals, inspected := typeParams.reflectedMarshalTypeParamUsesSeen(callee, funcsSeen)
 	if !inspected {
 		marshals = fallbackGenericMarshalTypeParamUses(callee, pkg)
 	}
@@ -711,15 +717,15 @@ func reflectedTargetCall(
 	return fn, codec, ok
 }
 
-func (graph deadCodeGraph) packageForFunc(fn *types.Func) *Package {
+func (decls *funcDeclIndex) packageForFunc(fn *types.Func) *Package {
 	if fn == nil || fn.Pkg() == nil {
 		return nil
 	}
 
-	return graph.packages[fn.Pkg().Path()]
+	return decls.packages[fn.Pkg().Path()]
 }
 
-func (graph deadCodeGraph) funcDeclForObject(pkg *Package, fn *types.Func) *ast.FuncDecl {
+func (decls *funcDeclIndex) funcDeclForObject(pkg *Package, fn *types.Func) *ast.FuncDecl {
 	if pkg == nil || fn == nil {
 		return nil
 	}
@@ -729,11 +735,11 @@ func (graph deadCodeGraph) funcDeclForObject(pkg *Package, fn *types.Func) *ast.
 		target = fn
 	}
 
-	if decl, ok := graph.funcDeclCache[target]; ok {
+	if decl, ok := decls.cache[target]; ok {
 		return decl
 	}
 
-	if _, ok := graph.funcDeclMisses[target]; ok {
+	if _, ok := decls.misses[target]; ok {
 		return nil
 	}
 
@@ -750,13 +756,13 @@ func (graph deadCodeGraph) funcDeclForObject(pkg *Package, fn *types.Func) *ast.
 		}
 
 		if obj.Origin() == target || deadCodeObjectKey(obj) == targetKey {
-			graph.funcDeclCache[target] = decl
+			decls.cache[target] = decl
 
 			return decl
 		}
 	}
 
-	graph.funcDeclMisses[target] = struct{}{}
+	decls.misses[target] = struct{}{}
 
 	return nil
 }

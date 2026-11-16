@@ -5,13 +5,33 @@ import (
 	"go/types"
 )
 
+// fmtConcreteFlow tracks the concrete types that reach fmt calls, so String
+// methods of those types stay live.
+type fmtConcreteFlow struct {
+	iface     ifaceUses
+	decls     *funcDeclIndex
+	params    fmtParamFlow
+	summaries *fmtVarSummaries
+}
+
+// fmtVarSummaries holds the concrete types each package-level var may hold.
+// built marks the summaries as computed; live limits which functions add to
+// them, and is nil before the first liveness pass.
+type fmtVarSummaries struct {
+	values  map[string][]types.Type
+	slices  map[string][]types.Type
+	unknown map[string]struct{}
+	built   bool
+	live    map[string]struct{}
+}
+
 type fmtStringerConcreteState struct {
 	values  map[fmtStringerVarRef][]types.Type
 	slices  map[fmtStringerVarRef][]types.Type
 	unknown map[fmtStringerVarRef]struct{}
 }
 
-func (graph deadCodeGraph) fmtStringerFlowUses(
+func (flow fmtConcreteFlow) fmtStringerFlowUses(
 	l *packageLinter,
 	node ast.Node,
 ) map[string]struct{} {
@@ -25,17 +45,15 @@ func (graph deadCodeGraph) fmtStringerFlowUses(
 
 		stmts = node.Body.List
 	case *ast.FuncLit:
-		if node.Body == nil {
-			return nil
-		}
-
 		stmts = node.Body.List
 	case *ast.ValueSpec:
+		flow.ensureFmtStringerVarSummaries()
+
 		out := make(map[string]struct{})
 
-		state := graph.initialFmtStringerConcreteState()
+		state := emptyFmtStringerConcreteState()
 		for _, value := range node.Values {
-			graph.collectFmtStringerConcreteExprUses(l, out, state, value)
+			flow.collectFmtStringerConcreteExprUses(l, out, state, value)
 		}
 
 		return out
@@ -43,30 +61,25 @@ func (graph deadCodeGraph) fmtStringerFlowUses(
 		return nil
 	}
 
+	flow.ensureFmtStringerVarSummaries()
+
 	out := make(map[string]struct{})
-	state := graph.initialFmtStringerConcreteState()
-	graph.collectFmtStringerConcreteBlockUses(l, out, state, stmts)
+	flow.collectFmtStringerConcreteBlockUses(l, out, emptyFmtStringerConcreteState(), stmts)
 
 	return out
 }
 
-func (graph deadCodeGraph) initialFmtStringerConcreteState() fmtStringerConcreteState {
-	graph.ensureFmtStringerVarSummaries()
-
-	return emptyFmtStringerConcreteState()
-}
-
-func (graph deadCodeGraph) ensureFmtStringerVarSummaries() {
-	if _, ok := graph.fmtStringerSummary["all"]; ok {
+func (flow fmtConcreteFlow) ensureFmtStringerVarSummaries() {
+	if flow.summaries.built {
 		return
 	}
 
-	graph.fmtStringerSummary["all"] = struct{}{}
-	for range graph.fmtStringerSummaryPasses() {
+	flow.summaries.built = true
+	for range flow.fmtStringerSummaryPasses() {
 		changed := false
 
-		for _, pkg := range graph.packages {
-			if graph.updateFmtStringerPackageVarSummaries(newPackageLinter(pkg)) {
+		for _, pkg := range flow.decls.packages {
+			if flow.updateFmtStringerPackageVarSummaries(newPackageLinter(pkg)) {
 				changed = true
 			}
 		}
@@ -77,10 +90,10 @@ func (graph deadCodeGraph) ensureFmtStringerVarSummaries() {
 	}
 }
 
-func (graph deadCodeGraph) fmtStringerSummaryPasses() int {
+func (flow fmtConcreteFlow) fmtStringerSummaryPasses() int {
 	count := 1
 
-	for _, pkg := range graph.packages {
+	for _, pkg := range flow.decls.packages {
 		for _, decl := range pkg.ProductionDecls {
 			for _, spec := range valueSpecsForDecl(decl) {
 				count += len(spec.Names)
@@ -91,7 +104,7 @@ func (graph deadCodeGraph) fmtStringerSummaryPasses() int {
 	return count
 }
 
-func (graph deadCodeGraph) updateFmtStringerPackageVarSummaries(l *packageLinter) bool {
+func (flow fmtConcreteFlow) updateFmtStringerPackageVarSummaries(l *packageLinter) bool {
 	changed := false
 	baseState := emptyFmtStringerConcreteState()
 	vars := make(map[*types.Var]struct{})
@@ -107,7 +120,7 @@ func (graph deadCodeGraph) updateFmtStringerPackageVarSummaries(l *packageLinter
 				vars[obj] = struct{}{}
 			}
 
-			graph.updateFmtStringerConcreteAssigns(
+			flow.updateFmtStringerConcreteAssigns(
 				l.pkg.TypesInfo,
 				baseState,
 				identExprs(spec.Names),
@@ -122,15 +135,15 @@ func (graph deadCodeGraph) updateFmtStringerPackageVarSummaries(l *packageLinter
 		}
 
 		if fn.Name.Name == initFuncName {
-			baseState = graph.collectFmtStringerConcreteBlockUses(l, nil, baseState, fn.Body.List)
+			baseState = flow.collectFmtStringerConcreteBlockUses(l, nil, baseState, fn.Body.List)
 		}
 	}
 
-	state := graph.fmtStringerPackageVarSummaryState(l, baseState)
+	state := flow.fmtStringerPackageVarSummaryState(l, baseState)
 	addFmtStringerPackageVarsForState(vars, state)
 
 	for obj := range vars {
-		if graph.updateFmtStringerPackageVarSummary(state, obj) {
+		if flow.summaries.updateFmtStringerPackageVarSummary(state, obj) {
 			changed = true
 		}
 	}
@@ -138,22 +151,22 @@ func (graph deadCodeGraph) updateFmtStringerPackageVarSummaries(l *packageLinter
 	return changed
 }
 
-func (graph deadCodeGraph) fmtStringerPackageVarSummaryState(
+func (flow fmtConcreteFlow) fmtStringerPackageVarSummaryState(
 	l *packageLinter,
 	baseState fmtStringerConcreteState,
 ) fmtStringerConcreteState {
-	if graph.fmtStringerLive == nil {
+	if flow.summaries.live == nil {
 		return baseState
 	}
 
 	state := cloneFmtStringerConcreteState(baseState)
 
 	for _, fn := range l.pkg.ProductionFuncs {
-		if !fmtStringerLiveSummaryFunc(l.pkg, fn, graph.fmtStringerLive) {
+		if !fmtStringerLiveSummaryFunc(l.pkg, fn, flow.summaries.live) {
 			continue
 		}
 
-		next := graph.collectFmtStringerConcreteBlockUses(
+		next := flow.collectFmtStringerConcreteBlockUses(
 			l,
 			nil,
 			cloneFmtStringerConcreteState(baseState),
@@ -224,15 +237,15 @@ func fmtStringerLiveSummaryFunc(
 	return ok
 }
 
-func (graph *deadCodeGraph) resetFmtStringerVarSummaries(live map[string]struct{}) {
-	graph.fmtStringerLive = live
-	clear(graph.fmtStringerVarValues)
-	clear(graph.fmtStringerVarSlices)
-	clear(graph.fmtStringerVarUnknown)
-	clear(graph.fmtStringerSummary)
+func (summaries *fmtVarSummaries) resetFmtStringerVarSummaries(live map[string]struct{}) {
+	summaries.live = live
+	clear(summaries.values)
+	clear(summaries.slices)
+	clear(summaries.unknown)
+	summaries.built = false
 }
 
-func (graph deadCodeGraph) updateFmtStringerPackageVarSummary(
+func (summaries *fmtVarSummaries) updateFmtStringerPackageVarSummary(
 	state fmtStringerConcreteState,
 	obj *types.Var,
 ) bool {
@@ -243,23 +256,23 @@ func (graph deadCodeGraph) updateFmtStringerPackageVarSummary(
 
 	ref := fmtStringerVarRef{obj: obj}
 	if _, ok := state.unknown[ref]; ok {
-		return graph.setFmtStringerVarUnknown(key)
+		return summaries.setFmtStringerVarUnknown(key)
 	}
 
-	return graph.mergeFmtStringerVarSummary(key, state.values[ref], state.slices[ref])
+	return summaries.mergeFmtStringerVarSummary(key, state.values[ref], state.slices[ref])
 }
 
-func (graph deadCodeGraph) mergeFmtStringerVarSummary(
+func (summaries *fmtVarSummaries) mergeFmtStringerVarSummary(
 	key string,
 	values []types.Type,
 	slices []types.Type,
 ) bool {
-	if _, ok := graph.fmtStringerVarUnknown[key]; ok {
+	if _, ok := summaries.unknown[key]; ok {
 		return false
 	}
 
-	oldValues := graph.fmtStringerVarValues[key]
-	oldSlices := graph.fmtStringerVarSlices[key]
+	oldValues := summaries.values[key]
+	oldSlices := summaries.slices[key]
 	nextValues := dedupeFmtStringerConcreteTypes(
 		append(append([]types.Type(nil), oldValues...), values...),
 	)
@@ -273,28 +286,28 @@ func (graph deadCodeGraph) mergeFmtStringerVarSummary(
 	}
 
 	if len(nextValues) == 0 {
-		delete(graph.fmtStringerVarValues, key)
+		delete(summaries.values, key)
 	} else {
-		graph.fmtStringerVarValues[key] = nextValues
+		summaries.values[key] = nextValues
 	}
 
 	if len(nextSlices) == 0 {
-		delete(graph.fmtStringerVarSlices, key)
+		delete(summaries.slices, key)
 	} else {
-		graph.fmtStringerVarSlices[key] = nextSlices
+		summaries.slices[key] = nextSlices
 	}
 
 	return true
 }
 
-func (graph deadCodeGraph) setFmtStringerVarUnknown(key string) bool {
-	if _, ok := graph.fmtStringerVarUnknown[key]; ok {
+func (summaries *fmtVarSummaries) setFmtStringerVarUnknown(key string) bool {
+	if _, ok := summaries.unknown[key]; ok {
 		return false
 	}
 
-	graph.fmtStringerVarUnknown[key] = struct{}{}
-	delete(graph.fmtStringerVarValues, key)
-	delete(graph.fmtStringerVarSlices, key)
+	summaries.unknown[key] = struct{}{}
+	delete(summaries.values, key)
+	delete(summaries.slices, key)
 
 	return true
 }
@@ -307,28 +320,28 @@ func emptyFmtStringerConcreteState() fmtStringerConcreteState {
 	}
 }
 
-func (graph deadCodeGraph) collectFmtStringerConcreteBlockUses(
+func (flow fmtConcreteFlow) collectFmtStringerConcreteBlockUses(
 	l *packageLinter,
 	out map[string]struct{},
 	state fmtStringerConcreteState,
 	stmts []ast.Stmt,
 ) fmtStringerConcreteState {
-	return walkFmtStringerFlowBlock(state, stmts, graph.fmtStringerConcreteFlowOps(l, out))
+	return walkFmtStringerFlowBlock(state, stmts, flow.fmtStringerConcreteFlowOps(l, out))
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteFlowOps(
+func (flow fmtConcreteFlow) fmtStringerConcreteFlowOps(
 	l *packageLinter,
 	out map[string]struct{},
 ) fmtStringerFlowOps[fmtStringerConcreteState] {
 	return fmtStringerFlowOps[fmtStringerConcreteState]{
 		expr: func(state fmtStringerConcreteState, node ast.Node) {
-			graph.collectFmtStringerConcreteExprUses(l, out, state, node)
+			flow.collectFmtStringerConcreteExprUses(l, out, state, node)
 		},
 		assign: func(state fmtStringerConcreteState, left []ast.Expr, right []ast.Expr) {
-			graph.updateFmtStringerConcreteAssigns(l.pkg.TypesInfo, state, left, right)
+			flow.updateFmtStringerConcreteAssigns(l.pkg.TypesInfo, state, left, right)
 		},
 		rangeValue: func(state fmtStringerConcreteState, stmt *ast.RangeStmt) {
-			rangeTypes := graph.fmtStringerConcreteSliceTypesForExpr(
+			rangeTypes := flow.fmtStringerConcreteSliceTypesForExpr(
 				l.pkg.TypesInfo,
 				state,
 				stmt.X,
@@ -387,7 +400,7 @@ func fmtStringerRHSExpr(values []ast.Expr, targetCount int, index int) ast.Expr 
 	return values[index]
 }
 
-func (graph deadCodeGraph) updateFmtStringerConcreteAssigns(
+func (flow fmtConcreteFlow) updateFmtStringerConcreteAssigns(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	left []ast.Expr,
@@ -411,12 +424,12 @@ func (graph deadCodeGraph) updateFmtStringerConcreteAssigns(
 		}
 
 		if typ, ok := fmtStringerAssignedTupleType(info, right, len(left), index); ok {
-			graph.setFmtStringerConcreteAssignedType(state, ref, typ)
+			setFmtStringerConcreteAssignedType(state, ref, typ)
 
 			continue
 		}
 
-		if graph.fmtStringerConcreteExprUnknown(info, snapshot, rhs) {
+		if flow.fmtStringerConcreteExprUnknown(info, snapshot, rhs) {
 			delete(state.values, ref)
 			delete(state.slices, ref)
 			state.unknown[ref] = struct{}{}
@@ -424,7 +437,7 @@ func (graph deadCodeGraph) updateFmtStringerConcreteAssigns(
 			continue
 		}
 
-		sliceTypes := graph.fmtStringerConcreteSliceTypesForExpr(info, snapshot, rhs)
+		sliceTypes := flow.fmtStringerConcreteSliceTypesForExpr(info, snapshot, rhs)
 		if len(sliceTypes) > 0 {
 			delete(state.values, ref)
 			delete(state.unknown, ref)
@@ -433,7 +446,7 @@ func (graph deadCodeGraph) updateFmtStringerConcreteAssigns(
 			continue
 		}
 
-		valueTypes := graph.fmtStringerConcreteTypesForExpr(info, snapshot, rhs)
+		valueTypes := flow.fmtStringerConcreteTypesForExpr(info, snapshot, rhs)
 		if len(valueTypes) > 0 {
 			state.values[ref] = valueTypes
 			delete(state.slices, ref)
@@ -470,7 +483,7 @@ func fmtStringerAssignedTupleType(
 	return tuple.At(index).Type(), true
 }
 
-func (graph deadCodeGraph) setFmtStringerConcreteAssignedType(
+func setFmtStringerConcreteAssignedType(
 	state fmtStringerConcreteState,
 	ref fmtStringerVarRef,
 	typ types.Type,
@@ -492,7 +505,7 @@ func (graph deadCodeGraph) setFmtStringerConcreteAssignedType(
 	state.values[ref] = []types.Type{typ}
 }
 
-func (graph deadCodeGraph) collectFmtStringerConcreteExprUses(
+func (flow fmtConcreteFlow) collectFmtStringerConcreteExprUses(
 	l *packageLinter,
 	out map[string]struct{},
 	state fmtStringerConcreteState,
@@ -503,11 +516,11 @@ func (graph deadCodeGraph) collectFmtStringerConcreteExprUses(
 	}
 
 	inspectReflectedCalls(node, func(call *ast.CallExpr) {
-		graph.addFmtStringerConcreteCallUses(l, out, state, call)
+		flow.addFmtStringerConcreteCallUses(l, out, state, call)
 	})
 }
 
-func (graph deadCodeGraph) addFmtStringerConcreteCallUses(
+func (flow fmtConcreteFlow) addFmtStringerConcreteCallUses(
 	l *packageLinter,
 	out map[string]struct{},
 	state fmtStringerConcreteState,
@@ -519,70 +532,61 @@ func (graph deadCodeGraph) addFmtStringerConcreteCallUses(
 	}
 
 	if fn.Pkg().Path() != fmtPackagePath {
-		graph.addFmtStringerConcreteForwardedCallUses(l, out, state, call, fn)
+		flow.addFmtStringerConcreteForwardedCallUses(l, out, state, call, fn)
 
 		return
 	}
 
 	forEachFmtStringerArg(l.pkg.TypesInfo, call, fn.Name(), func(arg ast.Expr, ellipsis bool) {
 		if ellipsis {
-			for _, typ := range graph.fmtStringerConcreteSliceTypesForExpr(l.pkg.TypesInfo, state, arg) {
-				graph.addStringMethodsForType(l, out, typ)
+			for _, typ := range flow.fmtStringerConcreteSliceTypesForExpr(l.pkg.TypesInfo, state, arg) {
+				flow.iface.addStringMethodsForType(l, out, typ)
 			}
 
 			return
 		}
 
-		for _, typ := range graph.fmtStringerConcreteTypesForExpr(l.pkg.TypesInfo, state, arg) {
-			graph.addStringMethodsForType(l, out, typ)
+		for _, typ := range flow.fmtStringerConcreteTypesForExpr(l.pkg.TypesInfo, state, arg) {
+			flow.iface.addStringMethodsForType(l, out, typ)
 		}
 	})
 }
 
-func (graph deadCodeGraph) addFmtStringerConcreteForwardedCallUses(
+func (flow fmtConcreteFlow) addFmtStringerConcreteForwardedCallUses(
 	l *packageLinter,
 	out map[string]struct{},
 	state fmtStringerConcreteState,
 	call *ast.CallExpr,
 	fn *types.Func,
 ) {
-	calleePkg := graph.packageForFunc(fn)
+	calleePkg := flow.decls.packageForFunc(fn)
 	if calleePkg == nil {
 		return
 	}
 
-	decl := graph.funcDeclForObject(calleePkg, fn)
+	decl := flow.decls.funcDeclForObject(calleePkg, fn)
 	if decl == nil {
 		return
 	}
 
-	uses := graph.fmtStringerForwardedParamUses(calleePkg, decl, make(map[string]struct{}))
+	uses := flow.params.fmtStringerForwardedParamUses(calleePkg, decl, make(map[string]struct{}))
 	for _, use := range uses {
-		for _, typ := range graph.fmtStringerConcreteTypesForForwardedArg(
+		if use.index >= len(call.Args) {
+			continue
+		}
+
+		for _, typ := range flow.fmtStringerConcreteForwardedArgTypes(
 			l.pkg.TypesInfo,
 			state,
 			call,
 			use,
 		) {
-			graph.addStringMethodsForType(l, out, typ)
+			flow.iface.addStringMethodsForType(l, out, typ)
 		}
 	}
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteTypesForForwardedArg(
-	info *types.Info,
-	state fmtStringerConcreteState,
-	call *ast.CallExpr,
-	use fmtStringerParamUse,
-) []types.Type {
-	if use.index >= len(call.Args) {
-		return nil
-	}
-
-	return graph.fmtStringerConcreteForwardedArgTypes(info, state, call, use)
-}
-
-func (graph deadCodeGraph) fmtStringerConcreteForwardedArgTypes(
+func (flow fmtConcreteFlow) fmtStringerConcreteForwardedArgTypes(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	call *ast.CallExpr,
@@ -590,33 +594,33 @@ func (graph deadCodeGraph) fmtStringerConcreteForwardedArgTypes(
 ) []types.Type {
 	if !use.variadic {
 		if !use.slice {
-			return graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[use.index])
+			return flow.fmtStringerConcreteTypesForExpr(info, state, call.Args[use.index])
 		}
 
-		return graph.fmtStringerConcreteSliceTypesForExpr(info, state, call.Args[use.index])
+		return flow.fmtStringerConcreteSliceTypesForExpr(info, state, call.Args[use.index])
 	}
 
 	if call.Ellipsis.IsValid() && use.index == len(call.Args)-1 {
-		return graph.fmtStringerConcreteVariadicSliceTypes(info, state, call.Args[use.index])
+		return flow.fmtStringerConcreteVariadicSliceTypes(info, state, call.Args[use.index])
 	}
 
-	return graph.fmtStringerConcreteVariadicArgTypes(info, state, call, use.index)
+	return flow.fmtStringerConcreteVariadicArgTypes(info, state, call, use.index)
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteVariadicSliceTypes(
+func (flow fmtConcreteFlow) fmtStringerConcreteVariadicSliceTypes(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	expr ast.Expr,
 ) []types.Type {
-	types := graph.fmtStringerConcreteSliceTypesForExpr(info, state, expr)
+	types := flow.fmtStringerConcreteSliceTypesForExpr(info, state, expr)
 	if len(types) > 0 {
 		return types
 	}
 
-	return graph.fmtStringerConcreteTypesForExpr(info, state, expr)
+	return flow.fmtStringerConcreteTypesForExpr(info, state, expr)
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteVariadicArgTypes(
+func (flow fmtConcreteFlow) fmtStringerConcreteVariadicArgTypes(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	call *ast.CallExpr,
@@ -624,19 +628,19 @@ func (graph deadCodeGraph) fmtStringerConcreteVariadicArgTypes(
 ) []types.Type {
 	out := make([]types.Type, 0, len(call.Args)-startIndex)
 	for index := startIndex; index < len(call.Args); index++ {
-		out = append(out, graph.fmtStringerConcreteTypesForExpr(info, state, call.Args[index])...)
+		out = append(out, flow.fmtStringerConcreteTypesForExpr(info, state, call.Args[index])...)
 	}
 
 	return dedupeFmtStringerConcreteTypes(out)
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteTypesForExpr(
+func (flow fmtConcreteFlow) fmtStringerConcreteTypesForExpr(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	expr ast.Expr,
 ) []types.Type {
 	if ref, ok := fmtStringerVarForExpr(info, expr); ok {
-		if types := graph.fmtStringerConcreteVarTypes(info, state, expr, ref); len(types) > 0 {
+		if types := flow.fmtStringerConcreteVarTypes(info, state, expr, ref); len(types) > 0 {
 			return types
 		}
 	}
@@ -661,14 +665,14 @@ func (graph deadCodeGraph) fmtStringerConcreteTypesForExpr(
 	return []types.Type{typ}
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteVarTypes(
+func (flow fmtConcreteFlow) fmtStringerConcreteVarTypes(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	expr ast.Expr,
 	ref fmtStringerVarRef,
 ) []types.Type {
-	if graph.fmtStringerConcreteVarUnknown(ref, state) {
-		return graph.fmtStringerUnknownTypesForType(reflectedValueType(info, expr))
+	if flow.fmtStringerConcreteVarUnknown(ref, state) {
+		return flow.fmtStringerUnknownTypesForType(reflectedValueType(info, expr))
 	}
 
 	if types := state.values[ref]; len(types) > 0 {
@@ -685,16 +689,16 @@ func (graph deadCodeGraph) fmtStringerConcreteVarTypes(
 		return nil
 	}
 
-	return graph.fmtStringerVarValues[key]
+	return flow.summaries.values[key]
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteExprUnknown(
+func (flow fmtConcreteFlow) fmtStringerConcreteExprUnknown(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	expr ast.Expr,
 ) bool {
 	if ref, ok := fmtStringerVarForExpr(info, expr); ok {
-		return graph.fmtStringerConcreteVarUnknown(ref, state)
+		return flow.fmtStringerConcreteVarUnknown(ref, state)
 	}
 
 	typ := reflectedValueType(info, expr)
@@ -702,7 +706,7 @@ func (graph deadCodeGraph) fmtStringerConcreteExprUnknown(
 	return typ != nil && typeIsInterface(typ)
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteVarUnknown(
+func (flow fmtConcreteFlow) fmtStringerConcreteVarUnknown(
 	ref fmtStringerVarRef,
 	state fmtStringerConcreteState,
 ) bool {
@@ -720,19 +724,19 @@ func (graph deadCodeGraph) fmtStringerConcreteVarUnknown(
 		return false
 	}
 
-	_, ok := graph.fmtStringerVarUnknown[key]
+	_, ok := flow.summaries.unknown[key]
 
 	return ok
 }
 
-func (graph deadCodeGraph) fmtStringerUnknownTypesForType(typ types.Type) []types.Type {
+func (flow fmtConcreteFlow) fmtStringerUnknownTypesForType(typ types.Type) []types.Type {
 	if typ == nil || !typeIsInterface(typ) {
 		return nil
 	}
 
 	out := make([]types.Type, 0)
 
-	for _, receiver := range graph.candidateReceiverTypes() {
+	for _, receiver := range flow.iface.candidateReceiverTypes() {
 		if types.AssignableTo(receiver, typ) {
 			out = append(out, receiver)
 		}
@@ -741,27 +745,27 @@ func (graph deadCodeGraph) fmtStringerUnknownTypesForType(typ types.Type) []type
 	return out
 }
 
-func (graph deadCodeGraph) fmtStringerUnknownSliceTypesForType(typ types.Type) []types.Type {
+func (flow fmtConcreteFlow) fmtStringerUnknownSliceTypesForType(typ types.Type) []types.Type {
 	slice, ok := types.Unalias(typ).Underlying().(*types.Slice)
 	if !ok {
 		return nil
 	}
 
-	return graph.fmtStringerUnknownTypesForType(slice.Elem())
+	return flow.fmtStringerUnknownTypesForType(slice.Elem())
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteSliceTypesForExpr(
+func (flow fmtConcreteFlow) fmtStringerConcreteSliceTypesForExpr(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	expr ast.Expr,
 ) []types.Type {
 	ref, ok := fmtStringerVarForExpr(info, expr)
 	if !ok {
-		return graph.fmtStringerConcreteSliceTypesForNonVarExpr(info, state, expr)
+		return flow.fmtStringerConcreteSliceTypesForNonVarExpr(info, state, expr)
 	}
 
-	if graph.fmtStringerConcreteVarUnknown(ref, state) {
-		return graph.fmtStringerUnknownSliceTypesForType(reflectedValueType(info, expr))
+	if flow.fmtStringerConcreteVarUnknown(ref, state) {
+		return flow.fmtStringerUnknownSliceTypesForType(reflectedValueType(info, expr))
 	}
 
 	if types := state.slices[ref]; len(types) > 0 {
@@ -771,29 +775,29 @@ func (graph deadCodeGraph) fmtStringerConcreteSliceTypesForExpr(
 	if obj := ref.packageLevelVar(); obj != nil {
 		key := deadCodeObjectKey(obj)
 		if key != "" {
-			return graph.fmtStringerVarSlices[key]
+			return flow.summaries.slices[key]
 		}
 	}
 
 	return nil
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteSliceTypesForNonVarExpr(
+func (flow fmtConcreteFlow) fmtStringerConcreteSliceTypesForNonVarExpr(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	expr ast.Expr,
 ) []types.Type {
 	switch expr := unparenReflectedExpr(expr).(type) {
 	case *ast.CompositeLit:
-		return graph.fmtStringerConcreteCompositeTypes(info, state, expr)
+		return flow.fmtStringerConcreteCompositeTypes(info, state, expr)
 	case *ast.CallExpr:
-		return graph.fmtStringerConcreteAppendTypes(info, state, expr)
+		return flow.fmtStringerConcreteAppendTypes(info, state, expr)
 	default:
 		return nil
 	}
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteCompositeTypes(
+func (flow fmtConcreteFlow) fmtStringerConcreteCompositeTypes(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	lit *ast.CompositeLit,
@@ -806,14 +810,14 @@ func (graph deadCodeGraph) fmtStringerConcreteCompositeTypes(
 	for _, elt := range lit.Elts {
 		out = append(
 			out,
-			graph.fmtStringerConcreteTypesForExpr(info, state, flowElementValue(elt))...,
+			flow.fmtStringerConcreteTypesForExpr(info, state, flowElementValue(elt))...,
 		)
 	}
 
 	return dedupeFmtStringerConcreteTypes(out)
 }
 
-func (graph deadCodeGraph) fmtStringerConcreteAppendTypes(
+func (flow fmtConcreteFlow) fmtStringerConcreteAppendTypes(
 	info *types.Info,
 	state fmtStringerConcreteState,
 	call *ast.CallExpr,
@@ -825,10 +829,10 @@ func (graph deadCodeGraph) fmtStringerConcreteAppendTypes(
 	return fmtStringerAppendArgValues(
 		call,
 		func(expr ast.Expr) ([]types.Type, bool) {
-			return graph.fmtStringerConcreteSliceTypesForExpr(info, state, expr), true
+			return flow.fmtStringerConcreteSliceTypesForExpr(info, state, expr), true
 		},
 		func(expr ast.Expr) ([]types.Type, bool) {
-			return graph.fmtStringerConcreteTypesForExpr(info, state, expr), true
+			return flow.fmtStringerConcreteTypesForExpr(info, state, expr), true
 		},
 		dedupeFmtStringerConcreteTypes,
 	)

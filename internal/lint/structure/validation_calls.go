@@ -14,59 +14,40 @@ const (
 	validationWork
 )
 
-func (l *Runner) inputValidationCall(
-	call *ast.CallExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if l.validationCallEffect(call, make(map[*types.Func]bool)) != validationPure {
-		return false
-	}
-
-	if selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok {
-		if selection := l.pkg.TypesInfo.Selections[selector]; selection != nil &&
-			selection.Kind() == types.MethodVal &&
-			!l.inputValidationExpr(selector.X, validationTemps) {
-			return false
-		}
-	}
-
-	for _, arg := range call.Args {
-		if !l.inputValidationExpr(arg, validationTemps) {
-			return false
-		}
-	}
-
-	return true
+// validationEffects classifies whether code that runs before input guards
+// does real work. bodies indexes package functions on first use; visiting
+// holds the functions on the current call path to stop recursion.
+type validationEffects struct {
+	pkg      *Package
+	bodies   map[*types.Func]*ast.FuncDecl
+	visiting map[*types.Func]bool
 }
 
-func (l *Runner) validationCallEffect(
-	call *ast.CallExpr,
-	visited map[*types.Func]bool,
-) validationEffect {
+func (e *validationEffects) callEffect(call *ast.CallExpr) validationEffect {
+	info := e.pkg.TypesInfo
+
 	if literal, ok := ast.Unparen(call.Fun).(*ast.FuncLit); ok {
-		return l.validationNodeEffect(literal.Body, literal, visited)
+		return e.nodeEffect(literal.Body, literal)
 	}
 
-	if typ := l.pkg.TypesInfo.Types[call.Fun]; typ.IsType() {
+	if typ := info.Types[call.Fun]; typ.IsType() {
 		return validationPure
 	}
 
-	if ident, ok := ast.Unparen(call.Fun).(*ast.Ident); ok {
-		if builtin, ok := l.pkg.TypesInfo.ObjectOf(ident).(*types.Builtin); ok {
-			switch builtin.Name() {
-			case "len", "cap", "complex", "imag", "real", "min", "max", "make", "new":
-				return validationPure
-			default:
-				return validationWork
-			}
+	if name := builtinName(info, call); name != "" {
+		switch name {
+		case "len", "cap", "complex", "imag", "real", "min", "max", "make", "new":
+			return validationPure
+		default:
+			return validationWork
 		}
 	}
 
-	if _, external := l.externalCallLabel(call); external {
+	if _, external := externalCallKind(info, call); external {
 		return validationWork
 	}
 
-	fn := l.funcObject(call.Fun)
+	fn := funcObject(info, call.Fun)
 	if fn == nil {
 		return validationUnknown
 	}
@@ -81,7 +62,7 @@ func (l *Runner) validationCallEffect(
 		"(net/http.Header).Get", "(net/textproto.MIMEHeader).Get", "(net/url.Values).Get":
 		return validationPure
 	case "fmt.Errorf", "fmt.Sprintf":
-		return l.validationFormatEffect(call.Args)
+		return validationFormatEffect(info, call.Args)
 	case "fmt.Print", "fmt.Printf", "fmt.Println", "fmt.Fprint", "fmt.Fprintf", "fmt.Fprintln",
 		"log.Print", "log.Printf", "log.Println", "os.Open", "os.OpenFile", "os.Create",
 		"os.ReadFile", "os.WriteFile", "os.Remove", "os.Rename",
@@ -89,13 +70,13 @@ func (l *Runner) validationCallEffect(
 		return validationWork
 	}
 
-	return l.validationFuncEffect(fn, visited)
+	return e.funcEffect(fn)
 }
 
-func (l *Runner) validationFormatEffect(args []ast.Expr) validationEffect {
+func validationFormatEffect(info *types.Info, args []ast.Expr) validationEffect {
 	// Named and interface values can invoke user-defined formatting methods.
 	for _, arg := range args {
-		if _, basic := types.Unalias(l.pkg.TypesInfo.TypeOf(arg)).(*types.Basic); !basic {
+		if _, basic := types.Unalias(info.TypeOf(arg)).(*types.Basic); !basic {
 			return validationWork
 		}
 	}
@@ -103,59 +84,51 @@ func (l *Runner) validationFormatEffect(args []ast.Expr) validationEffect {
 	return validationPure
 }
 
-func (l *Runner) validationFuncEffect(
-	fn *types.Func,
-	visited map[*types.Func]bool,
-) validationEffect {
+func (e *validationEffects) funcEffect(fn *types.Func) validationEffect {
 	// Unknown imported predicates are not evidence of interleaved work. Inspect
 	// available bodies and known effects instead of guessing from function names.
-	if fn.Pkg() != l.pkg.TypesPkg || visited[fn] {
+	if fn.Pkg() != e.pkg.TypesPkg || e.visiting[fn] {
 		return validationUnknown
 	}
 
-	visited[fn] = true
-	defer delete(visited, fn)
+	e.visiting[fn] = true
+	defer delete(e.visiting, fn)
 
-	if l.validationFuncBodies == nil {
-		l.validationFuncBodies = make(map[*types.Func]*ast.FuncDecl)
-		for _, file := range l.pkg.Files {
+	if e.bodies == nil {
+		e.bodies = make(map[*types.Func]*ast.FuncDecl)
+		for _, file := range e.pkg.Files {
 			for _, decl := range file.Decls {
 				if body, ok := decl.(*ast.FuncDecl); ok {
-					if obj, ok := l.pkg.TypesInfo.ObjectOf(body.Name).(*types.Func); ok {
-						l.validationFuncBodies[obj] = body
+					if obj, ok := e.pkg.TypesInfo.ObjectOf(body.Name).(*types.Func); ok {
+						e.bodies[obj] = body
 					}
 				}
 			}
 		}
 	}
 
-	fnDecl := l.validationFuncBodies[fn]
+	fnDecl := e.bodies[fn]
 	if fnDecl == nil || fnDecl.Body == nil {
 		return validationUnknown
 	}
 
-	return l.validationNodeEffect(fnDecl.Body, fnDecl, visited)
+	return e.nodeEffect(fnDecl.Body, fnDecl)
 }
 
-func (l *Runner) validationStatementEffect(stmt ast.Stmt, body *ast.BlockStmt) validationEffect {
-	visited := make(map[*types.Func]bool)
-
+func (e *validationEffects) statementEffect(stmt ast.Stmt, body *ast.BlockStmt) validationEffect {
 	if guard, ok := stmt.(*ast.IfStmt); ok && guard.Else == nil && len(guard.Body.List) == 1 {
 		if _, returns := guard.Body.List[0].(*ast.ReturnStmt); returns {
 			// A returning branch does not execute before subsequent guards.
-			return max(l.validationNodeEffect(guard.Init, body, visited),
-				l.validationNodeEffect(guard.Cond, body, visited))
+			return max(e.nodeEffect(guard.Init, body), e.nodeEffect(guard.Cond, body))
 		}
 	}
 
-	return l.validationNodeEffect(stmt, body, visited)
+	return e.nodeEffect(stmt, body)
 }
 
-func (l *Runner) validationNodeEffect(
-	node ast.Node,
-	scope ast.Node,
-	visited map[*types.Func]bool,
-) validationEffect {
+// nodeEffect classifies node; writes count as work unless they target
+// locals declared inside scope.
+func (e *validationEffects) nodeEffect(node ast.Node, scope ast.Node) validationEffect {
 	if node == nil {
 		return validationPure
 	}
@@ -174,9 +147,9 @@ func (l *Runner) validationNodeEffect(
 			return false
 
 		case *ast.CallExpr:
-			effect = max(effect, l.validationCallEffect(node, visited))
+			effect = max(effect, e.callEffect(node))
 		default:
-			effect = max(effect, l.validationMutationEffect(node, scope))
+			effect = max(effect, validationMutationEffect(e.pkg.TypesInfo, node, scope))
 		}
 
 		return effect != validationWork
@@ -185,7 +158,7 @@ func (l *Runner) validationNodeEffect(
 	return effect
 }
 
-func (l *Runner) validationMutationEffect(node ast.Node, scope ast.Node) validationEffect {
+func validationMutationEffect(info *types.Info, node ast.Node, scope ast.Node) validationEffect {
 	effect := validationPure
 
 	var targets []ast.Expr
@@ -193,7 +166,7 @@ func (l *Runner) validationMutationEffect(node ast.Node, scope ast.Node) validat
 	switch node := node.(type) {
 	case *ast.RangeStmt:
 		// Ranging a channel receives; a range function executes arbitrary code.
-		switch l.pkg.TypesInfo.TypeOf(node.X).Underlying().(type) {
+		switch info.TypeOf(node.X).Underlying().(type) {
 		case *types.Chan, *types.Signature:
 			effect = validationWork
 		}
@@ -212,7 +185,7 @@ func (l *Runner) validationMutationEffect(node ast.Node, scope ast.Node) validat
 	}
 
 	for _, target := range targets {
-		if target != nil && !l.validationLocalWrite(target, scope) {
+		if target != nil && !validationLocalWrite(info, target, scope) {
 			effect = validationWork
 			break
 		}
@@ -221,7 +194,7 @@ func (l *Runner) validationMutationEffect(node ast.Node, scope ast.Node) validat
 	return effect
 }
 
-func (l *Runner) validationLocalWrite(expr ast.Expr, scope ast.Node) bool {
+func validationLocalWrite(info *types.Info, expr ast.Expr, scope ast.Node) bool {
 	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok {
 		return false
@@ -231,7 +204,7 @@ func (l *Runner) validationLocalWrite(expr ast.Expr, scope ast.Node) bool {
 		return true
 	}
 
-	obj := l.pkg.TypesInfo.ObjectOf(ident)
+	obj := info.ObjectOf(ident)
 
 	return obj != nil && obj.Pos() >= scope.Pos() && obj.Pos() < scope.End()
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func (graph deadCodeGraph) callInterfaceMethodUses(
+func callInterfaceMethodUses(
 	l *packageLinter,
 	call *ast.CallExpr,
 ) map[string]struct{} {
@@ -17,15 +17,15 @@ func (graph deadCodeGraph) callInterfaceMethodUses(
 
 	out := make(map[string]struct{})
 	if target := conversionTargetType(l.pkg.TypesInfo, call); target != nil {
-		graph.addInterfaceMethodsForValue(l, out, call.Args[0], target)
+		addInterfaceMethodsForValue(l, out, call.Args[0], target)
 	}
 
 	if sig := callSignature(l.pkg.TypesInfo, call); sig != nil {
-		for key := range graph.callArgInterfaceMethodUses(l, call, sig) {
+		for key := range callArgInterfaceMethodUses(l, call, sig) {
 			out[key] = struct{}{}
 		}
 
-		for key := range graph.knownOptionalInterfaceMethodUses(l, call, sig) {
+		for key := range knownOptionalInterfaceMethodUses(l, call, sig) {
 			out[key] = struct{}{}
 		}
 	}
@@ -33,7 +33,7 @@ func (graph deadCodeGraph) callInterfaceMethodUses(
 	return out
 }
 
-func (graph deadCodeGraph) callArgInterfaceMethodUses(
+func callArgInterfaceMethodUses(
 	l *packageLinter,
 	call *ast.CallExpr,
 	sig *types.Signature,
@@ -51,13 +51,13 @@ func (graph deadCodeGraph) callArgInterfaceMethodUses(
 			continue
 		}
 
-		graph.addInterfaceMethodsForValue(l, out, arg, target)
+		addInterfaceMethodsForValue(l, out, arg, target)
 	}
 
 	return out
 }
 
-func (graph deadCodeGraph) knownOptionalInterfaceMethodUses(
+func knownOptionalInterfaceMethodUses(
 	l *packageLinter,
 	call *ast.CallExpr,
 	sig *types.Signature,
@@ -83,7 +83,7 @@ func (graph deadCodeGraph) knownOptionalInterfaceMethodUses(
 			continue
 		}
 
-		graph.addInterfaceMethodsForValue(l, out, arg, byteReader)
+		addInterfaceMethodsForValue(l, out, arg, byteReader)
 	}
 
 	return out
@@ -394,7 +394,7 @@ func argIndexRange(firstArg int, argCount int) map[int]struct{} {
 	return out
 }
 
-func (graph deadCodeGraph) addStringMethodsForType(
+func (iface ifaceUses) addStringMethodsForType(
 	l *packageLinter,
 	out map[string]struct{},
 	typ types.Type,
@@ -403,12 +403,12 @@ func (graph deadCodeGraph) addStringMethodsForType(
 		return
 	}
 
-	if iface, ok := types.Unalias(typ).Underlying().(*types.Interface); ok {
-		if !interfaceRequiresStringMethod(iface) {
+	if target, ok := types.Unalias(typ).Underlying().(*types.Interface); ok {
+		if !interfaceRequiresStringMethod(target) {
 			return
 		}
 
-		for _, receiver := range graph.candidateReceiverTypes() {
+		for _, receiver := range iface.candidateReceiverTypes() {
 			if types.AssignableTo(receiver, typ) {
 				addStringMethodForType(l, out, receiver)
 			}

@@ -29,33 +29,6 @@ func (l *packageLinter) deadCodeIgnoredIdentPositions() map[token.Pos]struct{} {
 	return ignored
 }
 
-func (l *packageLinter) reportableDeadCodeFunc(fn *ast.FuncDecl) bool {
-	return l.reportableDeadCodeFuncWithName(fn, reportableDeadCodeName)
-}
-
-func (l *packageLinter) reportableDeadCodeFuncWithName(
-	fn *ast.FuncDecl,
-	reportName func(string) bool,
-) bool {
-	if fn == nil || fn.Name == nil || fn.Body == nil {
-		return false
-	}
-
-	if fn.Name.Name == initFuncName {
-		return false
-	}
-
-	if l.pkg.Name == mainPkgName && fn.Name.Name == mainPkgName {
-		return false
-	}
-
-	return reportName(fn.Name.Name)
-}
-
-func reportableDeadCodeName(name string) bool {
-	return name != "" && name != "_" && !ast.IsExported(name)
-}
-
 func canonicalDeadCodeObject(obj types.Object) types.Object {
 	if fn, ok := obj.(*types.Func); ok && fn != nil {
 		return fn.Origin()

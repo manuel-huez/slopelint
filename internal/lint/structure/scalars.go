@@ -5,88 +5,55 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
-	"strconv"
 )
 
-type scalarKind = uint8
-
-const scalarNil scalarKind = 1
-const scalarBool scalarKind = 2
-const scalarString scalarKind = 3
-const scalarInt scalarKind = 4
-
-type scalar struct {
-	text string
-	kind scalarKind
+func constValue(info *types.Info, expr ast.Expr) constant.Value {
+	return info.Types[ast.Unparen(expr)].Value
 }
 
-func (l *Runner) scalarOf(expr ast.Expr) (scalar, bool) {
-	clean := ast.Unparen(expr)
-	if value, ok := nilLiteralScalar(clean); ok {
-		return value, true
+func constBool(info *types.Info, expr ast.Expr) (bool, bool) {
+	value := constValue(info, expr)
+	if value == nil || value.Kind() != constant.Bool {
+		return false, false
 	}
 
-	tv, ok := l.pkg.TypesInfo.Types[clean]
-
-	return scalarFromTypeValue(tv, ok)
+	return constant.BoolVal(value), true
 }
 
-func nilLiteralScalar(expr ast.Expr) (scalar, bool) {
-	ident, ok := expr.(*ast.Ident)
-	if ok && ident.Name == nilText {
-		return newScalar(scalarNil, nilText), true
-	}
-
-	return scalar{}, false
-}
-
-func scalarFromTypeValue(tv types.TypeAndValue, ok bool) (scalar, bool) {
-	if !ok {
-		return scalar{}, false
-	}
-
-	if tv.IsNil() {
-		return newScalar(scalarNil, nilText), true
-	}
-
-	if tv.Value == nil {
-		return scalar{}, false
-	}
-
-	return scalarFromConstantValue(tv.Value)
-}
-
-func scalarFromConstantValue(value constant.Value) (scalar, bool) {
-	if value == nil {
-		return scalar{}, false
-	}
-
-	// Structural checks only use bool, string, and integer constants.
-	//exhaustive:ignore
-	switch value.Kind() {
-	case constant.Bool:
-		return newScalar(scalarBool, strconv.FormatBool(constant.BoolVal(value))), true
-	case constant.String:
-		return newScalar(scalarString, constant.StringVal(value)), true
-	case constant.Int:
-		return newScalar(scalarInt, value.ExactString()), true
-	default:
-		return scalar{}, false
-	}
-}
-
-func newScalar(kind scalarKind, text string) scalar {
-	return scalar{text: text, kind: kind}
-}
-
-func scalarIntValue(value scalar) (int64, bool) {
-	if value.kind != scalarInt {
+func constInt(info *types.Info, expr ast.Expr) (int64, bool) {
+	value := constValue(info, expr)
+	if value == nil || value.Kind() != constant.Int {
 		return 0, false
 	}
 
-	out, err := strconv.ParseInt(value.text, 10, 64)
+	return constant.Int64Val(value)
+}
 
-	return out, err == nil
+// isNilValue also matches typed nil expressions, unlike isNilExpr.
+func isNilValue(info *types.Info, expr ast.Expr) bool {
+	return isNilExpr(expr) || info.Types[ast.Unparen(expr)].IsNil()
+}
+
+func isNilExpr(expr ast.Expr) bool {
+	id, ok := ast.Unparen(expr).(*ast.Ident)
+
+	return ok && id.Name == nilText
+}
+
+// isScalarValue matches nil and bool, string, or integer constants.
+func isScalarValue(info *types.Info, expr ast.Expr) bool {
+	if isNilValue(info, expr) {
+		return true
+	}
+
+	value := constValue(info, expr)
+	if value == nil {
+		return false
+	}
+
+	kind := value.Kind()
+
+	return kind == constant.Bool || kind == constant.String || kind == constant.Int
 }
 
 func reverseOrderedOp(op token.Token) token.Token {

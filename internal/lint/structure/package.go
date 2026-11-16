@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -34,32 +35,27 @@ type Package struct {
 	TypesInfo *types.Info
 }
 
+// Runner scans function bodies of one package. Its render cache, report
+// dedupe and function body index live across ScanFunctionBody calls.
 type Runner struct {
-	pkg                  *Package
-	findings             []Finding
-	reported             map[string]struct{}
-	renderCache          map[ast.Node]string
-	validationFuncBodies map[*types.Func]*ast.FuncDecl
+	q       *pkgQuery
+	sink    *findingSink
+	effects *validationEffects
 }
 
+// blockContext describes a statement list; only a function's top-level list
+// sets functionBody.
 type blockContext struct {
 	functionBody       bool
 	functionHasResults bool
-	functionResults    []types.Type
-	functionInputs     map[types.Object]struct{}
 }
 
 // New creates a reusable structural checker.
 func New(pkg *Package) *Runner {
-	if pkg == nil {
-		pkg = &Package{}
-	}
-
 	return &Runner{
-		pkg:         pkg,
-		findings:    make([]Finding, 0),
-		reported:    make(map[string]struct{}),
-		renderCache: make(map[ast.Node]string),
+		q:       &pkgQuery{pkg: pkg, renderCache: make(map[ast.Node]string)},
+		sink:    &findingSink{fset: pkg.FSet, reported: make(map[string]struct{})},
+		effects: &validationEffects{pkg: pkg, visiting: make(map[*types.Func]bool)},
 	}
 }
 
@@ -69,80 +65,77 @@ func (l *Runner) ScanFunctionBody(
 	recv *ast.FieldList,
 	body *ast.BlockStmt,
 ) []Finding {
-	start := len(l.findings)
+	start := len(l.sink.findings)
+	info := l.q.pkg.TypesInfo
 
-	if body != nil {
-		ctx := blockContext{
-			functionBody: true,
-			functionHasResults: fnType != nil && fnType.Results != nil &&
-				len(fnType.Results.List) != 0,
-			functionResults: l.funcResultTypes(fnType),
-			functionInputs:  l.funcInputObjects(fnType, recv),
-		}
+	inputs := make(map[types.Object]struct{})
+	addFieldListObjects(info, inputs, recv)
+	addFieldListObjects(info, inputs, fnType.Params)
 
-		l.checkFunctionComplexity(body, ctx)
-		l.scanStructuralBlock(body.List, ctx)
+	ctx := blockContext{
+		functionBody:       true,
+		functionHasResults: fnType.Results != nil && len(fnType.Results.List) != 0,
 	}
 
-	out := make([]Finding, len(l.findings)-start)
-	copy(out, l.findings[start:])
+	if finding, ok := l.simplificationScore(body, ctx); ok {
+		l.sink.report(finding)
+	}
+
+	guards := inputGuardScan{
+		q:       l.q,
+		effects: l.effects,
+		temps:   inputs,
+		results: funcResultTypes(info, fnType),
+	}
+	if finding, ok := guards.scattered(body); ok {
+		l.sink.report(finding)
+	}
+
+	stmtWalker{
+		atIndex: func(stmts []ast.Stmt, idx int, ctx blockContext) {
+			for _, finding := range l.blockFindingsAt(stmts, idx, ctx) {
+				l.sink.report(finding.Finding)
+			}
+		},
+		atStmt: func(stmt ast.Stmt) {
+			for _, finding := range l.stmtFindings(stmt) {
+				l.sink.report(finding)
+			}
+		},
+	}.walkList(body.List, ctx)
+
+	out := make([]Finding, len(l.sink.findings)-start)
+	copy(out, l.sink.findings[start:])
 
 	return out
 }
 
-func (l *Runner) funcInputObjects(
-	fnType *ast.FuncType,
-	recv *ast.FieldList,
-) map[types.Object]struct{} {
-	out := make(map[types.Object]struct{})
-
-	l.addFieldListObjects(out, recv)
-
-	if fnType != nil {
-		l.addFieldListObjects(out, fnType.Params)
-	}
-
-	return out
-}
-
-func (l *Runner) addFieldListObjects(
-	out map[types.Object]struct{},
-	fields *ast.FieldList,
-) {
+func addFieldListObjects(info *types.Info, out map[types.Object]struct{}, fields *ast.FieldList) {
 	if fields == nil {
 		return
 	}
 
 	for _, field := range fields.List {
 		for _, name := range field.Names {
-			if name == nil || name.Name == "_" {
+			if name.Name == "_" {
 				continue
 			}
 
-			if obj := l.pkg.TypesInfo.ObjectOf(name); obj != nil {
-				out[obj] = struct{}{}
-			}
+			out[info.ObjectOf(name)] = struct{}{}
 		}
 	}
 }
 
-func (l *Runner) funcResultTypes(fnType *ast.FuncType) []types.Type {
-	if fnType == nil || fnType.Results == nil {
+func funcResultTypes(info *types.Info, fnType *ast.FuncType) []types.Type {
+	if fnType.Results == nil {
 		return nil
 	}
 
 	out := make([]types.Type, 0, len(fnType.Results.List))
 	for _, field := range fnType.Results.List {
-		typ := l.pkg.TypesInfo.TypeOf(field.Type)
-		if typ == nil {
-			continue
-		}
+		typ := info.TypeOf(field.Type)
 
-		count := 1
-		if len(field.Names) > 0 {
-			count = len(field.Names)
-		}
-
+		count := max(len(field.Names), 1)
 		for range count {
 			out = append(out, typ)
 		}
@@ -151,60 +144,135 @@ func (l *Runner) funcResultTypes(fnType *ast.FuncType) []types.Type {
 	return out
 }
 
-func (l *Runner) report(pos token.Pos, kind, msg string) {
-	position := l.pkg.FSet.Position(pos)
+// findingSink collects findings in report order and drops exact repeats.
+type findingSink struct {
+	fset     *token.FileSet
+	findings []Finding
+	reported map[string]struct{}
+}
 
-	if _, exists := l.reported[structureReportKey(position, kind, msg)]; exists {
+func (s *findingSink) report(finding Finding) {
+	position := s.fset.Position(finding.Pos)
+	key := strings.Join([]string{
+		position.Filename,
+		strconv.Itoa(position.Line),
+		strconv.Itoa(position.Column),
+		finding.Kind,
+		finding.Message,
+	}, "\x00")
+
+	if _, exists := s.reported[key]; exists {
 		return
 	}
 
-	l.reported[structureReportKey(position, kind, msg)] = struct{}{}
-	l.findings = append(l.findings, Finding{Pos: pos, Kind: kind, Message: msg})
+	s.reported[key] = struct{}{}
+	s.findings = append(s.findings, finding)
 }
 
-func structureReportKey(position token.Position, kind, msg string) string {
-	var b strings.Builder
-	b.WriteString(position.Filename)
-	b.WriteByte('#')
-	b.WriteString(strconv.Itoa(position.Line))
-	b.WriteByte(':')
-	b.WriteString(strconv.Itoa(position.Column))
-	b.WriteByte(':')
-	b.WriteString(kind)
-	b.WriteByte(':')
-	b.WriteString(msg)
-
-	return b.String()
+type pkgQuery struct {
+	pkg         *Package
+	renderCache map[ast.Node]string
 }
 
-func (l *Runner) render(node ast.Node) string {
-	if node == nil {
-		return ""
-	}
-
-	if text := l.renderCache[node]; text != "" {
+func (q *pkgQuery) render(node ast.Node) string {
+	if text := q.renderCache[node]; text != "" {
 		return text
 	}
 
 	var buf bytes.Buffer
-	if format.Node(&buf, l.pkg.FSet, node) != nil {
+	if format.Node(&buf, q.pkg.FSet, node) != nil {
 		return unknownExpr
 	}
 
 	text := buf.String()
-	l.renderCache[node] = text
+	q.renderCache[node] = text
 
 	return text
 }
 
-func (l *Runner) renderCaseClauseHeader(clause *ast.CaseClause) string {
-	if clause == nil || len(clause.List) == 0 {
+func (q *pkgQuery) renderStmtList(stmts []ast.Stmt) string {
+	if len(stmts) == 0 {
+		return "{}"
+	}
+
+	parts := make([]string, 0, len(stmts))
+	for _, stmt := range stmts {
+		parts = append(parts, q.render(stmt))
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+func (q *pkgQuery) renderCaseClauseHeader(clause *ast.CaseClause) string {
+	switch len(clause.List) {
+	case 0:
 		return "default"
+	case 1:
+		return q.render(clause.List[0])
+	default:
+		return fmt.Sprintf("%d values", len(clause.List))
+	}
+}
+
+// commentTexts returns normalized texts of comment groups fully inside node.
+func (q *pkgQuery) commentTexts(node ast.Node) []string {
+	fset := q.pkg.FSet
+	file := fset.File(node.Pos())
+	out := make([]string, 0)
+
+	for _, astFile := range q.pkg.Files {
+		for _, group := range astFile.Comments {
+			if fset.File(group.Pos()) != file || group.Pos() < node.Pos() ||
+				group.End() > node.End() {
+				continue
+			}
+
+			text := strings.Join(strings.Fields(group.Text()), " ")
+			if text != "" {
+				out = append(out, text)
+			}
+		}
 	}
 
-	if len(clause.List) == 1 {
-		return l.render(clause.List[0])
+	return out
+}
+
+func (q *pkgQuery) commentsMatch(first, second ast.Node) bool {
+	return slices.Equal(q.commentTexts(first), q.commentTexts(second))
+}
+
+// hasAttachedComment reports comments inside node, trailing its last line, or
+// on the line just above it.
+func (q *pkgQuery) hasAttachedComment(node ast.Node) bool {
+	fset := q.pkg.FSet
+	file := fset.File(node.Pos())
+	start := fset.Position(node.Pos()).Line
+	end := fset.Position(node.End()).Line
+
+	for _, astFile := range q.pkg.Files {
+		for _, group := range astFile.Comments {
+			if fset.File(group.Pos()) != file {
+				continue
+			}
+
+			groupStart := fset.Position(group.Pos()).Line
+			if groupStart >= start && groupStart <= end ||
+				fset.Position(group.End()).Line == start-1 {
+				return true
+			}
+		}
 	}
 
-	return fmt.Sprintf("%d values", len(clause.List))
+	return false
+}
+
+// plainIfStmt matches an if with no init, no else and no attached comment,
+// which checks may rewrite without losing code or notes.
+func (q *pkgQuery) plainIfStmt(stmt ast.Stmt) (*ast.IfStmt, bool) {
+	ifStmt, ok := stmt.(*ast.IfStmt)
+	if !ok || ifStmt.Init != nil || ifStmt.Else != nil || q.hasAttachedComment(ifStmt) {
+		return nil, false
+	}
+
+	return ifStmt, true
 }

@@ -2,31 +2,27 @@ package deadcode
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 )
 
-func (graph *deadCodeGraph) addRootUses(l *packageLinter, node ast.Node) {
-	graph.rootUses = append(graph.rootUses, deadCodeRootUse{
-		pkg:  l.pkg,
-		node: node,
-	})
-	graph.addRootUseEdges(l.pkg, node)
+// useCollector finds what a node uses: identifiers, selections, struct
+// literal fields, interface methods a value may reach, fmt String methods and
+// reflected codec fields. Its parts keep caches for the whole run.
+type useCollector struct {
+	ignored map[*Package]map[token.Pos]struct{}
+	iface   ifaceUses
+	fmt     fmtConcreteFlow
+	reflect reflectionUses
 }
 
-func (graph *deadCodeGraph) addRootUseEdges(pkg *Package, node ast.Node) {
-	l := newPackageLinter(pkg)
-	for key := range graph.usesFrom(l, node) {
-		graph.roots[key] = struct{}{}
-	}
-}
-
-func (graph deadCodeGraph) usesFrom(
+func (uses *useCollector) usesFrom(
 	l *packageLinter,
 	node ast.Node,
 ) map[string]struct{} {
 	out := make(map[string]struct{})
 
-	for key := range graph.fmtStringerFlowUses(l, node) {
+	for key := range uses.fmt.fmtStringerFlowUses(l, node) {
 		out[key] = struct{}{}
 	}
 
@@ -35,14 +31,18 @@ func (graph deadCodeGraph) usesFrom(
 			return true
 		}
 
-		graph.addNonIdentUses(l, out, n)
+		uses.addNonIdentUses(l, out, n)
 
 		ident, ok := n.(*ast.Ident)
-		if !ok || ident == nil || graph.identIgnored(l.pkg, ident.Pos()) {
+		if !ok {
 			return true
 		}
 
-		for key := range graph.genericInstanceInterfaceMethodUses(l, ident) {
+		if _, ignored := uses.ignored[l.pkg][ident.Pos()]; ignored {
+			return true
+		}
+
+		for key := range genericInstanceInterfaceMethodUses(l, ident) {
 			out[key] = struct{}{}
 		}
 
@@ -62,38 +62,34 @@ func (graph deadCodeGraph) usesFrom(
 	return out
 }
 
-func (graph deadCodeGraph) addNonIdentUses(
+func (uses *useCollector) addNonIdentUses(
 	l *packageLinter,
 	out map[string]struct{},
 	node ast.Node,
 ) {
-	for key := range graph.interfaceMethodUses(l, node) {
+	for key := range uses.iface.interfaceMethodUses(l, node) {
 		out[key] = struct{}{}
 	}
 
 	switch node := node.(type) {
 	case *ast.CallExpr:
-		for key := range graph.reflectedUses(l, node) {
+		for key := range uses.reflect.reflectedUses(l, node) {
 			out[key] = struct{}{}
 		}
 	case *ast.CompositeLit:
-		for key := range graph.compositeLitFieldUses(l, node) {
+		for key := range compositeLitFieldUses(l, node) {
 			out[key] = struct{}{}
 		}
 	case *ast.SelectorExpr:
-		graph.addSelectionUse(l, out, node)
+		addSelectionUse(l, out, node)
 	}
 }
 
-func (graph deadCodeGraph) addSelectionUse(
+func addSelectionUse(
 	l *packageLinter,
 	out map[string]struct{},
 	selector *ast.SelectorExpr,
 ) {
-	if selector == nil {
-		return
-	}
-
 	selection := l.pkg.TypesInfo.Selections[selector]
 	if selection == nil {
 		return
@@ -101,13 +97,9 @@ func (graph deadCodeGraph) addSelectionUse(
 
 	switch obj := selection.Obj().(type) {
 	case *types.Func:
-		if obj == nil {
-			return
-		}
-
 		out[deadCodeObjectKey(obj)] = struct{}{}
 	case *types.Var:
-		if obj == nil || !obj.IsField() {
+		if !obj.IsField() {
 			return
 		}
 
@@ -118,14 +110,10 @@ func (graph deadCodeGraph) addSelectionUse(
 	}
 }
 
-func (graph deadCodeGraph) compositeLitFieldUses(
+func compositeLitFieldUses(
 	l *packageLinter,
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
-	if lit == nil {
-		return nil
-	}
-
 	typ := l.pkg.TypesInfo.TypeOf(lit)
 	named := namedDeadCodeType(typ)
 
@@ -165,12 +153,8 @@ func addStructFieldUse(
 }
 
 func selectionStructFieldKey(selection *types.Selection) string {
-	if selection == nil {
-		return ""
-	}
-
 	obj, ok := selection.Obj().(*types.Var)
-	if !ok || obj == nil || !obj.IsField() {
+	if !ok || !obj.IsField() {
 		return ""
 	}
 
@@ -178,10 +162,6 @@ func selectionStructFieldKey(selection *types.Selection) string {
 }
 
 func selectionStructFieldOwner(selection *types.Selection) *types.Named {
-	if selection == nil {
-		return nil
-	}
-
 	typ := selection.Recv()
 	indexPath := selection.Index()
 

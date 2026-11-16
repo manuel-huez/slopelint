@@ -14,159 +14,125 @@ type returnGuard struct {
 	key string
 }
 
-type returnGuardRun struct {
-	pos    token.Pos
-	guards int
-	result string
+const (
+	nestedIfPyramidMinDepth = 2
+	kindControlFlowMerge    = "control_flow_merge"
+)
+
+type branchRules struct {
+	q *pkgQuery
 }
 
-type nestedIfPyramid struct {
-	pos   token.Pos
-	depth int
-}
-
-const nestedIfPyramidMinDepth = 2
-
-func (l *Runner) checkIdenticalIfBranches(stmt *ast.IfStmt) {
-	if !l.identicalIfBranches(stmt) {
-		return
-	}
-
-	l.report(
-		stmt.If,
-		"control_flow_merge",
-		"if and else branches are identical; preserve condition evaluation and hoist shared body",
-	)
-}
-
-func (l *Runner) identicalIfBranches(stmt *ast.IfStmt) bool {
+func (r branchRules) identicalIf(stmt *ast.IfStmt) (Finding, bool) {
 	if stmt.Init != nil {
-		return false
+		return Finding{}, false
 	}
 
 	elseBlock, ok := stmt.Else.(*ast.BlockStmt)
-	if !ok {
-		return false
+	if !ok ||
+		len(stmt.Body.List) != len(elseBlock.List) ||
+		r.q.renderStmtList(stmt.Body.List) != r.q.renderStmtList(elseBlock.List) ||
+		!r.q.commentsMatch(stmt.Body, elseBlock) ||
+		stmtListDefinesTopLevelNames(stmt.Body.List) ||
+		stmtListDefinesTopLevelNames(elseBlock.List) {
+		return Finding{}, false
 	}
 
-	if !stmtListsEqual(stmt.Body.List, elseBlock.List, l.renderStmtList) {
-		return false
-	}
-
-	if !sameStrings(
-		l.commentTextsInRange(stmt.Body.Pos(), stmt.Body.End()),
-		l.commentTextsInRange(elseBlock.Pos(), elseBlock.End()),
-	) {
-		return false
-	}
-
-	return !stmtListDefinesTopLevelNames(stmt.Body.List) &&
-		!stmtListDefinesTopLevelNames(elseBlock.List)
+	return Finding{
+		Pos:     stmt.If,
+		Kind:    kindControlFlowMerge,
+		Message: "if and else branches are identical; preserve condition evaluation and hoist shared body",
+	}, true
 }
 
-func (l *Runner) checkIdenticalSwitchBranches(stmt *ast.SwitchStmt) {
-	if stmt.Body == nil {
-		return
-	}
+func (r branchRules) identicalSwitchCases(stmt *ast.SwitchStmt) []Finding {
+	var out []Finding
 
-	var prior *switchBranchShape
+	var prior *ast.CaseClause
 
 	for _, raw := range stmt.Body.List {
 		clause, ok := raw.(*ast.CaseClause)
-		if !ok || clause == nil {
+		if !ok || switchClauseHasFallthrough(clause) {
 			prior = nil
 			continue
-		}
-
-		if switchClauseHasFallthrough(clause) {
-			prior = nil
-			continue
-		}
-
-		shape := switchBranchShape{
-			clause:   clause,
-			key:      l.renderStmtList(clause.Body),
-			comments: l.commentTextsInRange(clause.Case, clause.End()),
 		}
 
 		if prior != nil &&
-			shape.key == prior.key &&
-			sameStrings(shape.comments, prior.comments) {
-			l.report(
-				clause.Case,
-				"control_flow_merge",
-				fmt.Sprintf(
+			r.q.renderStmtList(clause.Body) == r.q.renderStmtList(prior.Body) &&
+			r.q.commentsMatch(clause, prior) {
+			out = append(out, Finding{
+				Pos:  clause.Case,
+				Kind: kindControlFlowMerge,
+				Message: fmt.Sprintf(
 					"switch case %q has identical body as previous case %q; merge case lists",
-					l.renderCaseClauseHeader(clause),
-					l.renderCaseClauseHeader(prior.clause),
+					r.q.renderCaseClauseHeader(clause),
+					r.q.renderCaseClauseHeader(prior),
 				),
-			)
+			})
 		}
 
-		prior = &shape
+		prior = clause
 	}
+
+	return out
 }
 
-func (l *Runner) checkRedundantReturnGuardRun(stmts []ast.Stmt, idx int) {
-	match, ok := l.redundantReturnGuardRun(stmts, idx)
+// returnGuardRunAt matches a run of guards starting at stmts[idx] that all
+// return the same values as the return statement right after the run. The
+// int result is the number of guards in the run.
+func (r branchRules) returnGuardRunAt(stmts []ast.Stmt, idx int) (Finding, int, bool) {
+	first, ok := r.plainReturnGuard(stmts, idx)
 	if !ok {
-		return
+		return Finding{}, 0, false
 	}
 
-	l.report(
-		match.pos,
-		"control_flow_merge",
-		fmt.Sprintf(
-			`%d guard return(s) duplicate following return %q; drop redundant branch checks`,
-			match.guards,
-			match.result,
-		),
-	)
-}
-
-func (l *Runner) redundantReturnGuardRun(stmts []ast.Stmt, idx int) (returnGuardRun, bool) {
-	first, ok := l.plainReturnGuard(stmts, idx)
-	if !ok || l.priorReturnGuardHasSameResult(stmts, idx, first.key) {
-		return returnGuardRun{}, false
+	if prior, ok := r.plainReturnGuard(stmts, idx-1); ok && prior.key == first.key {
+		return Finding{}, 0, false
 	}
 
 	guards := 1
 
 	for scan := idx + 1; scan < len(stmts); scan++ {
 		if ret, ok := stmts[scan].(*ast.ReturnStmt); ok {
-			if l.returnStmtKey(ret) != first.key {
-				return returnGuardRun{}, false
+			if r.returnStmtKey(ret) != first.key {
+				return Finding{}, 0, false
 			}
 
-			return returnGuardRun{
-				pos:    first.pos,
-				guards: guards,
-				result: l.renderReturnResults(ret),
-			}, true
+			result := "return"
+			if len(ret.Results) != 0 {
+				result += " " + strings.ReplaceAll(first.key, "\x00", ", ")
+			}
+
+			return Finding{
+				Pos:  first.pos,
+				Kind: kindControlFlowMerge,
+				Message: fmt.Sprintf(
+					`%d guard return(s) duplicate following return %q; drop redundant branch checks`,
+					guards,
+					result,
+				),
+			}, guards, true
 		}
 
-		guard, ok := l.plainReturnGuard(stmts, scan)
+		guard, ok := r.plainReturnGuard(stmts, scan)
 		if !ok || guard.key != first.key {
-			return returnGuardRun{}, false
+			return Finding{}, 0, false
 		}
 
 		guards++
 	}
 
-	return returnGuardRun{}, false
+	return Finding{}, 0, false
 }
 
-func (l *Runner) plainReturnGuard(stmts []ast.Stmt, idx int) (returnGuard, bool) {
+func (r branchRules) plainReturnGuard(stmts []ast.Stmt, idx int) (returnGuard, bool) {
 	if idx < 0 || idx >= len(stmts) {
 		return returnGuard{}, false
 	}
 
-	stmt, ok := stmts[idx].(*ast.IfStmt)
+	stmt, ok := r.q.plainIfStmt(stmts[idx])
 	if !ok ||
-		stmt.Init != nil ||
-		stmt.Else != nil ||
-		l.hasAttachedComment(stmt) ||
-		!l.returnGuardConditionSafe(stmt.Cond) ||
+		!returnGuardConditionSafe(r.q.pkg.TypesInfo, stmt.Cond) ||
 		len(stmt.Body.List) != 1 {
 		return returnGuard{}, false
 	}
@@ -176,147 +142,149 @@ func (l *Runner) plainReturnGuard(stmts []ast.Stmt, idx int) (returnGuard, bool)
 		return returnGuard{}, false
 	}
 
-	return returnGuard{
-		pos: stmt.If,
-		key: l.returnStmtKey(ret),
-	}, true
+	return returnGuard{pos: stmt.If, key: r.returnStmtKey(ret)}, true
 }
 
-func (l *Runner) priorReturnGuardHasSameResult(stmts []ast.Stmt, idx int, key string) bool {
-	prior, ok := l.plainReturnGuard(stmts, idx-1)
-
-	return ok && prior.key == key
-}
-
-func (l *Runner) returnStmtKey(ret *ast.ReturnStmt) string {
-	if ret == nil {
-		return ""
-	}
-
+func (r branchRules) returnStmtKey(ret *ast.ReturnStmt) string {
 	parts := make([]string, 0, len(ret.Results))
 	for _, result := range ret.Results {
-		parts = append(parts, l.render(result))
+		parts = append(parts, r.q.render(result))
 	}
 
 	return strings.Join(parts, "\x00")
 }
 
-func (l *Runner) renderReturnResults(ret *ast.ReturnStmt) string {
-	if ret == nil || len(ret.Results) == 0 {
-		return "return"
+// finalIfPyramidAt matches a chain of nested ifs that ends a function
+// without results, which guard clauses can flatten.
+func (r branchRules) finalIfPyramidAt(stmts []ast.Stmt, idx int, ctx blockContext) (Finding, bool) {
+	if !ctx.functionBody || ctx.functionHasResults || idx != len(stmts)-1 {
+		return Finding{}, false
 	}
 
-	return "return " + strings.Join(strings.Split(l.returnStmtKey(ret), "\x00"), ", ")
+	ifStmt, ok := stmts[idx].(*ast.IfStmt)
+	if !ok {
+		return Finding{}, false
+	}
+
+	depth := r.ifPyramidDepth(ifStmt)
+	if depth < nestedIfPyramidMinDepth {
+		return Finding{}, false
+	}
+
+	return Finding{
+		Pos:  ifStmt.If,
+		Kind: "control_flow_pyramid",
+		Message: fmt.Sprintf(
+			`nested if pyramid has %d levels at function end; invert conditions into guard clauses`,
+			depth,
+		),
+	}, true
 }
 
-func (l *Runner) returnGuardConditionSafe(expr ast.Expr) bool {
-	expr = ast.Unparen(expr)
+// ifPyramidDepth counts ifs nested as the only statement of each other. It
+// is 0 when any level has init, else, a comment or an empty body.
+func (r branchRules) ifPyramidDepth(ifStmt *ast.IfStmt) int {
+	depth := 0
 
-	switch expr := expr.(type) {
+	for {
+		if ifStmt.Init != nil ||
+			ifStmt.Else != nil ||
+			r.q.hasAttachedComment(ifStmt) ||
+			len(ifStmt.Body.List) == 0 {
+			return 0
+		}
+
+		depth++
+
+		if len(ifStmt.Body.List) != 1 {
+			return depth
+		}
+
+		next, ok := ifStmt.Body.List[0].(*ast.IfStmt)
+		if !ok {
+			return depth
+		}
+
+		ifStmt = next
+	}
+}
+
+func returnGuardConditionSafe(info *types.Info, expr ast.Expr) bool {
+	switch expr := ast.Unparen(expr).(type) {
 	case *ast.Ident:
-		return l.safeGuardIdent(expr)
+		return safeGuardIdent(info, expr)
 	case *ast.UnaryExpr:
-		return expr.Op == token.NOT && l.returnGuardConditionSafe(expr.X)
+		return expr.Op == token.NOT && returnGuardConditionSafe(info, expr.X)
 	case *ast.BinaryExpr:
-		return l.returnGuardBinaryConditionSafe(expr)
+		return returnGuardBinaryConditionSafe(info, expr)
 	default:
 		return false
 	}
 }
 
-func (l *Runner) returnGuardBinaryConditionSafe(expr *ast.BinaryExpr) bool {
+func returnGuardBinaryConditionSafe(info *types.Info, expr *ast.BinaryExpr) bool {
 	// Only boolean and comparison operators are safe to drop.
 	//exhaustive:ignore
 	switch expr.Op {
 	case token.LAND, token.LOR:
-		return l.returnGuardConditionSafe(expr.X) && l.returnGuardConditionSafe(expr.Y)
+		return returnGuardConditionSafe(info, expr.X) && returnGuardConditionSafe(info, expr.Y)
 	case token.EQL, token.NEQ:
-		return l.safeGuardOperand(expr.X) &&
-			l.safeGuardOperand(expr.Y) &&
-			l.equalityGuardComparisonSafe(expr.X, expr.Y)
+		return safeGuardOperand(info, expr.X) &&
+			safeGuardOperand(info, expr.Y) &&
+			equalityGuardComparisonSafe(info, expr.X, expr.Y)
 	case token.LSS, token.LEQ, token.GTR, token.GEQ:
-		return l.safeGuardOperand(expr.X) && l.safeGuardOperand(expr.Y)
+		return safeGuardOperand(info, expr.X) && safeGuardOperand(info, expr.Y)
 	default:
 		return false
 	}
 }
 
-func (l *Runner) safeGuardOperand(expr ast.Expr) bool {
-	expr = ast.Unparen(expr)
-
-	switch expr := expr.(type) {
+func safeGuardOperand(info *types.Info, expr ast.Expr) bool {
+	switch expr := ast.Unparen(expr).(type) {
 	case *ast.Ident:
-		return l.safeGuardIdent(expr)
+		return safeGuardIdent(info, expr)
 	case *ast.BasicLit:
 		return true
 	case *ast.CallExpr:
-		return l.safeLenCall(expr)
+		if len(expr.Args) != 1 || builtinName(info, expr) != builtinLenName {
+			return false
+		}
+
+		_, ok := ast.Unparen(expr.Args[0]).(*ast.Ident)
+
+		return ok
 	default:
-		return l.safeConstantOperand(expr)
+		value := constValue(info, expr)
+
+		return value != nil && value.Kind() != constant.Unknown
 	}
 }
 
-func (l *Runner) safeGuardIdent(expr *ast.Ident) bool {
-	if expr == nil {
-		return false
-	}
-
+func safeGuardIdent(info *types.Info, expr *ast.Ident) bool {
 	switch expr.Name {
 	case boolTrueText, boolFalseText, nilText:
 		return true
 	}
 
-	obj := l.pkg.TypesInfo.ObjectOf(expr)
-	if obj == nil {
+	switch info.ObjectOf(expr).(type) {
+	case *types.PkgName, *types.Builtin, nil:
 		return false
+	default:
+		return true
 	}
-
-	_, isPkg := obj.(*types.PkgName)
-	_, isBuiltin := obj.(*types.Builtin)
-
-	return !isPkg && !isBuiltin
 }
 
-func (l *Runner) safeLenCall(expr *ast.CallExpr) bool {
-	if expr == nil || len(expr.Args) != 1 || !l.isBuiltinCall(expr, builtinLenName) {
-		return false
-	}
-
-	_, ok := ast.Unparen(expr.Args[0]).(*ast.Ident)
-
-	return ok
-}
-
-func (l *Runner) safeConstantOperand(expr ast.Expr) bool {
-	tv, ok := l.pkg.TypesInfo.Types[ast.Unparen(expr)]
-
-	return ok && tv.Value != nil && tv.Value.Kind() != constant.Unknown
-}
-
-func (l *Runner) equalityGuardComparisonSafe(left ast.Expr, right ast.Expr) bool {
-	if l.isNilExpr(left) || l.isNilExpr(right) {
+func equalityGuardComparisonSafe(info *types.Info, left ast.Expr, right ast.Expr) bool {
+	if isNilExpr(left) || isNilExpr(right) {
 		return true
 	}
 
-	return l.strictlyComparableExpr(left) && l.strictlyComparableExpr(right)
-}
-
-func (l *Runner) isNilExpr(expr ast.Expr) bool {
-	id, ok := ast.Unparen(expr).(*ast.Ident)
-
-	return ok && id.Name == nilText
-}
-
-func (l *Runner) strictlyComparableExpr(expr ast.Expr) bool {
-	return typeStrictlyComparable(l.pkg.TypesInfo.TypeOf(ast.Unparen(expr)))
+	return typeStrictlyComparable(info.TypeOf(ast.Unparen(left))) &&
+		typeStrictlyComparable(info.TypeOf(ast.Unparen(right)))
 }
 
 // Strict comparability avoids equality checks that can panic through interface values.
 func typeStrictlyComparable(typ types.Type) bool {
-	if typ == nil {
-		return false
-	}
-
 	switch typ := types.Unalias(typ).Underlying().(type) {
 	case *types.Basic:
 		return typ.Kind() != types.Invalid && typ.Kind() != types.UntypedNil
@@ -335,123 +303,6 @@ func typeStrictlyComparable(typ types.Type) bool {
 	default:
 		return false
 	}
-}
-
-func (l *Runner) checkNestedFinalIfPyramid(stmts []ast.Stmt, idx int, ctx blockContext) {
-	if !ctx.functionBody || ctx.functionHasResults || idx != len(stmts)-1 {
-		return
-	}
-
-	match, ok := l.nestedFinalIfPyramid(stmts[idx])
-	if !ok {
-		return
-	}
-
-	l.report(
-		match.pos,
-		"control_flow_pyramid",
-		fmt.Sprintf(
-			`nested if pyramid has %d levels at function end; invert conditions into guard clauses`,
-			match.depth,
-		),
-	)
-}
-
-func (l *Runner) nestedFinalIfPyramid(stmt ast.Stmt) (nestedIfPyramid, bool) {
-	ifStmt, ok := stmt.(*ast.IfStmt)
-	if !ok {
-		return nestedIfPyramid{}, false
-	}
-
-	depth := 0
-	pos := ifStmt.If
-
-	for {
-		if ifStmt.Init != nil ||
-			ifStmt.Else != nil ||
-			l.hasAttachedComment(ifStmt) ||
-			len(ifStmt.Body.List) == 0 {
-			return nestedIfPyramid{}, false
-		}
-
-		depth++
-
-		if len(ifStmt.Body.List) != 1 {
-			break
-		}
-
-		next, ok := ifStmt.Body.List[0].(*ast.IfStmt)
-		if !ok {
-			break
-		}
-
-		ifStmt = next
-	}
-
-	if depth < nestedIfPyramidMinDepth {
-		return nestedIfPyramid{}, false
-	}
-
-	return nestedIfPyramid{pos: pos, depth: depth}, true
-}
-
-func forEachSwitchCase(
-	stmt *ast.SwitchStmt,
-	defaultCase func(*ast.CaseClause),
-	nonDefaultCase func([]ast.Expr) bool,
-) bool {
-	for _, raw := range stmt.Body.List {
-		clause, ok := raw.(*ast.CaseClause)
-		if !ok || clause == nil {
-			continue
-		}
-
-		if len(clause.List) == 0 {
-			defaultCase(clause)
-			continue
-		}
-
-		if !nonDefaultCase(clause.List) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (l *Runner) renderStmtList(stmts []ast.Stmt) string {
-	if len(stmts) == 0 {
-		return "{}"
-	}
-
-	parts := make([]string, 0, len(stmts))
-	for _, stmt := range stmts {
-		parts = append(parts, l.render(stmt))
-	}
-
-	return strings.Join(parts, "\n")
-}
-
-func sameStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-
-	for idx := range left {
-		if left[idx] != right[idx] {
-			return false
-		}
-	}
-
-	return true
-}
-
-func stmtListsEqual(left, right []ast.Stmt, render func([]ast.Stmt) string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-
-	return render(left) == render(right)
 }
 
 func stmtListDefinesTopLevelNames(stmts []ast.Stmt) bool {
@@ -477,31 +328,6 @@ func switchClauseHasFallthrough(clause *ast.CaseClause) bool {
 	branch, ok := clause.Body[len(clause.Body)-1].(*ast.BranchStmt)
 
 	return ok && branch.Tok == token.FALLTHROUGH
-}
-
-func isImpossibleStatePanic(body []ast.Stmt, info *types.Info) bool {
-	if len(body) != 1 {
-		return false
-	}
-
-	exprStmt, ok := body[0].(*ast.ExprStmt)
-	if !ok {
-		return false
-	}
-
-	call, ok := exprStmt.X.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-
-	id, ok := call.Fun.(*ast.Ident)
-	if !ok {
-		return false
-	}
-
-	obj, ok := info.ObjectOf(id).(*types.Builtin)
-
-	return ok && obj != nil && obj.Name() == panicText
 }
 
 func exprHasCalls(expr ast.Expr) bool {

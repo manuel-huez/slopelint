@@ -18,17 +18,25 @@ type reflectedWrapperArgUse struct {
 	mapKey bool
 }
 
+// reflectedWrappers finds arguments that local wrapper functions pass on to
+// codec calls. Summaries are cached per wrapper for the whole run.
+type reflectedWrappers struct {
+	decls        *funcDeclIndex
+	decodeCache  map[string]reflectedWrapperSummary
+	marshalCache map[string]reflectedWrapperSummary
+}
+
 type reflectedWrapperSummary struct {
 	uses      []reflectedWrapperArgUse
 	inspected bool
 }
 
-func (graph deadCodeGraph) reflectedWrapperDecodeTargetTypes(
+func (wrappers reflectedWrappers) reflectedWrapperDecodeTargetTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
 ) []reflectedDecodeTarget {
-	uses, inspected := graph.reflectedWrapperArgUses(fn, reflectedWrapperDecode)
+	uses, inspected := wrappers.reflectedWrapperArgUses(fn, reflectedWrapperDecode)
 	if !inspected || len(uses) == 0 {
 		return nil
 	}
@@ -54,12 +62,12 @@ func (graph deadCodeGraph) reflectedWrapperDecodeTargetTypes(
 	return out
 }
 
-func (graph deadCodeGraph) reflectedWrapperMarshalTargetTypes(
+func (wrappers reflectedWrappers) reflectedWrapperMarshalTargetTypes(
 	l *packageLinter,
 	fn *types.Func,
 	call *ast.CallExpr,
 ) []reflectedMarshalTarget {
-	uses, inspected := graph.reflectedWrapperArgUses(fn, reflectedWrapperMarshal)
+	uses, inspected := wrappers.reflectedWrapperArgUses(fn, reflectedWrapperMarshal)
 	if !inspected || len(uses) == 0 {
 		return nil
 	}
@@ -80,11 +88,11 @@ func (graph deadCodeGraph) reflectedWrapperMarshalTargetTypes(
 	return out
 }
 
-func (graph deadCodeGraph) reflectedWrapperArgUses(
+func (wrappers reflectedWrappers) reflectedWrapperArgUses(
 	fn *types.Func,
 	kind reflectedWrapperKind,
 ) ([]reflectedWrapperArgUse, bool) {
-	uses, inspected, _ := graph.reflectedWrapperArgUsesSeen(
+	uses, inspected, _ := wrappers.reflectedWrapperArgUsesSeen(
 		fn,
 		make(map[string]struct{}),
 		kind,
@@ -93,7 +101,7 @@ func (graph deadCodeGraph) reflectedWrapperArgUses(
 	return uses, inspected
 }
 
-func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
+func (wrappers reflectedWrappers) reflectedWrapperArgUsesSeen(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
 	kind reflectedWrapperKind,
@@ -103,7 +111,11 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 	}
 
 	key := deadCodeObjectKey(fn)
-	cache := graph.reflectedWrapperCache(kind)
+
+	cache := wrappers.decodeCache
+	if kind == reflectedWrapperMarshal {
+		cache = wrappers.marshalCache
+	}
 
 	if key != "" {
 		if cached, ok := cache[key]; ok {
@@ -115,9 +127,11 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 		}
 	}
 
-	source, ok := graph.reflectedWrapperFunc(fn)
+	source, ok := wrappers.decls.reflectedWrapperFunc(fn)
 	if !ok {
-		graph.cacheReflectedWrapperMiss(key, cache)
+		if key != "" {
+			cache[key] = reflectedWrapperSummary{}
+		}
 
 		return nil, false, true
 	}
@@ -131,7 +145,7 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 	complete := true
 
 	inspectReflectedCalls(source.decl.Body, func(call *ast.CallExpr) {
-		if !graph.collectReflectedWrapperCall(
+		if !wrappers.collectReflectedWrapperCall(
 			source.pkg,
 			call,
 			source.paramIndexes,
@@ -144,50 +158,11 @@ func (graph deadCodeGraph) reflectedWrapperArgUsesSeen(
 	})
 
 	out = dedupeComparable(out, reflectedDedupeMinLen)
-	if complete {
-		graph.cacheReflectedWrapperUses(key, cache, out)
+	if complete && key != "" {
+		cache[key] = reflectedWrapperSummary{uses: out, inspected: true}
 	}
 
 	return out, true, complete
-}
-
-func (graph deadCodeGraph) reflectedWrapperCache(
-	kind reflectedWrapperKind,
-) map[string]reflectedWrapperSummary {
-	switch kind {
-	case reflectedWrapperDecode:
-		return graph.reflectedWrapperDecodeCache
-	case reflectedWrapperMarshal:
-		return graph.reflectedWrapperMarshalCache
-	}
-
-	return nil
-}
-
-func (graph deadCodeGraph) cacheReflectedWrapperMiss(
-	key string,
-	cache map[string]reflectedWrapperSummary,
-) {
-	if key == "" || cache == nil {
-		return
-	}
-
-	cache[key] = reflectedWrapperSummary{}
-}
-
-func (graph deadCodeGraph) cacheReflectedWrapperUses(
-	key string,
-	cache map[string]reflectedWrapperSummary,
-	uses []reflectedWrapperArgUse,
-) {
-	if key == "" || cache == nil {
-		return
-	}
-
-	cache[key] = reflectedWrapperSummary{
-		uses:      uses,
-		inspected: true,
-	}
 }
 
 type reflectedWrapperSource struct {
@@ -196,13 +171,13 @@ type reflectedWrapperSource struct {
 	paramIndexes map[types.Object]int
 }
 
-func (graph deadCodeGraph) reflectedWrapperFunc(fn *types.Func) (reflectedWrapperSource, bool) {
-	pkg := graph.packageForFunc(fn)
+func (decls *funcDeclIndex) reflectedWrapperFunc(fn *types.Func) (reflectedWrapperSource, bool) {
+	pkg := decls.packageForFunc(fn)
 	if pkg == nil {
 		return reflectedWrapperSource{}, false
 	}
 
-	decl := graph.funcDeclForObject(pkg, fn)
+	decl := decls.funcDeclForObject(pkg, fn)
 	if decl == nil || decl.Body == nil {
 		return reflectedWrapperSource{}, false
 	}
@@ -220,7 +195,7 @@ func (graph deadCodeGraph) reflectedWrapperFunc(fn *types.Func) (reflectedWrappe
 	return reflectedWrapperSource{pkg: pkg, decl: decl, paramIndexes: paramIndexes}, true
 }
 
-func (graph deadCodeGraph) collectReflectedWrapperCall(
+func (wrappers reflectedWrappers) collectReflectedWrapperCall(
 	pkg *Package,
 	call *ast.CallExpr,
 	paramIndexes map[types.Object]int,
@@ -228,11 +203,11 @@ func (graph deadCodeGraph) collectReflectedWrapperCall(
 	kind reflectedWrapperKind,
 	out *[]reflectedWrapperArgUse,
 ) bool {
-	if graph.collectDirectReflectedWrapperCall(pkg, call, paramIndexes, kind, out) {
+	if collectDirectReflectedWrapperCall(pkg, call, paramIndexes, kind, out) {
 		return true
 	}
 
-	return graph.collectDelegatedReflectedWrapperCall(
+	return wrappers.collectDelegatedReflectedWrapperCall(
 		pkg,
 		call,
 		paramIndexes,
@@ -242,7 +217,7 @@ func (graph deadCodeGraph) collectReflectedWrapperCall(
 	)
 }
 
-func (graph deadCodeGraph) collectDirectReflectedWrapperCall(
+func collectDirectReflectedWrapperCall(
 	pkg *Package,
 	call *ast.CallExpr,
 	paramIndexes map[types.Object]int,
@@ -284,7 +259,7 @@ func (graph deadCodeGraph) collectDirectReflectedWrapperCall(
 	return true
 }
 
-func (graph deadCodeGraph) collectDelegatedReflectedWrapperCall(
+func (wrappers reflectedWrappers) collectDelegatedReflectedWrapperCall(
 	pkg *Package,
 	call *ast.CallExpr,
 	paramIndexes map[types.Object]int,
@@ -298,7 +273,7 @@ func (graph deadCodeGraph) collectDelegatedReflectedWrapperCall(
 
 	callee := calledFunc(pkg.TypesInfo, call)
 
-	uses, inspected, complete := graph.reflectedWrapperArgUsesSeen(callee, funcsSeen, kind)
+	uses, inspected, complete := wrappers.reflectedWrapperArgUsesSeen(callee, funcsSeen, kind)
 	if !inspected {
 		return true
 	}

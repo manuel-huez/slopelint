@@ -6,8 +6,8 @@ import (
 	"sort"
 )
 
-func (graph deadCodeGraph) findings() []Finding {
-	live := graph.liveObjects()
+func (graph *deadCodeGraph) findings(uses *useCollector) []Finding {
+	live := graph.liveObjects(uses)
 	dead := make(map[string]deadCodeDecl)
 
 	for obj, decl := range graph.candidates {
@@ -37,7 +37,7 @@ func (graph deadCodeGraph) findings() []Finding {
 	return findings
 }
 
-func (graph deadCodeGraph) unreachableSubgraphRoots(
+func (graph *deadCodeGraph) unreachableSubgraphRoots(
 	dead map[string]deadCodeDecl,
 ) map[string]deadCodeDecl {
 	edges := graph.unreachableSubgraphEdges(dead)
@@ -49,7 +49,7 @@ func (graph deadCodeGraph) unreachableSubgraphRoots(
 
 type deadCodeEdges map[string]map[string]struct{}
 
-func (graph deadCodeGraph) unreachableSubgraphEdges(
+func (graph *deadCodeGraph) unreachableSubgraphEdges(
 	dead map[string]deadCodeDecl,
 ) deadCodeEdges {
 	edges := make(deadCodeEdges, len(dead))

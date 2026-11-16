@@ -7,32 +7,54 @@ import (
 	"slices"
 )
 
-func (graph *deadCodeGraph) addDecl(l *packageLinter, decl ast.Decl, mode deadCodeMode) {
+// declIndex adds each production declaration as a dead-code candidate or,
+// when it must stay live, as a root use.
+type declIndex struct {
+	graph *deadCodeGraph
+	uses  *useCollector
+}
+
+func (index declIndex) addPackageDecls(l *packageLinter, mode deadCodeMode) {
+	l.forEachProductionDecl(func(decl ast.Decl) {
+		if _, ok := l.pkg.GeneratedDecls[decl]; ok {
+			index.addRootUses(l, decl)
+			return
+		}
+
+		index.addDecl(l, decl, mode)
+	})
+}
+
+// addRootUses records node as live. Its uses are collected right away:
+// fmt and reflection caches filled here only see candidates indexed so far,
+// and later results can depend on them. indexEdges recomputes root edges.
+func (index declIndex) addRootUses(l *packageLinter, node ast.Node) {
+	index.graph.rootUses = append(index.graph.rootUses, deadCodeRootUse{pkg: l.pkg, node: node})
+	index.graph.addRootUseEdges(index.uses, l.pkg, node)
+}
+
+func (index declIndex) addDecl(l *packageLinter, decl ast.Decl, mode deadCodeMode) {
 	switch decl := decl.(type) {
 	case *ast.FuncDecl:
-		graph.addFuncDecl(l, decl, mode)
+		index.addFuncDecl(l, decl, mode)
 	case *ast.GenDecl:
-		graph.addGenDecl(l, decl, mode)
+		index.addGenDecl(l, decl, mode)
 	}
 }
 
-func (graph *deadCodeGraph) addFuncDecl(
+func (index declIndex) addFuncDecl(
 	l *packageLinter,
 	fn *ast.FuncDecl,
 	mode deadCodeMode,
 ) {
-	if fn == nil || fn.Name == nil {
-		return
-	}
-
 	obj, _ := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
 
 	if l.keepFuncLive(fn, obj, mode) {
-		graph.addRootUses(l, fn)
+		index.addRootUses(l, fn)
 		return
 	}
 
-	graph.addFuncCandidate(l.pkg, obj, fn, deadCodeFuncKind(fn))
+	index.addFuncCandidate(l.pkg, obj, fn, deadCodeFuncKind(fn))
 }
 
 func (l *packageLinter) keepFuncLive(
@@ -50,15 +72,19 @@ func (l *packageLinter) reportableFuncForMode(
 	fn *ast.FuncDecl,
 	mode deadCodeMode,
 ) bool {
-	if mode == deadCodePrivate {
-		return l.reportableDeadCodeFunc(fn)
+	if fn.Body == nil || fn.Name.Name == initFuncName {
+		return false
 	}
 
-	return l.reportableRepoDeadCodeFunc(fn)
+	if l.pkg.Name == mainPkgName && fn.Name.Name == mainPkgName {
+		return false
+	}
+
+	return reportableDeadCodeNameForMode(fn.Name.Name, mode)
 }
 
 func deadCodeFuncKind(fn *ast.FuncDecl) string {
-	if fn != nil && fn.Recv != nil {
+	if fn.Recv != nil {
 		return "method"
 	}
 
@@ -71,18 +97,7 @@ var errorHookParamTypeNames = map[string]string{
 }
 
 func isErrorHookMethod(fn *types.Func) bool {
-	if fn == nil {
-		return false
-	}
-
-	sig, ok := fn.Type().(*types.Signature)
-	if !ok {
-		return false
-	}
-
-	if sig == nil {
-		return false
-	}
+	sig := fn.Type().(*types.Signature)
 
 	recv := sig.Recv()
 	if recv == nil {
@@ -125,10 +140,6 @@ func isErrorHookMethod(fn *types.Func) bool {
 }
 
 func receiverCanBeError(receiver types.Type) bool {
-	if receiver == nil {
-		return false
-	}
-
 	if typeAssignableToError(receiver) {
 		return true
 	}
@@ -141,12 +152,7 @@ func receiverCanBeError(receiver types.Type) bool {
 }
 
 func typeAssignableToError(typ types.Type) bool {
-	obj := types.Universe.Lookup("error")
-	if obj == nil {
-		return false
-	}
-
-	return types.AssignableTo(typ, obj.Type())
+	return types.AssignableTo(typ, types.Universe.Lookup("error").Type())
 }
 
 func unwrapHookSignature(sig *types.Signature) bool {
@@ -181,15 +187,10 @@ func typeIsAny(typ types.Type) bool {
 }
 
 func typeIsUniverseType(typ types.Type, name string) bool {
-	obj := types.Universe.Lookup(name)
-	if obj == nil {
-		return false
-	}
-
-	return types.Identical(typ, obj.Type())
+	return types.Identical(typ, types.Universe.Lookup(name).Type())
 }
 
-func (graph *deadCodeGraph) addFuncCandidate(
+func (index declIndex) addFuncCandidate(
 	pkg *Package,
 	obj *types.Func,
 	fn *ast.FuncDecl,
@@ -202,7 +203,7 @@ func (graph *deadCodeGraph) addFuncCandidate(
 		owner = deadCodeObjectKey(receiver.Obj())
 	}
 
-	graph.candidates[deadCodeObjectKey(origin)] = deadCodeDecl{
+	index.graph.candidates[deadCodeObjectKey(origin)] = deadCodeDecl{
 		obj:      origin,
 		node:     fn,
 		owner:    owner,
@@ -214,11 +215,7 @@ func (graph *deadCodeGraph) addFuncCandidate(
 	}
 }
 
-func (l *packageLinter) reportableRepoDeadCodeFunc(fn *ast.FuncDecl) bool {
-	return l.reportableDeadCodeFuncWithName(fn, reportableRepoDeadCodeName)
-}
-
-func (graph *deadCodeGraph) addGenDecl(
+func (index declIndex) addGenDecl(
 	l *packageLinter,
 	decl *ast.GenDecl,
 	mode deadCodeMode,
@@ -226,30 +223,26 @@ func (graph *deadCodeGraph) addGenDecl(
 	for _, spec := range decl.Specs {
 		switch spec := spec.(type) {
 		case *ast.TypeSpec:
-			graph.addTypeSpec(l, spec, mode)
+			index.addTypeSpec(l, spec, mode)
 		case *ast.ValueSpec:
-			graph.addValueSpec(l, decl.Tok, spec, mode)
+			index.addValueSpec(l, decl.Tok, spec, mode)
 		}
 	}
 }
 
-func (graph *deadCodeGraph) addTypeSpec(
+func (index declIndex) addTypeSpec(
 	l *packageLinter,
 	spec *ast.TypeSpec,
 	mode deadCodeMode,
 ) {
-	if spec == nil || spec.Name == nil {
-		return
-	}
-
 	obj, _ := l.pkg.TypesInfo.Defs[spec.Name].(*types.TypeName)
 	if obj == nil {
-		graph.addRootUses(l, spec)
+		index.addRootUses(l, spec)
 		return
 	}
 
 	if reportableDeadCodeNameForMode(spec.Name.Name, mode) {
-		graph.candidates[deadCodeObjectKey(obj)] = deadCodeDecl{
+		index.graph.candidates[deadCodeObjectKey(obj)] = deadCodeDecl{
 			obj:      obj,
 			node:     spec,
 			name:     spec.Name.Name,
@@ -259,18 +252,18 @@ func (graph *deadCodeGraph) addTypeSpec(
 			pkg:      l.pkg,
 		}
 	} else {
-		graph.addRootUses(l, spec)
+		index.addRootUses(l, spec)
 	}
 
-	graph.addStructFieldCandidates(l, spec, mode)
+	index.addStructFieldCandidates(l, spec, mode)
 }
 
-func (graph *deadCodeGraph) addStructFieldCandidates(
+func (index declIndex) addStructFieldCandidates(
 	l *packageLinter,
 	spec *ast.TypeSpec,
 	mode deadCodeMode,
 ) {
-	if spec == nil || spec.Name == nil || spec.Assign.IsValid() {
+	if spec.Assign.IsValid() {
 		return
 	}
 
@@ -286,7 +279,7 @@ func (graph *deadCodeGraph) addStructFieldCandidates(
 				continue
 			}
 
-			graph.candidates[deadCodeStructFieldKey(l.pkg.ImportPath, spec.Name.Name, name.Name)] = deadCodeDecl{
+			index.graph.candidates[deadCodeStructFieldKey(l.pkg.ImportPath, spec.Name.Name, name.Name)] = deadCodeDecl{
 				obj:      obj,
 				node:     field,
 				owner:    deadCodeObjectKey(l.pkg.TypesInfo.Defs[spec.Name]),
@@ -304,8 +297,7 @@ func (l *packageLinter) deadCodeStructFieldObject(
 	name *ast.Ident,
 	mode deadCodeMode,
 ) (*types.Var, bool) {
-	if name == nil ||
-		!reportableDeadCodeNameForMode(name.Name, mode) {
+	if !reportableDeadCodeNameForMode(name.Name, mode) {
 		return nil, false
 	}
 
@@ -314,24 +306,16 @@ func (l *packageLinter) deadCodeStructFieldObject(
 	return obj, obj != nil && obj.IsField()
 }
 
-func (graph *deadCodeGraph) addValueSpec(
+func (index declIndex) addValueSpec(
 	l *packageLinter,
 	tok token.Token,
 	spec *ast.ValueSpec,
 	mode deadCodeMode,
 ) {
-	if spec == nil {
-		return
-	}
-
 	sideEffect := tok == token.VAR && slices.ContainsFunc(spec.Values, exprHasCalls)
 	rootSpec := false
 
 	for _, name := range spec.Names {
-		if name == nil {
-			continue
-		}
-
 		if sideEffect || !reportableDeadCodeNameForMode(name.Name, mode) {
 			rootSpec = true
 			continue
@@ -348,7 +332,7 @@ func (graph *deadCodeGraph) addValueSpec(
 			kind = "var"
 		}
 
-		graph.candidates[deadCodeObjectKey(obj)] = deadCodeDecl{
+		index.graph.candidates[deadCodeObjectKey(obj)] = deadCodeDecl{
 			obj:      obj,
 			node:     spec,
 			name:     name.Name,
@@ -360,18 +344,14 @@ func (graph *deadCodeGraph) addValueSpec(
 	}
 
 	if rootSpec {
-		graph.addRootUses(l, spec)
+		index.addRootUses(l, spec)
 	}
 }
 
 func reportableDeadCodeNameForMode(name string, mode deadCodeMode) bool {
-	if mode == deadCodeRepo {
-		return reportableRepoDeadCodeName(name)
+	if name == "" || name == "_" {
+		return false
 	}
 
-	return reportableDeadCodeName(name)
-}
-
-func reportableRepoDeadCodeName(name string) bool {
-	return name != "" && name != "_"
+	return mode == deadCodeRepo || !ast.IsExported(name)
 }

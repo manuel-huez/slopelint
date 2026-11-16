@@ -1,30 +1,17 @@
 package deadcode
 
 import (
-	"go/token"
 	"maps"
 )
 
-func (graph deadCodeGraph) identIgnored(
-	pkg *Package,
-	pos token.Pos,
-) bool {
-	ignored := graph.ignored[pkg]
-	if ignored == nil {
-		return false
-	}
-
-	_, ok := ignored[pos]
-
-	return ok
-}
-
-func (graph deadCodeGraph) liveObjects() map[string]struct{} {
+// liveObjects repeats reachability until it is stable: fmt var summaries
+// only follow functions that the previous pass found live.
+func (graph *deadCodeGraph) liveObjects(uses *useCollector) map[string]struct{} {
 	live := graph.reachableObjects()
 
 	for {
-		graph.resetFmtStringerVarSummaries(live)
-		graph.indexEdges()
+		uses.fmt.summaries.resetFmtStringerVarSummaries(live)
+		graph.indexEdges(uses)
 
 		next := graph.reachableObjects()
 		if maps.Equal(live, next) {
@@ -35,7 +22,7 @@ func (graph deadCodeGraph) liveObjects() map[string]struct{} {
 	}
 }
 
-func (graph deadCodeGraph) reachableObjects() map[string]struct{} {
+func (graph *deadCodeGraph) reachableObjects() map[string]struct{} {
 	live := make(map[string]struct{})
 	work := make([]string, 0, len(graph.roots))
 

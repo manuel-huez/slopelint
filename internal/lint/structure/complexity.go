@@ -13,341 +13,131 @@ const (
 	scatteredGuardMinLate            = 2
 )
 
-type scatteredGuardSummary struct {
-	pos   token.Pos
-	total int
-	late  int
-}
+// simplificationScore counts behavior-preserving simplification points over
+// the whole body, with the same checks the scan reports one by one.
+func (l *Runner) simplificationScore(body *ast.BlockStmt, ctx blockContext) (Finding, bool) {
+	score := 0
 
-func copyObjectSet(in map[types.Object]struct{}) map[types.Object]struct{} {
-	out := make(map[types.Object]struct{}, len(in))
-	for obj := range in {
-		out[obj] = struct{}{}
-	}
+	stmtWalker{
+		atIndex: func(stmts []ast.Stmt, idx int, ctx blockContext) {
+			for _, finding := range l.blockFindingsAt(stmts, idx, ctx) {
+				score += finding.points
+			}
+		},
+		atStmt: func(stmt ast.Stmt) {
+			if ifStmt, ok := stmt.(*ast.IfStmt); ok {
+				if _, ok := (branchRules{l.q}).identicalIf(ifStmt); ok {
+					score++
+				}
+			}
+		},
+	}.walkList(body.List, ctx)
 
-	return out
-}
-
-func (l *Runner) checkFunctionComplexity(body *ast.BlockStmt, ctx blockContext) {
-	if body == nil {
-		return
-	}
-
-	l.checkBehaviorPreservingComplexity(body.List, ctx, body.Lbrace)
-	l.checkScatteredInputGuards(body, ctx)
-}
-
-func (l *Runner) checkBehaviorPreservingComplexity(
-	stmts []ast.Stmt,
-	ctx blockContext,
-	pos token.Pos,
-) {
-	score := l.simplificationScoreForBlock(stmts, ctx)
 	if score < complexitySimplificationMinScore {
-		return
+		return Finding{}, false
 	}
 
-	l.report(
-		pos,
-		"complexity_simplification",
-		fmt.Sprintf(
+	return Finding{
+		Pos:  body.Lbrace,
+		Kind: "complexity_simplification",
+		Message: fmt.Sprintf(
 			`function has %d behavior-preserving simplification points; remove redundant branches/guards before adding more control flow`,
 			score,
 		),
-	)
+	}, true
 }
 
-func (l *Runner) simplificationScoreForBlock(stmts []ast.Stmt, ctx blockContext) int {
-	score := 0
-
-	for idx, stmt := range stmts {
-		if run, ok := l.redundantReturnGuardRun(stmts, idx); ok {
-			score += run.guards
-		}
-
-		if l.boolIfCeremony(stmts, idx) {
-			score++
-		}
-
-		if _, ok := l.singleUseTempAlias(stmts, idx); ok {
-			score++
-		}
-
-		if _, ok := l.redundantAppendLenGuard(stmt); ok {
-			score++
-		}
-
-		if _, ok := l.redundantRangeGuard(stmt); ok {
-			score++
-		}
-
-		if _, ok := l.emptyRangeReturnGuard(stmts, idx, ctx); ok {
-			score++
-		}
-
-		if _, ok := l.nestedFinalIfPyramidAt(stmts, idx, ctx); ok {
-			score++
-		}
-
-		score += l.simplificationScoreForStmt(stmt)
-	}
-
-	return score
+// inputGuardScan checks whether a function's input guards are grouped.
+// temps holds the function inputs plus locals computed only from them.
+type inputGuardScan struct {
+	q       *pkgQuery
+	effects *validationEffects
+	temps   map[types.Object]struct{}
+	results []types.Type
 }
 
-func (l *Runner) simplificationScoreForStmt(stmt ast.Stmt) int {
-	switch stmt := stmt.(type) {
-	case *ast.BlockStmt:
-		return l.simplificationScoreForBody(stmt)
-	case *ast.IfStmt:
-		return l.simplificationScoreForIf(stmt)
-	case *ast.ForStmt:
-		return l.simplificationScoreForBody(stmt.Body)
-	case *ast.RangeStmt:
-		return l.simplificationScoreForBody(stmt.Body)
-	case *ast.SwitchStmt:
-		return l.simplificationScoreForCaseBody(stmt.Body)
-	case *ast.TypeSwitchStmt:
-		return l.simplificationScoreForCaseBody(stmt.Body)
-	case *ast.SelectStmt:
-		return l.simplificationScoreForCommBody(stmt.Body)
-	case *ast.LabeledStmt:
-		return l.simplificationScoreForStmt(stmt.Stmt)
-	default:
-		return 0
-	}
-}
-
-func (l *Runner) simplificationScoreForBody(body *ast.BlockStmt) int {
-	if body == nil {
-		return 0
-	}
-
-	return l.simplificationScoreForBlock(body.List, blockContext{})
-}
-
-func (l *Runner) simplificationScoreForIf(stmt *ast.IfStmt) int {
-	score := 0
-	if l.identicalIfBranches(stmt) {
-		score++
-	}
-
-	score += l.simplificationScoreForBody(stmt.Body)
-	if stmt.Else != nil {
-		score += l.simplificationScoreForStmt(stmt.Else)
-	}
-
-	return score
-}
-
-func (l *Runner) simplificationScoreForCaseBody(body *ast.BlockStmt) int {
-	if body == nil {
-		return 0
-	}
-
-	return l.simplificationScoreForCaseClauses(body.List)
-}
-
-func (l *Runner) simplificationScoreForCommBody(body *ast.BlockStmt) int {
-	if body == nil {
-		return 0
-	}
-
-	return l.simplificationScoreForCommClauses(body.List)
-}
-
-func (l *Runner) simplificationScoreForCaseClauses(stmts []ast.Stmt) int {
-	score := 0
-
-	for _, raw := range stmts {
-		clause, ok := raw.(*ast.CaseClause)
-		if !ok || clause == nil {
-			continue
-		}
-
-		score += l.simplificationScoreForBlock(clause.Body, blockContext{})
-	}
-
-	return score
-}
-
-func (l *Runner) simplificationScoreForCommClauses(stmts []ast.Stmt) int {
-	score := 0
-
-	for _, raw := range stmts {
-		clause, ok := raw.(*ast.CommClause)
-		if !ok || clause == nil {
-			continue
-		}
-
-		score += l.simplificationScoreForBlock(clause.Body, blockContext{})
-	}
-
-	return score
-}
-
-func (l *Runner) boolIfCeremony(stmts []ast.Stmt, idx int) bool {
-	stmt, ok := stmts[idx].(*ast.IfStmt)
-	if !ok || stmt.Init != nil {
-		return false
-	}
-
-	if stmt.Else != nil {
-		thenAction, elseAction, ok := l.boolIfElsePair(stmt)
-		if !ok {
-			return false
-		}
-
-		return l.boolActionPairSimplifiable(stmt.Cond, thenAction, elseAction)
-	}
-
-	match, ok := l.boolIfThenReturnMatch(stmts, idx, stmt)
-	if !ok {
-		return false
-	}
-
-	_, ok = l.boolReplacementText(match.cond, match.whenTrue, match.whenFalse, "return ")
-
-	return ok
-}
-
-func (l *Runner) boolActionPairSimplifiable(
-	cond ast.Expr,
-	thenAction boolBranchAction,
-	elseAction boolBranchAction,
-) bool {
-	switch thenAction.kind {
-	case boolBranchInvalid:
-		return false
-	case boolBranchReturn:
-		_, ok := l.boolReplacementText(cond, thenAction.value, elseAction.value, "return ")
-
-		return ok
-	case boolBranchAssign:
-		if thenAction.targetID == "" || thenAction.targetID != elseAction.targetID {
-			return false
-		}
-
-		_, ok := l.boolReplacementText(
-			cond,
-			thenAction.value,
-			elseAction.value,
-			thenAction.targetID+" = ",
-		)
-
-		return ok
-	}
-
-	return false
-}
-
-func (l *Runner) nestedFinalIfPyramidAt(
-	stmts []ast.Stmt,
-	idx int,
-	ctx blockContext,
-) (nestedIfPyramid, bool) {
-	if !ctx.functionBody || ctx.functionHasResults || idx != len(stmts)-1 {
-		return nestedIfPyramid{}, false
-	}
-
-	return l.nestedFinalIfPyramid(stmts[idx])
-}
-
-func (l *Runner) checkScatteredInputGuards(body *ast.BlockStmt, ctx blockContext) {
-	summary, ok := l.scatteredInputGuardReturns(body, ctx)
-	if !ok {
-		return
-	}
-
-	l.report(
-		summary.pos,
-		"guard_complexity",
-		fmt.Sprintf(
-			`%d of %d input guard returns are interleaved with other work; keep validation guards together or split function`,
-			summary.late,
-			summary.total,
-		),
-	)
-}
-
-func (l *Runner) scatteredInputGuardReturns(
-	body *ast.BlockStmt,
-	ctx blockContext,
-) (scatteredGuardSummary, bool) {
+func (s inputGuardScan) scattered(body *ast.BlockStmt) (Finding, bool) {
 	seenWork := false
-	validationTemps := copyObjectSet(ctx.functionInputs)
-
-	var summary scatteredGuardSummary
+	total, late := 0, 0
+	pos := token.NoPos
 
 	for _, stmt := range body.List {
-		guard, ok := l.inputReturnGuard(stmt, validationTemps, ctx.functionResults)
-		if ok {
-			summary.total++
+		if guard, ok := s.inputReturnGuard(stmt); ok {
+			total++
+
 			if seenWork {
-				summary.late++
-				if summary.pos == token.NoPos {
-					summary.pos = guard.If
+				late++
+
+				if pos == token.NoPos {
+					pos = guard.If
 				}
 			}
 
 			continue
 		}
 
-		if l.inputValidationPrepStmt(stmt, validationTemps) {
-			l.addValidationPrepObjects(validationTemps, stmt)
+		if s.prepStmt(stmt) {
+			s.addPrepObjects(stmt)
 			continue
 		}
 
-		if l.validationPrepFailureGuard(stmt, validationTemps, ctx.functionResults) {
+		if s.prepFailureGuard(stmt) {
 			continue
 		}
 
-		seenWork = seenWork || l.validationStatementEffect(stmt, body) == validationWork
+		seenWork = seenWork || s.effects.statementEffect(stmt, body) == validationWork
 	}
 
-	if summary.total < scatteredGuardMinTotal || summary.late < scatteredGuardMinLate {
-		return scatteredGuardSummary{}, false
+	if total < scatteredGuardMinTotal || late < scatteredGuardMinLate {
+		return Finding{}, false
 	}
 
-	return summary, true
+	return Finding{
+		Pos:  pos,
+		Kind: "guard_complexity",
+		Message: fmt.Sprintf(
+			`%d of %d input guard returns are interleaved with other work; keep validation guards together or split function`,
+			late,
+			total,
+		),
+	}, true
 }
 
-func (l *Runner) inputReturnGuard(
-	stmt ast.Stmt,
-	validationTemps map[types.Object]struct{},
-	resultTypes []types.Type,
-) (*ast.IfStmt, bool) {
-	ifStmt, ok := l.plainIfStmt(stmt)
+// failureGuard matches a plain if whose only statement returns a failure.
+func (s inputGuardScan) failureGuard(stmt ast.Stmt) (*ast.IfStmt, bool) {
+	ifStmt, ok := s.q.plainIfStmt(stmt)
 	if !ok || len(ifStmt.Body.List) != 1 {
 		return nil, false
 	}
 
 	ret, ok := ifStmt.Body.List[0].(*ast.ReturnStmt)
-	if !ok || !l.validationFailureReturn(ret, resultTypes) {
-		return nil, false
-	}
-
-	if !l.inputValidationExpr(ifStmt.Cond, validationTemps) {
-		return nil, false
-	}
-
-	if !l.nodeUsesAnyObject(ifStmt.Cond, validationTemps) {
+	if !ok || !s.failureReturn(ret) {
 		return nil, false
 	}
 
 	return ifStmt, true
 }
 
-func (l *Runner) validationFailureReturn(
-	stmt *ast.ReturnStmt,
-	resultTypes []types.Type,
-) bool {
+func (s inputGuardScan) inputReturnGuard(stmt ast.Stmt) (*ast.IfStmt, bool) {
+	ifStmt, ok := s.failureGuard(stmt)
+	if !ok ||
+		!s.validationExpr(ifStmt.Cond) ||
+		!nodeUsesAnyObject(s.q.pkg.TypesInfo, ifStmt.Cond, s.temps) {
+		return nil, false
+	}
+
+	return ifStmt, true
+}
+
+func (s inputGuardScan) failureReturn(stmt *ast.ReturnStmt) bool {
 	if len(stmt.Results) == 0 {
 		return true
 	}
 
+	// Type-checked code has one result per result type, or one call that
+	// returns them all, so index stays in range.
 	for index, expr := range stmt.Results {
-		if l.returnResultMayBeFailure(expr, resultTypeAt(resultTypes, index)) {
+		if returnResultMayBeFailure(s.q.pkg.TypesInfo, expr, s.results[index]) {
 			return true
 		}
 	}
@@ -355,32 +145,17 @@ func (l *Runner) validationFailureReturn(
 	return false
 }
 
-func resultTypeAt(resultTypes []types.Type, index int) types.Type {
-	if index < 0 || index >= len(resultTypes) {
-		return nil
-	}
-
-	return resultTypes[index]
-}
-
-func (l *Runner) returnResultMayBeFailure(expr ast.Expr, resultType types.Type) bool {
-	if l.isNilExpr(expr) || !typeCanCarryFailure(resultType) {
+func returnResultMayBeFailure(info *types.Info, expr ast.Expr, resultType types.Type) bool {
+	if isNilExpr(expr) || !typeCanCarryFailure(resultType) {
 		return false
 	}
 
-	exprType := l.pkg.TypesInfo.TypeOf(expr)
-	if exprType == nil {
-		return false
-	}
+	exprType := info.TypeOf(expr)
 
 	return types.AssignableTo(exprType, resultType) || typeCanCarryFailure(exprType)
 }
 
 func typeCanCarryFailure(typ types.Type) bool {
-	if typ == nil {
-		return false
-	}
-
 	if typeImplementsError(typ) {
 		return true
 	}
@@ -393,71 +168,43 @@ func typeCanCarryFailure(typ types.Type) bool {
 }
 
 func typeImplementsError(typ types.Type) bool {
-	if typ == nil {
-		return false
-	}
-
-	errObj := types.Universe.Lookup("error")
-	errType, ok := errObj.Type().Underlying().(*types.Interface)
+	errType, ok := types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
 
 	return ok && types.Implements(typ, errType)
 }
 
-func (l *Runner) inputValidationExpr(
-	expr ast.Expr,
-	validationTemps map[types.Object]struct{},
-) bool {
+// validationExpr reports whether expr only reads inputs, validation temps,
+// constants and pure calls.
+func (s inputGuardScan) validationExpr(expr ast.Expr) bool {
 	expr = ast.Unparen(expr)
 
 	switch expr := expr.(type) {
 	case *ast.Ident:
-		return l.inputValidationIdent(expr, validationTemps)
+		return s.validationIdent(expr)
 	case *ast.BasicLit:
 		return true
 	case *ast.SelectorExpr:
-		return l.inputValidationSelector(expr, validationTemps)
+		return s.validationSelector(expr)
 	case *ast.CallExpr:
-		return l.inputValidationCall(expr, validationTemps)
+		return s.validationCall(expr)
 	case *ast.UnaryExpr:
-		return expr.Op == token.NOT && l.inputValidationExpr(
-			expr.X,
-			validationTemps,
-		)
+		return expr.Op == token.NOT && s.validationExpr(expr.X)
 	case *ast.BinaryExpr:
-		return l.inputValidationBinary(expr, validationTemps)
+		// Only boolean and comparison operators form validation guards.
+		//exhaustive:ignore
+		switch expr.Op {
+		case token.LAND, token.LOR,
+			token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+			return s.validationExpr(expr.X) && s.validationExpr(expr.Y)
+		default:
+			return false
+		}
 	default:
-		value, ok := l.scalarOf(expr)
-
-		return ok && value.kind != 0
+		return isScalarValue(s.q.pkg.TypesInfo, expr)
 	}
 }
 
-func (l *Runner) inputValidationBinary(
-	expr *ast.BinaryExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	// Only boolean and comparison operators form validation guards.
-	//exhaustive:ignore
-	switch expr.Op {
-	case token.LAND, token.LOR,
-		token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
-		return l.inputValidationExpr(expr.X, validationTemps) &&
-			l.inputValidationExpr(expr.Y, validationTemps)
-	default:
-		return false
-	}
-}
-
-func (l *Runner) inputValidationIdent(
-	ident *ast.Ident,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if ident == nil {
-		return false
-	}
-
-	obj := l.pkg.TypesInfo.ObjectOf(ident)
-
+func (s inputGuardScan) validationIdent(ident *ast.Ident) bool {
 	switch ident.Name {
 	case boolTrueText, boolFalseText, nilText:
 		return true
@@ -465,7 +212,8 @@ func (l *Runner) inputValidationIdent(
 		return false
 	}
 
-	if _, ok := validationTemps[obj]; ok {
+	obj := s.q.pkg.TypesInfo.ObjectOf(ident)
+	if _, ok := s.temps[obj]; ok {
 		return true
 	}
 
@@ -474,113 +222,87 @@ func (l *Runner) inputValidationIdent(
 	return ok
 }
 
-func (l *Runner) inputValidationSelector(
-	expr *ast.SelectorExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if expr == nil {
-		return false
-	}
+func (s inputGuardScan) validationSelector(expr *ast.SelectorExpr) bool {
+	info := s.q.pkg.TypesInfo
 
-	if obj, ok := l.pkg.TypesInfo.ObjectOf(expr.Sel).(*types.Const); ok && obj != nil {
+	if _, ok := info.ObjectOf(expr.Sel).(*types.Const); ok {
 		return true
 	}
 
-	selection := l.pkg.TypesInfo.Selections[expr]
+	selection := info.Selections[expr]
 	if selection == nil || selection.Kind() != types.FieldVal {
 		return false
 	}
 
-	return l.inputValidationExpr(expr.X, validationTemps)
+	return s.validationExpr(expr.X)
 }
 
-func (l *Runner) validationPrepFailureGuard(
-	stmt ast.Stmt,
-	validationTemps map[types.Object]struct{},
-	resultTypes []types.Type,
-) bool {
-	if len(validationTemps) == 0 {
+func (s inputGuardScan) validationCall(call *ast.CallExpr) bool {
+	if s.effects.callEffect(call) != validationPure {
 		return false
 	}
 
-	ifStmt, ok := l.plainIfStmt(stmt)
-	if !ok || len(ifStmt.Body.List) != 1 {
-		return false
+	if selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok {
+		if selection := s.q.pkg.TypesInfo.Selections[selector]; selection != nil &&
+			selection.Kind() == types.MethodVal &&
+			!s.validationExpr(selector.X) {
+			return false
+		}
 	}
 
-	ret, ok := ifStmt.Body.List[0].(*ast.ReturnStmt)
-	if !ok || !l.validationFailureReturn(ret, resultTypes) {
-		return false
+	for _, arg := range call.Args {
+		if !s.validationExpr(arg) {
+			return false
+		}
 	}
 
-	return l.validationPrepFailureExpr(ifStmt.Cond, validationTemps)
+	return true
 }
 
-func (l *Runner) validationPrepFailureExpr(
-	expr ast.Expr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	expr = ast.Unparen(expr)
+// prepFailureGuard matches a guard that rejects a failed prep step, such as
+// `if err != nil` or `if !ok` on a validation temp.
+func (s inputGuardScan) prepFailureGuard(stmt ast.Stmt) bool {
+	ifStmt, ok := s.failureGuard(stmt)
+	if !ok {
+		return false
+	}
 
-	switch expr := expr.(type) {
+	switch expr := ast.Unparen(ifStmt.Cond).(type) {
 	case *ast.UnaryExpr:
-		return expr.Op == token.NOT &&
-			l.validationPrepBoolIdent(expr.X, validationTemps)
+		return expr.Op == token.NOT && s.prepBoolIdent(expr.X)
 	case *ast.BinaryExpr:
-		return l.validationPrepFailureBinary(expr, validationTemps)
+		return s.prepFailureBinary(expr)
 	default:
 		return false
 	}
 }
 
-func (l *Runner) validationPrepFailureBinary(
-	expr *ast.BinaryExpr,
-	validationTemps map[types.Object]struct{},
-) bool {
+func (s inputGuardScan) prepFailureBinary(expr *ast.BinaryExpr) bool {
 	if expr.Op != token.NEQ && expr.Op != token.EQL {
 		return false
 	}
 
-	if l.validationPrepErrorIdent(expr.X, validationTemps) &&
-		l.isNilExpr(expr.Y) {
+	if s.prepErrorIdent(expr.X) && isNilExpr(expr.Y) ||
+		s.prepErrorIdent(expr.Y) && isNilExpr(expr.X) {
 		return expr.Op == token.NEQ
 	}
 
-	if l.validationPrepErrorIdent(expr.Y, validationTemps) &&
-		l.isNilExpr(expr.X) {
-		return expr.Op == token.NEQ
-	}
-
-	if l.validationPrepBoolIdent(expr.X, validationTemps) &&
-		l.isBoolLiteral(expr.Y, false) {
-		return expr.Op == token.EQL
-	}
-
-	if l.validationPrepBoolIdent(expr.Y, validationTemps) &&
-		l.isBoolLiteral(expr.X, false) {
+	if s.prepBoolIdent(expr.X) && isFalseIdent(expr.Y) ||
+		s.prepBoolIdent(expr.Y) && isFalseIdent(expr.X) {
 		return expr.Op == token.EQL
 	}
 
 	return false
 }
 
-func (l *Runner) validationPrepErrorIdent(
-	expr ast.Expr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	typ, ok := l.validationPrepIdentType(expr, validationTemps)
-	if !ok {
-		return false
-	}
+func (s inputGuardScan) prepErrorIdent(expr ast.Expr) bool {
+	typ, ok := s.prepIdentType(expr)
 
-	return typeImplementsError(typ)
+	return ok && typeImplementsError(typ)
 }
 
-func (l *Runner) validationPrepBoolIdent(
-	expr ast.Expr,
-	validationTemps map[types.Object]struct{},
-) bool {
-	typ, ok := l.validationPrepIdentType(expr, validationTemps)
+func (s inputGuardScan) prepBoolIdent(expr ast.Expr) bool {
+	typ, ok := s.prepIdentType(expr)
 	if !ok {
 		return false
 	}
@@ -590,45 +312,32 @@ func (l *Runner) validationPrepBoolIdent(
 	return ok && basic.Kind() == types.Bool
 }
 
-func (l *Runner) validationPrepIdentType(
-	expr ast.Expr,
-	validationTemps map[types.Object]struct{},
-) (types.Type, bool) {
+func (s inputGuardScan) prepIdentType(expr ast.Expr) (types.Type, bool) {
 	ident, ok := ast.Unparen(expr).(*ast.Ident)
 	if !ok {
 		return nil, false
 	}
 
-	obj := l.pkg.TypesInfo.ObjectOf(ident)
-	if _, ok := validationTemps[obj]; !ok {
+	info := s.q.pkg.TypesInfo
+	if _, ok := s.temps[info.ObjectOf(ident)]; !ok {
 		return nil, false
 	}
 
-	return l.pkg.TypesInfo.TypeOf(ident), true
+	return info.TypeOf(ident), true
 }
 
-func (l *Runner) isBoolLiteral(expr ast.Expr, want bool) bool {
+func isFalseIdent(expr ast.Expr) bool {
 	ident, ok := ast.Unparen(expr).(*ast.Ident)
-	if !ok {
-		return false
-	}
 
-	if want {
-		return ident.Name == boolTrueText
-	}
-
-	return ident.Name == boolFalseText
+	return ok && ident.Name == boolFalseText
 }
 
-func (l *Runner) inputValidationDeferredCleanup(
-	stmt ast.Stmt,
-	validationTemps map[types.Object]struct{},
-) bool {
+func (s inputGuardScan) deferredCleanup(stmt ast.Stmt) bool {
 	switch stmt := stmt.(type) {
 	case *ast.DeferStmt:
 		// The body runs on return; only its receiver and arguments run before guards.
 		for _, arg := range stmt.Call.Args {
-			if !l.inputValidationExpr(arg, validationTemps) {
+			if !s.validationExpr(arg) {
 				return false
 			}
 		}
@@ -637,30 +346,28 @@ func (l *Runner) inputValidationDeferredCleanup(
 		case *ast.FuncLit, *ast.Ident:
 			return true
 		case *ast.SelectorExpr:
-			return l.inputValidationExpr(fun.X, validationTemps)
+			return s.validationExpr(fun.X)
 		default:
 			return false
 		}
 	case *ast.IfStmt:
-		_, plain := l.plainIfStmt(stmt)
-		if !plain || len(stmt.Body.List) != 1 ||
-			!l.inputValidationExpr(stmt.Cond, validationTemps) {
+		_, plain := s.q.plainIfStmt(stmt)
+		if !plain || len(stmt.Body.List) != 1 || !s.validationExpr(stmt.Cond) {
 			return false
 		}
 
 		_, deferred := stmt.Body.List[0].(*ast.DeferStmt)
 
-		return deferred && l.inputValidationDeferredCleanup(stmt.Body.List[0], validationTemps)
+		return deferred && s.deferredCleanup(stmt.Body.List[0])
 	}
 
 	return false
 }
 
-func (l *Runner) inputValidationPrepStmt(
-	stmt ast.Stmt,
-	validationTemps map[types.Object]struct{},
-) bool {
-	if l.inputValidationDeferredCleanup(stmt, validationTemps) {
+// prepStmt matches a deferred cleanup or an assignment of locals computed
+// only from inputs and validation temps.
+func (s inputGuardScan) prepStmt(stmt ast.Stmt) bool {
+	if s.deferredCleanup(stmt) {
 		return true
 	}
 
@@ -669,26 +376,21 @@ func (l *Runner) inputValidationPrepStmt(
 		return false
 	}
 
+	info := s.q.pkg.TypesInfo
+
 	for _, lhs := range assign.Lhs {
 		ident, ok := ast.Unparen(lhs).(*ast.Ident)
 		if !ok {
 			return false
 		}
 
-		if obj := l.pkg.TypesInfo.ObjectOf(
-			ident,
-		); obj != nil &&
-			obj.Parent() == l.pkg.TypesPkg.Scope() {
+		if obj := info.ObjectOf(ident); obj != nil && obj.Parent() == s.q.pkg.TypesPkg.Scope() {
 			return false
 		}
 	}
 
 	for _, rhs := range assign.Rhs {
-		if !l.inputValidationExpr(rhs, validationTemps) {
-			return false
-		}
-
-		if !l.nodeUsesAnyObject(rhs, validationTemps) {
+		if !s.validationExpr(rhs) || !nodeUsesAnyObject(info, rhs, s.temps) {
 			return false
 		}
 	}
@@ -696,10 +398,7 @@ func (l *Runner) inputValidationPrepStmt(
 	return true
 }
 
-func (l *Runner) addValidationPrepObjects(
-	validationTemps map[types.Object]struct{},
-	stmt ast.Stmt,
-) {
+func (s inputGuardScan) addPrepObjects(stmt ast.Stmt) {
 	assign, ok := stmt.(*ast.AssignStmt)
 	if !ok {
 		return
@@ -711,8 +410,6 @@ func (l *Runner) addValidationPrepObjects(
 			continue
 		}
 
-		if obj := l.pkg.TypesInfo.ObjectOf(ident); obj != nil {
-			validationTemps[obj] = struct{}{}
-		}
+		s.temps[s.q.pkg.TypesInfo.ObjectOf(ident)] = struct{}{}
 	}
 }

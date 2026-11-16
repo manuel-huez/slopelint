@@ -6,7 +6,7 @@ import (
 	"go/types"
 )
 
-func (graph deadCodeGraph) collectFuncLitArgReflectedTypeParamDecodes(
+func (typeParams reflectedTypeParams) collectFuncLitArgReflectedTypeParamDecodes(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
@@ -14,11 +14,11 @@ func (graph deadCodeGraph) collectFuncLitArgReflectedTypeParamDecodes(
 	funcsSeen map[string]struct{},
 	out *[]reflectedTypeParamUse,
 ) {
-	graph.inspectInvokedReflectedFuncLitArgCalls(pkg, scope, call, funcsSeen, func(
+	typeParams.inspectInvokedReflectedFuncLitArgCalls(pkg, scope, call, funcsSeen, func(
 		nested *ast.CallExpr,
 		nestedScope *ast.BlockStmt,
 	) {
-		graph.collectReflectedDecodeCallTypeParamDecodes(
+		typeParams.collectReflectedDecodeCallTypeParamDecodes(
 			pkg,
 			nested,
 			typeParamIndexes,
@@ -29,7 +29,7 @@ func (graph deadCodeGraph) collectFuncLitArgReflectedTypeParamDecodes(
 	})
 }
 
-func (graph deadCodeGraph) collectFuncLitArgReflectedTypeParamMarshals(
+func (typeParams reflectedTypeParams) collectFuncLitArgReflectedTypeParamMarshals(
 	pkg *Package,
 	call *ast.CallExpr,
 	typeParamIndexes map[*types.TypeParam]int,
@@ -37,11 +37,11 @@ func (graph deadCodeGraph) collectFuncLitArgReflectedTypeParamMarshals(
 	funcsSeen map[string]struct{},
 	out *[]reflectedMarshalTypeParamUse,
 ) {
-	graph.inspectInvokedReflectedFuncLitArgCalls(pkg, scope, call, funcsSeen, func(
+	typeParams.inspectInvokedReflectedFuncLitArgCalls(pkg, scope, call, funcsSeen, func(
 		nested *ast.CallExpr,
 		nestedScope *ast.BlockStmt,
 	) {
-		graph.collectReflectedMarshalCallTypeParamUses(
+		typeParams.collectReflectedMarshalCallTypeParamUses(
 			pkg,
 			nested,
 			typeParamIndexes,
@@ -52,7 +52,7 @@ func (graph deadCodeGraph) collectFuncLitArgReflectedTypeParamMarshals(
 	})
 }
 
-func (graph deadCodeGraph) inspectInvokedReflectedFuncLitArgCalls(
+func (typeParams reflectedTypeParams) inspectInvokedReflectedFuncLitArgCalls(
 	pkg *Package,
 	scope *ast.BlockStmt,
 	call *ast.CallExpr,
@@ -63,7 +63,7 @@ func (graph deadCodeGraph) inspectInvokedReflectedFuncLitArgCalls(
 		return
 	}
 
-	indexes := graph.invokedFuncParamIndexes(calledFunc(pkg.TypesInfo, call), funcsSeen)
+	indexes := typeParams.invokedFuncParamIndexes(calledFunc(pkg.TypesInfo, call), funcsSeen)
 	for index := range indexes {
 		if index >= len(call.Args) {
 			continue
@@ -371,11 +371,11 @@ func reflectedExprAt(exprs []ast.Expr, index int) ast.Expr {
 	return exprs[index]
 }
 
-func (graph deadCodeGraph) invokedFuncParamIndexes(
+func (typeParams reflectedTypeParams) invokedFuncParamIndexes(
 	fn *types.Func,
 	funcsSeen map[string]struct{},
 ) map[int]struct{} {
-	source, ok := graph.reflectedWrapperFunc(fn)
+	source, ok := typeParams.decls.reflectedWrapperFunc(fn)
 	if !ok {
 		return nil
 	}
@@ -393,13 +393,19 @@ func (graph deadCodeGraph) invokedFuncParamIndexes(
 	out := make(map[int]struct{})
 
 	inspectReflectedCalls(source.decl.Body, func(call *ast.CallExpr) {
-		graph.collectInvokedFuncParamIndexes(source.pkg, call, source.paramIndexes, funcsSeen, out)
+		typeParams.collectInvokedFuncParamIndexes(
+			source.pkg,
+			call,
+			source.paramIndexes,
+			funcsSeen,
+			out,
+		)
 	})
 
 	return out
 }
 
-func (graph deadCodeGraph) collectInvokedFuncParamIndexes(
+func (typeParams reflectedTypeParams) collectInvokedFuncParamIndexes(
 	pkg *Package,
 	call *ast.CallExpr,
 	paramIndexes map[types.Object]int,
@@ -412,7 +418,7 @@ func (graph deadCodeGraph) collectInvokedFuncParamIndexes(
 		return
 	}
 
-	calleeIndexes := graph.invokedFuncParamIndexes(calledFunc(pkg.TypesInfo, call), funcsSeen)
+	calleeIndexes := typeParams.invokedFuncParamIndexes(calledFunc(pkg.TypesInfo, call), funcsSeen)
 	for calleeIndex := range calleeIndexes {
 		if calleeIndex >= len(call.Args) {
 			continue

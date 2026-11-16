@@ -18,7 +18,7 @@ func populateSimilarityScanVectors(
 	ctx context.Context,
 	scanBlocks []*similarityBlock,
 	descriptionBlocks []*similarityBlock,
-	descriptionRuntime similarityDescriptionRuntime,
+	descriptionRuntime codexRuntime,
 	cacheRoot string,
 	opts SimilarityOptions,
 ) (vectors similarityVectorMatrices, err error) {

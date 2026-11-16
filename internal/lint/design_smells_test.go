@@ -858,8 +858,6 @@ func TestSkipsOversizedGeneratedFile(t *testing.T) {
 	}
 }
 
-// sizeLimitSource builds a function spanning funcLines lines, a literal
-// spanning litLines lines, and the given parameter and result counts.
 func sizeLimitSource(header string, funcLines, litLines, params, results int) string {
 	return header + "package sample\n\nfunc long() {\n" + strings.Repeat("\t_ = 0\n", funcLines-2) +
 		"}\n\nfunc literal() {\n\tf := func() {\n" + strings.Repeat("\t\t_ = 0\n", litLines-2) +

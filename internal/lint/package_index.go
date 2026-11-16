@@ -72,7 +72,7 @@ func classifyTestOnlyPackages(
 	targets []*packageMeta,
 	byImportPath map[string]*packageMeta,
 	patterns []string,
-	dir string,
+	absoluteDir string,
 ) {
 	// Reverse imports are complete only for a module-root ./... scan. Public
 	// packages remain production because consumers can exist outside this module.
@@ -80,7 +80,7 @@ func classifyTestOnlyPackages(
 		return
 	}
 
-	bases := moduleRootPackages(targets, byImportPath, dir)
+	bases := moduleRootPackages(targets, byImportPath, absoluteDir)
 
 	var testRoots []string
 
@@ -118,13 +118,8 @@ func classifyTestOnlyPackages(
 func moduleRootPackages(
 	targets []*packageMeta,
 	byImportPath map[string]*packageMeta,
-	dir string,
+	absoluteDir string,
 ) map[string]*packageMeta {
-	absoluteDir, err := filepath.Abs(dir)
-	if err != nil {
-		return nil
-	}
-
 	bases := make(map[string]*packageMeta)
 
 	for _, target := range targets {

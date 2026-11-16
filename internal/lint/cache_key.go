@@ -43,12 +43,17 @@ func analysisCacheKey(
 		maxStates = 32
 	}
 
+	executable, err := analysisCacheExecutableStamp()
+	if err != nil {
+		return "", err
+	}
+
 	fingerprint := analysisCacheFingerprint{
 		Schema:        analysisCacheSchema,
 		BuildID:       buildID,
 		Package:       pkg.ImportPath,
 		MaxStates:     maxStates,
-		Executable:    analysisCacheExecutableStamp(),
+		Executable:    executable,
 		ImportedFacts: analysisCacheImportedFacts(pass, pkg),
 	}
 
@@ -410,30 +415,22 @@ var installedAnalysisCacheBuildID = sync.OnceValues(func() (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 })
 
-func analysisCacheExecutableStamp() analysisCacheExecutable {
+func analysisCacheExecutableStamp() (analysisCacheExecutable, error) {
 	path, err := os.Executable()
 	if err != nil {
-		return analysisCacheExecutable{}
-	}
-
-	return analysisCacheExecutableForPath(path)
-}
-
-func analysisCacheExecutableForPath(path string) analysisCacheExecutable {
-	if path == "" {
-		return analysisCacheExecutable{}
+		return analysisCacheExecutable{}, err
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return analysisCacheExecutable{Path: path}
+		return analysisCacheExecutable{}, err
 	}
 
 	return analysisCacheExecutable{
 		Path:             path,
 		Size:             info.Size(),
 		ModTimeUnixNanos: info.ModTime().UnixNano(),
-	}
+	}, nil
 }
 
 func analysisCacheFiles(pass *analysis.Pass) ([]analysisCacheFile, error) {

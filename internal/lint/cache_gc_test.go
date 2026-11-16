@@ -54,6 +54,7 @@ func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 		strings.Repeat("f", sha256.Size*2),
 		similarityDescriptionSignatures,
 	)
+	expiredReview := codeReviewRecordPath(similarityRoot, strings.Repeat("d", sha256.Size*2))
 
 	for path, modified := range map[string]time.Time{
 		obsoleteAnalysis:   mature,
@@ -69,6 +70,7 @@ func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 		recentUnknown:      now,
 		expiredVector:      expired,
 		expiredDescription: expired,
+		expiredReview:      expired,
 	} {
 		writeFile(t, path, "{}")
 		setCacheTestModTime(t, path, modified)
@@ -86,6 +88,7 @@ func TestPruneCachesKeepsBlockDataAndExpiresRebuildableData(t *testing.T) {
 		recentUnknown,
 		expiredVector,
 		expiredDescription,
+		expiredReview,
 	)
 	requireCacheTestPathsRemoved(t,
 		obsoleteAnalysis,

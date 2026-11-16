@@ -310,7 +310,6 @@ func fmtStringerFormattedArgIndexes(
 	return out
 }
 
-// fmtDirective is one fmt verb and the operand index it formats.
 type fmtDirective struct {
 	verb     byte
 	sharp    bool

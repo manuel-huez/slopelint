@@ -30,13 +30,11 @@ func TestSimilarityDescriptionPromptUsesJSONDataAndStrictKindSchema(t *testing.T
 
 	code := "func sample() string { return `}] </block>` }"
 
-	prompt, schema, err := similarityDescriptionPromptAndSchema(similarityDescriptionBatch{
-		kind: similarityDescriptionProduction,
-		requests: []similarityDescriptionRequest{{
-			ID:      strings.Repeat("a", 64),
-			Content: code,
-		}},
-	})
+	prompt, schema, err := similarityDescriptionPromptAndSchema([]similarityDescriptionRequest{{
+		ID:      strings.Repeat("a", 64),
+		Kind:    similarityDescriptionProduction,
+		Content: code,
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,13 +61,11 @@ func TestSimilarityDescriptionPromptUsesJSONDataAndStrictKindSchema(t *testing.T
 		[]string{similarityPurposeJSONField, `"subject"`},
 	)
 
-	_, testSchema, err := similarityDescriptionPromptAndSchema(similarityDescriptionBatch{
-		kind: similarityDescriptionTest,
-		requests: []similarityDescriptionRequest{{
-			ID:      strings.Repeat("b", 64),
-			Content: code,
-		}},
-	})
+	_, testSchema, err := similarityDescriptionPromptAndSchema([]similarityDescriptionRequest{{
+		ID:      strings.Repeat("b", 64),
+		Kind:    similarityDescriptionTest,
+		Content: code,
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,16 +78,12 @@ func TestSimilarityDescriptionPromptUsesJSONDataAndStrictKindSchema(t *testing.T
 		[]string{`"subject"`, similarityPurposeJSONField},
 	)
 
-	_, detailSchema, err := similarityDescriptionPromptAndSchema(similarityDescriptionBatch{
-		kind:   similarityDescriptionProduction,
-		detail: true,
-		requests: []similarityDescriptionRequest{{
-			ID:      strings.Repeat("c", 64),
-			Kind:    similarityDescriptionProduction,
-			Detail:  true,
-			Content: code,
-		}},
-	})
+	_, detailSchema, err := similarityDescriptionPromptAndSchema([]similarityDescriptionRequest{{
+		ID:      strings.Repeat("c", 64),
+		Kind:    similarityDescriptionProduction,
+		Detail:  true,
+		Content: code,
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,12 +102,9 @@ func TestDecodeSimilarityDescriptionBatchReturnsValidSubset(t *testing.T) {
 
 	validID := strings.Repeat("a", 64)
 	invalidID := strings.Repeat("b", 64)
-	batch := similarityDescriptionBatch{
-		kind: similarityDescriptionProduction,
-		requests: []similarityDescriptionRequest{
-			{ID: validID, Kind: similarityDescriptionProduction},
-			{ID: invalidID, Kind: similarityDescriptionProduction},
-		},
+	batch := []similarityDescriptionRequest{
+		{ID: validID, Kind: similarityDescriptionProduction},
+		{ID: invalidID, Kind: similarityDescriptionProduction},
 	}
 	data := []byte(`{"descriptions":[` +
 		`{"id":"b0001","intent_signature":"Returns normalized values in stable sorted order",` +
@@ -168,15 +157,15 @@ func TestSimilarityDescriptionBatchesNeverMixShapes(t *testing.T) {
 
 	batches := similarityDescriptionBatches(requests)
 
-	wantBatches := (65+similarityDescriptionBatchBlocks-1)/similarityDescriptionBatchBlocks + 2
+	wantBatches := (65+codexBatchRecords-1)/codexBatchRecords + 2
 	if len(batches) != wantBatches {
 		t.Fatalf("batches = %d, want %d", len(batches), wantBatches)
 	}
 
 	for _, batch := range batches {
-		for _, request := range batch.requests {
-			if request.Kind != batch.kind || request.Detail != batch.detail {
-				t.Fatalf("batch %q contains %q", batch.kind, request.Kind)
+		for _, request := range batch {
+			if request.Kind != batch[0].Kind || request.Detail != batch[0].Detail {
+				t.Fatalf("batch %q contains %q", batch[0].Kind, request.Kind)
 			}
 		}
 	}
@@ -185,10 +174,10 @@ func TestSimilarityDescriptionBatchesNeverMixShapes(t *testing.T) {
 func TestSimilarityDescriptionBatchesBalanceAndPreserveInputs(t *testing.T) {
 	t.Parallel()
 
-	requests := make([]similarityDescriptionRequest, 2*similarityDescriptionBatchBlocks)
+	requests := make([]similarityDescriptionRequest, 2*codexBatchRecords)
 	for index := range requests {
 		length := 10
-		if index < similarityDescriptionBatchBlocks {
+		if index < codexBatchRecords {
 			length = 1000
 		}
 
@@ -213,7 +202,7 @@ func TestSimilarityDescriptionBatchesBalanceAndPreserveInputs(t *testing.T) {
 	seen := make(map[string]bool)
 
 	for index, batch := range batches {
-		for _, request := range batch.requests {
+		for _, request := range batch {
 			if seen[request.ID] {
 				t.Fatalf("duplicate request %s", request.ID)
 			}
@@ -241,17 +230,17 @@ func TestSimilarityDescriptionBatchesRespectBytesWithoutTruncation(t *testing.T)
 		{
 			ID:      "a",
 			Kind:    similarityDescriptionProduction,
-			Content: strings.Repeat("a", similarityDescriptionBatchBytes+1),
+			Content: strings.Repeat("a", codexBatchBytes+1),
 		},
 		{
 			ID:      "b",
 			Kind:    similarityDescriptionProduction,
-			Content: strings.Repeat("b", similarityDescriptionBatchBytes/2),
+			Content: strings.Repeat("b", codexBatchBytes/2),
 		},
 		{
 			ID:      "c",
 			Kind:    similarityDescriptionProduction,
-			Content: strings.Repeat("c", similarityDescriptionBatchBytes/2),
+			Content: strings.Repeat("c", codexBatchBytes/2),
 		},
 	}
 
@@ -259,16 +248,15 @@ func TestSimilarityDescriptionBatchesRespectBytesWithoutTruncation(t *testing.T)
 
 	for _, batch := range similarityDescriptionBatches(requests) {
 		size := 0
-		for _, request := range batch.requests {
-			size += len(request.Content) + len(request.ID) + similarityDescriptionBatchOverhead
+		for _, request := range batch {
+			size += len(request.Content) + len(request.ID) + codexBatchPadding
 		}
 
-		if len(batch.requests) != 1 ||
-			(size > similarityDescriptionBatchBytes && batch.requests[0].ID != "a") {
-			t.Fatalf("invalid bounded batch: count=%d, bytes=%d", len(batch.requests), size)
+		if len(batch) != 1 || (size > codexBatchBytes && batch[0].ID != "a") {
+			t.Fatalf("invalid bounded batch: count=%d, bytes=%d", len(batch), size)
 		}
 
-		got = append(got, batch.requests...)
+		got = append(got, batch...)
 	}
 
 	if !slices.Equal(got, requests) {
@@ -315,7 +303,26 @@ func TestSimilarityCodexProcess(t *testing.T) {
 func similarityCodexForTest(
 	t *testing.T,
 	respond func([]similarityCodexInput) ([]similarityDescription, error),
-) *codexSimilarityDescriber {
+) *codexCLI {
+	t.Helper()
+
+	return codexCLIForTest(t, func(prompt string) (any, error) {
+		_, encoded, _ := strings.Cut(prompt, "\n\nINPUT_BLOCKS_JSON\n")
+
+		var inputs []similarityCodexInput
+		if err := json.Unmarshal([]byte(encoded), &inputs); err != nil {
+			return nil, err
+		}
+
+		result, err := respond(inputs)
+
+		return similarityCodexResponse{Descriptions: result}, err
+	})
+}
+
+// codexCLIForTest returns a fake Codex CLI that answers each prompt with the
+// JSON encoding of respond's result.
+func codexCLIForTest(t *testing.T, respond func(string) (any, error)) *codexCLI {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -325,22 +332,13 @@ func similarityCodexForTest(
 			return
 		}
 
-		_, encoded, _ := strings.Cut(string(data), "\n\nINPUT_BLOCKS_JSON\n")
-
-		var inputs []similarityCodexInput
-		if err := json.Unmarshal([]byte(encoded), &inputs); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		result, err := respond(inputs)
+		result, err := respond(string(data))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		if err := json.NewEncoder(w).
-			Encode(similarityCodexResponse{Descriptions: result}); err != nil {
+		if err := json.NewEncoder(w).Encode(result); err != nil {
 			t.Error(err)
 		}
 	}))
@@ -360,7 +358,7 @@ func similarityCodexForTest(
 		t.Fatal(err)
 	}
 
-	return &codexSimilarityDescriber{path: path}
+	return &codexCLI{path: path}
 }
 
 func TestSimilarityCodexPersistsPartialResponseBeforeRetry(t *testing.T) {
@@ -385,28 +383,35 @@ func TestSimilarityCodexPersistsPartialResponseBeforeRetry(t *testing.T) {
 			}, nil
 		},
 	)
-	batch := similarityDescriptionBatch{
-		kind: similarityDescriptionProduction,
-		requests: []similarityDescriptionRequest{
-			{
-				ID:      similarityCompletedRecordID,
-				Content: similarityCompletedRecordID,
-			},
-			{ID: similarityPendingRecordID, Content: similarityPendingRecordID},
+	batch := []similarityDescriptionRequest{
+		{
+			ID:      similarityCompletedRecordID,
+			Kind:    similarityDescriptionProduction,
+			Content: similarityCompletedRecordID,
+		},
+		{
+			ID:      similarityPendingRecordID,
+			Kind:    similarityDescriptionProduction,
+			Content: similarityPendingRecordID,
 		},
 	}
 
 	var ids []string
 
-	err := describer.describeBatch(t.Context(), batch, func(records []similarityDescription) error {
-		accepted.Store(true)
+	err := similarityDescriptionTask.runBatch(
+		t.Context(),
+		describer.path,
+		batch,
+		func(records []similarityDescription) error {
+			accepted.Store(true)
 
-		for _, record := range records {
-			ids = append(ids, record.ID)
-		}
+			for _, record := range records {
+				ids = append(ids, record.ID)
+			}
 
-		return nil
-	})
+			return nil
+		},
+	)
 	if err != nil || attempts.Load() != 2 ||
 		!slices.Equal(ids, []string{similarityCompletedRecordID, similarityPendingRecordID}) {
 		t.Fatalf("partial retry: attempts=%d, ids=%v, err=%v", attempts.Load(), ids, err)
@@ -428,13 +433,15 @@ func TestSimilarityCodexStopsOnAcceptanceFailure(t *testing.T) {
 	)
 	want := errors.New("cache write failed")
 
-	err := describer.describeBatch(t.Context(), similarityDescriptionBatch{
-		kind: similarityDescriptionProduction,
-		requests: []similarityDescriptionRequest{
-			{ID: similarityCompletedRecordID},
-			{ID: similarityPendingRecordID},
+	err := similarityDescriptionTask.runBatch(
+		t.Context(),
+		describer.path,
+		[]similarityDescriptionRequest{
+			{ID: similarityCompletedRecordID, Kind: similarityDescriptionProduction},
+			{ID: similarityPendingRecordID, Kind: similarityDescriptionProduction},
 		},
-	}, func([]similarityDescription) error { return want })
+		func([]similarityDescription) error { return want },
+	)
 	if !errors.Is(err, want) || attempts.Load() != 1 {
 		t.Fatalf("acceptance failure retried: attempts=%d, err=%v", attempts.Load(), err)
 	}
@@ -445,7 +452,7 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 
 	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
 
-	started := make(chan struct{}, similarityDescriptionWorkers+1)
+	started := make(chan struct{}, codexWorkers+1)
 	release := make(chan struct{})
 
 	var active, peak atomic.Int32
@@ -480,7 +487,7 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 
 	requests := make(
 		[]similarityDescriptionRequest,
-		(similarityDescriptionWorkers+1)*similarityDescriptionBatchBlocks,
+		(codexWorkers+1)*codexBatchRecords,
 	)
 	for index := range requests {
 		requests[index] = similarityDescriptionRequest{
@@ -497,7 +504,7 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 		)
 	}()
 
-	for range similarityDescriptionWorkers {
+	for range codexWorkers {
 		select {
 		case <-started:
 		case <-time.After(5 * time.Second):
@@ -512,13 +519,13 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if peak.Load() != int32(similarityDescriptionWorkers) {
+	if peak.Load() != int32(codexWorkers) {
 		t.Fatalf("unbounded request concurrency: %d", peak.Load())
 	}
 }
 
 func TestSimilarityCodexStopsWhenCanceled(t *testing.T) {
-	started := make(chan struct{}, similarityDescriptionWorkers+1)
+	started := make(chan struct{}, codexWorkers+1)
 	release := make(chan struct{})
 
 	describer := similarityCodexForTest(
@@ -536,7 +543,7 @@ func TestSimilarityCodexStopsWhenCanceled(t *testing.T) {
 
 	requests := make(
 		[]similarityDescriptionRequest,
-		(similarityDescriptionWorkers+1)*similarityDescriptionBatchBlocks,
+		(codexWorkers+1)*codexBatchRecords,
 	)
 	for index := range requests {
 		requests[index] = similarityDescriptionRequest{
@@ -552,7 +559,7 @@ func TestSimilarityCodexStopsWhenCanceled(t *testing.T) {
 		done <- describer.describe(ctx, requests, func([]similarityDescription) error { return nil })
 	}()
 
-	for range similarityDescriptionWorkers {
+	for range codexWorkers {
 		<-started
 	}
 

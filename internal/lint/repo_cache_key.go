@@ -66,7 +66,8 @@ func repoAnalysisCacheKey(
 	opts Options,
 	similarity *SimilarityOptions,
 ) (string, string, error) {
-	if similarity != nil && (similarity.embedder != nil || similarity.describer != nil) {
+	if similarity != nil &&
+		(similarity.embedder != nil || similarity.describer != nil || similarity.reviewer != nil) {
 		return "", "", errAnalysisCacheDisabled
 	}
 
@@ -188,16 +189,17 @@ func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) 
 }
 
 type repoAnalysisSimilarityFingerprint struct {
-	CI                bool     `json:"ci"`
-	AcceptedPairIDs   []string `json:"accepted_pair_ids,omitempty"`
-	Schema            int      `json:"schema"`
-	Model             string   `json:"model"`
-	ModelDigest       string   `json:"model_digest"`
-	Descriptions      bool     `json:"descriptions"`
-	DescriptionSchema int      `json:"description_schema,omitempty"`
-	DescriptionModel  string   `json:"description_model,omitempty"`
-	DescriptionEffort string   `json:"description_effort,omitempty"`
-	DescriptionMode   string   `json:"description_mode,omitempty"`
+	CI                bool              `json:"ci"`
+	AcceptedPairIDs   []string          `json:"accepted_pair_ids,omitempty"`
+	Schema            int               `json:"schema"`
+	Model             string            `json:"model"`
+	ModelDigest       string            `json:"model_digest"`
+	Descriptions      bool              `json:"descriptions"`
+	DescriptionSchema int               `json:"description_schema,omitempty"`
+	DescriptionModel  string            `json:"description_model,omitempty"`
+	DescriptionEffort string            `json:"description_effort,omitempty"`
+	DescriptionMode   string            `json:"description_mode,omitempty"`
+	Review            *codeReviewPolicy `json:"review,omitempty"`
 }
 
 func repoAnalysisSimilarityKey(
@@ -218,16 +220,17 @@ func repoAnalysisSimilarityKey(
 		ModelDigest:     similarityModelDigest,
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv(similarityDescriptionEnv)))
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv(codexEnv)))
 	fingerprint.DescriptionMode = mode
 	codexPath, _ := exec.LookPath("codex")
 
-	if !opts.descriptionDisabled && mode != offText &&
+	if mode != offText &&
 		(opts.describer != nil || codexPath != "") {
 		fingerprint.Descriptions = true
 		fingerprint.DescriptionSchema = similarityDescriptionPromptSchema
 		fingerprint.DescriptionModel = similarityDescriptionModel
 		fingerprint.DescriptionEffort = similarityDescriptionEffort
+		fingerprint.Review = &codeReviewCurrentPolicy
 	}
 
 	return fingerprint

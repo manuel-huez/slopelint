@@ -52,38 +52,36 @@ func (l *Runner) isPanicWithError(call *ast.CallExpr) bool {
 	return isErrorType(l.pkg.TypesInfo.TypeOf(call.Args[0]))
 }
 
+// DroppedErrorCandidate marks an `if err != nil` that drops the error. The
+// message is the error variable name. Candidates are not findings: the
+// standalone code review asks the model whether the fallback is safe.
+const DroppedErrorCandidate = "dropped_error_candidate"
+
 func (l *Runner) checkSwallowedErrors() {
 	l.forEachHandwrittenProductionFunc(func(fn *ast.FuncDecl) {
-		l.checkSwallowedErrorsIn(fn.Type, fn.Body)
+		l.checkSwallowedErrorsIn(fn.Body)
 	})
 }
 
-// checkSwallowedErrorsIn checks one function scope. Only functions that can
-// return an error are judged; others have chosen a fallback contract. Nested
-// literals are their own scope.
-func (l *Runner) checkSwallowedErrorsIn(fnType *ast.FuncType, body *ast.BlockStmt) {
+// checkSwallowedErrorsIn checks one function scope. Nested literals are their
+// own scope.
+func (l *Runner) checkSwallowedErrorsIn(body *ast.BlockStmt) {
 	if body == nil {
 		return
 	}
 
-	returnsError := fnType.Results != nil && slices.ContainsFunc(
-		fnType.Results.List,
-		func(field *ast.Field) bool { return isErrorType(l.pkg.TypesInfo.TypeOf(field.Type)) },
-	)
+	following := followingStatements(body)
 
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.FuncLit:
-			l.checkSwallowedErrorsIn(node.Type, node.Body)
+			l.checkSwallowedErrorsIn(node.Body)
 			return false
 		case *ast.IfStmt:
 			errObj := l.nonNilErrorCheck(node.Cond)
-			if returnsError && errObj != nil && !l.errorOutlivesIf(fnType, body, node, errObj) &&
-				l.blockDiscardsError(node.Body) {
-				l.report(node.Pos(), "swallowed_error", fmt.Sprintf(
-					"error %q is checked and dropped in a function that returns error; return, wrap, or record it, or return false to state the ok-bool contract",
-					errObj.Name(),
-				))
+			if errObj != nil && l.blockDiscardsError(node.Body) &&
+				!l.droppedErrorReadLater(body, node, errObj, following[node]) {
+				l.report(node.Pos(), DroppedErrorCandidate, errObj.Name())
 			}
 		}
 
@@ -91,33 +89,144 @@ func (l *Runner) checkSwallowedErrorsIn(fnType *ast.FuncType, body *ast.BlockStm
 	})
 }
 
-// errorOutlivesIf reports whether a named result or a later use still carries
-// the error, as in `err = f(); if err != nil { break }; return err`.
-func (l *Runner) errorOutlivesIf(
-	fnType *ast.FuncType,
+// followingStatements maps each if statement that sits directly in a statement
+// list to the statements after it.
+func followingStatements(body *ast.BlockStmt) map[*ast.IfStmt][]ast.Stmt {
+	out := make(map[*ast.IfStmt][]ast.Stmt)
+
+	ast.Inspect(body, func(node ast.Node) bool {
+		var list []ast.Stmt
+
+		switch node := node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.BlockStmt:
+			list = node.List
+		case *ast.CaseClause:
+			list = node.Body
+		case *ast.CommClause:
+			list = node.Body
+		}
+
+		for index, stmt := range list {
+			if ifStmt, ok := stmt.(*ast.IfStmt); ok {
+				out[ifStmt] = list[index+1:]
+			}
+		}
+
+		return true
+	})
+
+	return out
+}
+
+// droppedErrorReadLater reports whether the checked error value can still be
+// read after ifStmt. The answer is conservative: named results, outer
+// variables, errors declared outside the innermost loop around ifStmt (a later
+// iteration can read them), and errors a closure captures or whose address is
+// taken all count as read.
+func (l *Runner) droppedErrorReadLater(
+	body *ast.BlockStmt,
+	ifStmt *ast.IfStmt,
+	errObj types.Object,
+	following []ast.Stmt,
+) bool {
+	if errObj.Pos() < body.Pos() || errObj.Pos() > body.End() ||
+		l.errorEscapesScope(body, ifStmt, errObj) {
+		return true
+	}
+
+	var first *ast.Ident
+
+	inspectNodesBetween(body, ifStmt.End(), body.End(), func(node ast.Node) bool {
+		if ident, ok := node.(*ast.Ident); ok && l.pkg.TypesInfo.ObjectOf(ident) == errObj {
+			first = ident
+		}
+
+		return first == nil
+	})
+
+	return first != nil && !l.overwritesDroppedError(ifStmt, first, errObj, following)
+}
+
+// errorEscapesScope reports whether errObj lives across iterations of the
+// innermost loop around ifStmt, is captured by a function literal, or has its
+// address taken.
+func (l *Runner) errorEscapesScope(
 	body *ast.BlockStmt,
 	ifStmt *ast.IfStmt,
 	errObj types.Object,
 ) bool {
-	if fnType.Results != nil &&
-		slices.ContainsFunc(fnType.Results.List, func(field *ast.Field) bool {
-			return slices.ContainsFunc(field.Names, func(name *ast.Ident) bool {
-				return l.pkg.TypesInfo.ObjectOf(name) == errObj
-			})
-		}) {
-		return true
-	}
+	escapes := false
 
-	used := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.FuncLit:
+			escapes = escapes || nodeUsesObject(node.Body, errObj, l.pkg.TypesInfo)
+			return false
+		case *ast.UnaryExpr:
+			escapes = escapes || node.Op == token.AND && l.identObject(node.X) == errObj
+		case *ast.ForStmt, *ast.RangeStmt:
+			// Declared inside the innermost loop means inside every enclosing one.
+			if node.Pos() <= ifStmt.Pos() && ifStmt.End() <= node.End() {
+				escapes = escapes || errObj.Pos() < node.Pos() || errObj.Pos() > node.End()
+			}
+		}
 
-	inspectNodesBetween(body, ifStmt.End(), body.End(), func(node ast.Node) bool {
-		ident, ok := node.(*ast.Ident)
-		used = used || ok && l.pkg.TypesInfo.ObjectOf(ident) == errObj
-
-		return !used
+		return !escapes
 	})
 
-	return used
+	return escapes
+}
+
+// overwritesDroppedError reports whether the first later mention is a plain
+// overwrite such as `_, err = g()` by a following statement in the same block,
+// reached without jumps.
+func (l *Runner) overwritesDroppedError(
+	ifStmt *ast.IfStmt,
+	first *ast.Ident,
+	errObj types.Object,
+	following []ast.Stmt,
+) bool {
+	if containsBranch(ifStmt.Body) {
+		return false
+	}
+
+	for _, stmt := range following {
+		if stmt.End() <= first.Pos() {
+			if containsBranch(stmt) {
+				return false
+			}
+
+			continue
+		}
+
+		if outer, ok := stmt.(*ast.IfStmt); ok && outer.Init != nil {
+			stmt = outer.Init
+		}
+
+		assign, ok := stmt.(*ast.AssignStmt)
+
+		return ok && slices.Contains(assign.Lhs, ast.Expr(first)) &&
+			!slices.ContainsFunc(assign.Rhs, func(rhs ast.Expr) bool {
+				return nodeUsesObject(rhs, errObj, l.pkg.TypesInfo)
+			})
+	}
+
+	return false
+}
+
+func containsBranch(node ast.Node) bool {
+	found := false
+
+	ast.Inspect(node, func(node ast.Node) bool {
+		_, branch := node.(*ast.BranchStmt)
+		found = found || branch
+
+		return !found
+	})
+
+	return found
 }
 
 // nonNilErrorCheck returns the error variable of an exact `err != nil` condition.

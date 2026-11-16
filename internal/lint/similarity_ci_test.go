@@ -9,6 +9,9 @@ import (
 )
 
 func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
+	// These stamps carry no review; the Codex off switch makes review optional.
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
@@ -23,12 +26,11 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
-	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		embedder:            embedder,
-		descriptionDisabled: true,
-	})
+	issues, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		CacheEnabled: true,
+		cacheDir:     cacheDir,
+		embedder:     embedder,
+	}, nil)
 	if err != nil {
 		t.Fatalf("local check: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 
 	pkgs = loadPackagesForTest(t, tmp)
 
-	issues, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{descriptionDisabled: true})
+	issues, err = checkSemanticCode(t.Context(), pkgs, SimilarityOptions{}, nil)
 	if err != nil {
 		t.Fatalf("stamped local check: %v", err)
 	}
@@ -57,7 +59,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 		t.Fatalf("stamped local issues: %v", issues)
 	}
 
-	issues, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{CI: true})
+	issues, err = checkSemanticCode(t.Context(), pkgs, SimilarityOptions{CI: true}, nil)
 	if err != nil {
 		t.Fatalf("CI check: %v", err)
 	}
@@ -73,13 +75,15 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 	)
 	pkgs = loadPackagesForTest(t, tmp)
 
-	_, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{CI: true})
+	_, err = checkSemanticCode(t.Context(), pkgs, SimilarityOptions{CI: true}, nil)
 	if err == nil || !strings.Contains(err.Error(), "is stale") {
 		t.Fatalf("stale CI check error = %v", err)
 	}
 }
 
 func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	writeSimilarityTestSource(t, tmp)
 	initTestGitRepository(t, tmp)
@@ -100,11 +104,10 @@ func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) 
 
 	writeFile(t, filepath.Join(tmp, similarityStampName), string(encoded))
 
-	if _, err := CheckSimilarCode(
+	if _, err := checkSemanticCode(
 		t.Context(),
 		pkgs,
-		SimilarityOptions{descriptionDisabled: true},
-	); err != nil {
+		SimilarityOptions{}, nil); err != nil {
 		t.Fatalf("refresh stamp: %v", err)
 	}
 
@@ -136,6 +139,9 @@ func TestLintRepositoryCIMissingStampFailsBeforeGoList(t *testing.T) {
 }
 
 func TestLintRepositoryCIStaleStampFailsBeforeGoList(t *testing.T) {
+	// These stamps carry no review; the Codex off switch makes review optional.
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	sourcePath := filepath.Join(tmp, "sample.go")
 	writeFile(t, sourcePath, "package sample\n")
@@ -178,6 +184,9 @@ func TestLintRepositoryCIStaleStampFailsBeforeGoList(t *testing.T) {
 }
 
 func TestLintRepositoryCIValidStampStillRunsStructuralLint(t *testing.T) {
+	// These stamps carry no review; the Codex off switch makes review optional.
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	writeFile(
 		t,
@@ -208,6 +217,9 @@ func TestLintRepositoryCIValidStampStillRunsStructuralLint(t *testing.T) {
 }
 
 func TestLintRepositoryCIRejectsStampWithoutRepositoryDigest(t *testing.T) {
+	// These stamps carry no review; the Codex off switch makes review optional.
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	stamp := newSimilarityStamp("source", 1, nil, false, "")
 

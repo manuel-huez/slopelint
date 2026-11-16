@@ -10,6 +10,8 @@ import (
 )
 
 func TestLlamaServerSimilarityIntegration(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	embedder, err := newHTTPSimilarityEmbedder(os.Getenv(similarityLlamaURLEnv))
 	if err != nil {
 		t.Fatal(err)
@@ -54,15 +56,14 @@ func TestLlamaServerSimilarityIntegration(t *testing.T) {
 		"package second\n\n"+liveSimilarityDuplicateFunction,
 	)
 
-	issues, err := CheckSimilarCode(
+	issues, err := checkSemanticCode(
 		t.Context(),
 		loadPackagesForTest(t, module),
 		SimilarityOptions{
-			CacheEnabled:        true,
-			cacheDir:            t.TempDir(),
-			descriptionDisabled: true,
-		},
-	)
+			CacheEnabled: true,
+			cacheDir:     t.TempDir(),
+		}, nil)
+
 	requireSingleSimilarityIssue(t, issues, err)
 }
 

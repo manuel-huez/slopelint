@@ -10,6 +10,8 @@ import (
 )
 
 func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	primary := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, primary)
@@ -19,12 +21,12 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		return []float32{1, 0}
 	}}
 	firstPackages := loadPackagesForTest(t, primary)
-	first, err := CheckSimilarCode(t.Context(), firstPackages, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		embedder:            firstEmbedder,
-		descriptionDisabled: true,
-	})
+	first, err := checkSemanticCode(t.Context(), firstPackages, SimilarityOptions{
+		CacheEnabled: true,
+		cacheDir:     cacheDir,
+		embedder:     firstEmbedder,
+	}, nil)
+
 	requireSingleSimilarityIssue(t, first, err)
 
 	if firstEmbedder.calls == 0 {
@@ -37,12 +39,12 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		return nil
 	}}
 	linkedPackages := loadPackagesForTest(t, linked)
-	second, err := CheckSimilarCode(t.Context(), linkedPackages, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		embedder:            linkedEmbedder,
-		descriptionDisabled: true,
-	})
+	second, err := checkSemanticCode(t.Context(), linkedPackages, SimilarityOptions{
+		CacheEnabled: true,
+		cacheDir:     cacheDir,
+		embedder:     linkedEmbedder,
+	}, nil)
+
 	requireSingleSimilarityIssue(t, second, err)
 
 	if linkedEmbedder.calls != 0 {

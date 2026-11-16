@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -69,9 +70,7 @@ type SimilarityOptions struct {
 	AcceptedPairIDs []string
 	embedder        similarityEmbedder
 	describer       similarityDescriber
-
-	// Tests can isolate embedding behavior without discovering host Codex auth.
-	descriptionDisabled bool
+	reviewer        codeReviewer
 }
 
 type similarityBlock struct {
@@ -138,12 +137,15 @@ const (
 	similarityDescriptionVector
 )
 
-// CheckSimilarCode checks or attests semantic duplicate analysis for loaded packages.
-// Local runs use the shared embedding server and update the stamp; CI runs only validate it.
-func CheckSimilarCode(
+// checkSemanticCode checks or attests semantic duplicates and code review for
+// loaded packages. Local runs update the stamp only when both are clean; CI
+// runs only validate it. candidates delivers dropped-error candidates from
+// structural lint; nil means none.
+func checkSemanticCode(
 	ctx context.Context,
 	pkgs []*LoadedPackage,
 	opts SimilarityOptions,
+	candidates <-chan []Issue,
 ) ([]Issue, error) {
 	if len(pkgs) == 0 {
 		return nil, nil
@@ -158,34 +160,78 @@ func CheckSimilarCode(
 		return nil, verifySimilarityStamp(check.stamp, check.sourceDigest)
 	}
 
-	descriptionRuntime, err := similarityDescriptionRuntimeForOptions(opts)
+	runtime, err := codexRuntimeForOptions(opts)
 	if err != nil {
 		return nil, err
 	}
 
 	if check.stamp.Schema != 0 &&
-		check.stamp.covers(check.sourceDigest, descriptionRuntime.enabled) {
-		// Refresh repository attestations when their file-selection rule changes
-		// without rerunning embeddings for unchanged source.
+		check.stamp.covers(check.sourceDigest, runtime.enabled, runtime.reviewer != nil) {
+		// A current stamp proves both checks were clean for this source. Refresh
+		// repository attestations when their file-selection rule changes.
 		return nil, refreshSimilarityStamp(check.root, check.stamp)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	review := startCodeReview(
+		ctx,
+		cancel,
+		similarityRepoFiles(pkgs),
+		runtime.reviewer,
+		opts,
+		candidates,
+	)
+
+	issues, clean, err := checkSimilarCode(ctx, pkgs, check, runtime, opts)
+	if err != nil {
+		cancel()
+	}
+
+	reviewIssues, reviewErr := review.wait()
+	if err = errors.Join(err, reviewErr); err != nil {
+		return nil, err
+	}
+
+	issues = append(issues, reviewIssues...)
+	if len(issues) > 0 {
+		sortIssues(issues)
+		return issues, nil
+	}
+
+	if runtime.reviewer != nil {
+		clean.Review = &codeReviewCurrentPolicy
+	}
+
+	return nil, storeSimilarityStamp(check.root, clean)
+}
+
+// checkSimilarCode reports semantic duplicates and the stamp to store when
+// none remain.
+func checkSimilarCode(
+	ctx context.Context,
+	pkgs []*LoadedPackage,
+	check similarityCheck,
+	runtime codexRuntime,
+	opts SimilarityOptions,
+) ([]Issue, similarityStamp, error) {
 	if opts.CacheEnabled {
 		cacheRoot, cacheErr := similarityVectorCacheRoot(opts.cacheDir)
 		if cacheErr != nil {
-			return nil, cacheErr
+			return nil, similarityStamp{}, cacheErr
 		}
 
 		cache, ok := loadSimilarityScanCache(
 			cacheRoot,
 			check.root,
-			descriptionRuntime.enabled,
+			runtime.enabled,
 			check.sourceDigest,
 		)
-		if ok && cache.covers(check.sourceDigest, descriptionRuntime.enabled) {
+		if ok && cache.covers(check.sourceDigest, runtime.enabled) {
 			findings, valid := cache.replayFindings(check.root)
 			if valid {
-				return completeSimilarityReview(
+				return acceptSimilarityFindings(
 					check,
 					cache.DescriptionDigest,
 					cache.Descriptions,
@@ -197,19 +243,31 @@ func CheckSimilarCode(
 		}
 	}
 
-	return analyzeChangedSimilarCode(ctx, pkgs, check, descriptionRuntime, opts)
+	return analyzeChangedSimilarCode(ctx, pkgs, check, runtime, opts)
+}
+
+func similarityRepoFiles(pkgs []*LoadedPackage) []string {
+	var files []string
+
+	for _, pkg := range pkgs {
+		if pkg != nil {
+			files = append(files, pkg.repoFiles...)
+		}
+	}
+
+	return files
 }
 
 func analyzeChangedSimilarCode(
 	ctx context.Context,
 	pkgs []*LoadedPackage,
 	check similarityCheck,
-	descriptionRuntime similarityDescriptionRuntime,
+	descriptionRuntime codexRuntime,
 	opts SimilarityOptions,
-) ([]Issue, error) {
+) ([]Issue, similarityStamp, error) {
 	cacheRoot, err := similarityVectorCacheRoot(opts.cacheDir)
 	if err != nil {
-		return nil, err
+		return nil, similarityStamp{}, err
 	}
 
 	var previous similarityScanCache
@@ -224,7 +282,7 @@ func analyzeChangedSimilarCode(
 
 	files, blocks, err := collectSimilarityBlocks(pkgs, check.root, previous)
 	if err != nil {
-		return nil, err
+		return nil, similarityStamp{}, err
 	}
 
 	releaseSimilarityTypes(pkgs)
@@ -238,10 +296,9 @@ func analyzeChangedSimilarCode(
 		opts,
 	)
 	if err != nil {
-		return nil, err
+		return nil, similarityStamp{}, err
 	}
 
-	// Groups and details derive from rawMatches; an empty scan has none.
 	matches := groupSimilarityMatches(blocks, scan.rawMatches)
 	if err := populateSimilarityMatchDetails(
 		ctx,
@@ -250,7 +307,7 @@ func analyzeChangedSimilarCode(
 		scan.cacheRoot,
 		opts.CacheEnabled,
 	); err != nil {
-		return nil, err
+		return nil, similarityStamp{}, err
 	}
 
 	cachedBlocks := cacheSimilarityBlocks(blocks)
@@ -271,7 +328,7 @@ func analyzeChangedSimilarCode(
 		}
 	}
 
-	return completeSimilarityReview(
+	return acceptSimilarityFindings(
 		check,
 		scan.descriptionDigest,
 		descriptionRuntime.enabled,
@@ -328,7 +385,7 @@ func similarityMatchesForBlocks(
 	blocks []*similarityBlock,
 	cacheRoot string,
 	previous similarityScanCache,
-	descriptionRuntime similarityDescriptionRuntime,
+	descriptionRuntime codexRuntime,
 	opts SimilarityOptions,
 ) (result similarityScanResult, err error) {
 	result.cacheRoot = cacheRoot
@@ -492,43 +549,35 @@ func incrementalSimilarityScanBlocks(
 	return selected
 }
 
-func completeSimilarityReview(
+// acceptSimilarityFindings applies acceptances and returns the remaining
+// issues, or the stamp to store when none remain.
+func acceptSimilarityFindings(
 	check similarityCheck,
 	descriptionDigest string,
 	descriptions bool,
 	blocks []similarityCachedBlock,
 	findings []similarityFinding,
 	requestedIDs []string,
-) ([]Issue, error) {
+) ([]Issue, similarityStamp, error) {
 	acceptances, issues, err := reviewSimilarityFindings(
 		findings,
 		check.stamp,
 		similarityBlockHashes(blocks),
 		requestedIDs,
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(issues) > 0 {
-		sortIssues(issues)
-		return issues, nil
+	if err != nil || len(issues) > 0 {
+		return issues, similarityStamp{}, err
 	}
 
 	sort.Slice(acceptances, func(i, j int) bool { return acceptances[i].ID < acceptances[j].ID })
 
-	clean := newSimilarityStamp(
+	return nil, newSimilarityStamp(
 		check.sourceDigest,
 		len(blocks),
 		acceptances,
 		descriptions,
 		descriptionDigest,
-	)
-	if err := storeSimilarityStamp(check.root, clean); err != nil {
-		return nil, err
-	}
-
-	return nil, nil
+	), nil
 }
 
 func similarityFindingsForMatches(matches []similarityMatch) []similarityFinding {

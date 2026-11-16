@@ -82,7 +82,13 @@ func resolvePackageMetadata(
 	sort.Slice(targets, func(i, j int) bool {
 		return targets[i].targetImportPath() < targets[j].targetImportPath()
 	})
-	classifyTestOnlyPackages(targets, byImportPath, patterns, dir)
+
+	absoluteDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	classifyTestOnlyPackages(targets, byImportPath, patterns, absoluteDir)
 
 	return targets, byImportPath, nil
 }

@@ -563,7 +563,7 @@ func TestSimilarityScanEmbedsBeforeDescriptionsFinish(t *testing.T) {
 				},
 				{Identity: "different", Content: "func third() {}", ContentHash: "different"},
 			}
-			runtime := similarityDescriptionRuntime{
+			runtime := codexRuntime{
 				describer: similarityStreamingTestDescriber{embedded: embedded}, enabled: true,
 			}
 
@@ -613,7 +613,7 @@ func TestSimilarityScanStopsDescriptionsAfterEmbeddingFailure(t *testing.T) {
 		t.Run(strconv.Itoa(failAt), func(t *testing.T) {
 			// Source and signature failures must stop Codex work, not wait for every
 			// remaining description, and must keep records accepted before the stop.
-			blocks := make([]*similarityBlock, similarityDescriptionWorkers+2)
+			blocks := make([]*similarityBlock, codexWorkers+2)
 			for index := range blocks {
 				key := strconv.Itoa(index)
 				blocks[index] = &similarityBlock{Identity: key, Content: key, ContentHash: key}
@@ -621,7 +621,7 @@ func TestSimilarityScanStopsDescriptionsAfterEmbeddingFailure(t *testing.T) {
 
 			// A nil embedded channel holds the describer after its first record
 			// until the scan cancels it.
-			runtime := similarityDescriptionRuntime{
+			runtime := codexRuntime{
 				describer: similarityStreamingTestDescriber{}, enabled: true,
 			}
 			cacheRoot := t.TempDir()
@@ -673,7 +673,7 @@ func TestSimilarityScanReusesCachedAndRestoredDescriptions(t *testing.T) {
 	}
 	cacheRoot := t.TempDir()
 	describer := new(similarityTestDescriber)
-	runtime := similarityDescriptionRuntime{describer: describer, enabled: true}
+	runtime := codexRuntime{describer: describer, enabled: true}
 	embedder := &similarityTestEmbedder{vector: func(input string) []float32 {
 		return []float32{1, float32(len(input))}
 	}}
@@ -732,7 +732,7 @@ func TestSimilarityScanRejectsIncompleteDescriptionStream(t *testing.T) {
 		{Identity: "valid", Content: "valid source", ContentHash: "valid-hash"},
 		{Identity: "failed", Content: "failed source", ContentHash: "failed-hash"},
 	}
-	runtime := similarityDescriptionRuntime{
+	runtime := codexRuntime{
 		describer: new(similarityPartialTestDescriber),
 		enabled:   true,
 	}
@@ -757,7 +757,7 @@ func TestSimilarityScanRejectsIncompleteDescriptionStream(t *testing.T) {
 func TestSimilarityScanDoesNotStallDescriptionsDuringSourceInference(t *testing.T) {
 	t.Parallel()
 
-	blocks := make([]*similarityBlock, similarityDescriptionWorkers+2)
+	blocks := make([]*similarityBlock, codexWorkers+2)
 	for index := range blocks {
 		key := strconv.Itoa(index)
 		blocks[index] = &similarityBlock{Identity: key, Content: key, ContentHash: key}
@@ -767,7 +767,7 @@ func TestSimilarityScanDoesNotStallDescriptionsDuringSourceInference(t *testing.
 	close(embedded)
 
 	finished := make(chan struct{})
-	runtime := similarityDescriptionRuntime{
+	runtime := codexRuntime{
 		describer: similarityStreamingTestDescriber{
 			embedded: embedded,
 			finished: finished,

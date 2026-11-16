@@ -332,8 +332,6 @@ func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
 		block.PackageDir == packageDir
 }
 
-// storeSimilarityScanCache stores scan.rawMatches under scan.cacheRoot for the
-// module and source digest in check.
 func storeSimilarityScanCache(
 	scan similarityScanResult,
 	check similarityCheck,

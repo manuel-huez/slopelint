@@ -1,14 +1,19 @@
 {
   "schema": 12,
-  "source_digest": "ca6ea78d0f08949a9a0adcd996b5fdd15a11c1d5185f85898c70ff42f56229a6",
-  "repository_digest": "3caeb5a4e63971aac57e40324b4d6550ca1925e4d1cd57e932351881d5e060cf",
+  "source_digest": "bf06591305eb0c1b86a7f94eeba80c6594c089219e6427e2e28eee2e0e63185f",
+  "repository_digest": "dea151a5f7cc17e443be1b5d1ed1e6678e554a99a6b9e9da8a0fe968ba6f1849",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "413dceb6b92655cf1149fdc3ad172dd6aff8c65be0b72cb2c62e634635f7dc62",
-  "checked_blocks": 1835,
+  "description_digest": "ad69c249691aed1cf61014bb8a86229492e2f3cdd11ff1f56c2cfa04c4676c30",
+  "review": {
+    "schema": 5,
+    "model": "gpt-6.1-terra",
+    "effort": "low"
+  },
+  "checked_blocks": 1885,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",
@@ -39,13 +44,6 @@
       "right_hash": "c7e3dfff5323fec480a7d0d1e5488cbf6a19bd6ecfe5d16d74ba1868bdf3f005"
     },
     {
-      "id": "sim-9da540dfef0031e6",
-      "left": "internal/lint/cache_key.go::analysisCacheKey",
-      "left_hash": "4dfa03ae59987dea9845904bf0eb770870663b3e69fbea2a5e1d79672bc60893",
-      "right": "internal/lint/cache_key.go::standaloneAnalysisCacheKey",
-      "right_hash": "b80ac9b632451e562a6574ac87cb083d5b3d1a68268f81103ef61fddc1add5fc"
-    },
-    {
       "id": "sim-a427a069c1e4234a",
       "left": "internal/lint/deadcode_test.go::TestRepoDeadCodeKeepsCrossPackageGenericConstraintMethods",
       "left_hash": "dea2866ffaf5c1495d552de8a32d3f2b8666c48e6c7013663208e6a41b6333e1",
@@ -58,13 +56,6 @@
       "left_hash": "a4acea715f2bbd6ee1cc27548b370db976b513c6983457b343648673b87aec1c",
       "right": "internal/lint/smells/runner.go::funcObjectKey",
       "right_hash": "fa54866cdf40935cb5d3f2f1ddabd2431a8543132441a63e793c411964ecbae5"
-    },
-    {
-      "id": "sim-ceea8a1b5a462fac",
-      "left": "internal/lint/smells/scalars.go::scalarFromConstantValue",
-      "left_hash": "da8e0e275044b09bed2aea3f9f8c9fa465f2635b9b96ad1be5ee0553eaf1e7dc",
-      "right": "internal/lint/structure/scalars.go::scalarFromConstantValue",
-      "right_hash": "e5c24e3744d337bf54439515f0e0973e4a7fe794fa6faad4b1fae548cf191fc3"
     },
     {
       "id": "sim-f7a499c48164d34e",

@@ -446,7 +446,8 @@ func (l *Runner) binaryComparesObjects(
 	left types.Object,
 	right types.Object,
 ) bool {
-	if expr == nil || !comparisonToken(expr.Op) {
+	if expr == nil || expr.Op != token.EQL && expr.Op != token.NEQ && expr.Op != token.LSS &&
+		expr.Op != token.LEQ && expr.Op != token.GTR && expr.Op != token.GEQ {
 		return false
 	}
 
@@ -456,17 +457,6 @@ func (l *Runner) binaryComparesObjects(
 	rightY := nodeUsesObject(expr.Y, right, l.pkg.TypesInfo)
 
 	return leftX && rightY || rightX && leftY
-}
-
-func comparisonToken(op token.Token) bool {
-	// Only comparison tokens matter for loop object comparisons.
-	//exhaustive:ignore
-	switch op {
-	case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
-		return true
-	default:
-		return false
-	}
 }
 
 func (l *Runner) singleLoopValueObject(scope loopScope) types.Object {

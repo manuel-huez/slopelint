@@ -162,7 +162,7 @@ func TestSimilarityDescriptionsCacheSeparateProductionAndTestShapes(t *testing.T
 	digest, err := populateSimilarityDescriptions(
 		t.Context(),
 		blocks,
-		similarityDescriptionRuntime{describer: describer, enabled: true},
+		codexRuntime{describer: describer, enabled: true},
 		cacheRoot,
 		true,
 	)
@@ -202,7 +202,7 @@ func TestSimilarityDescriptionsCacheSeparateProductionAndTestShapes(t *testing.T
 	reloadedDigest, err := populateSimilarityDescriptions(
 		t.Context(),
 		reloaded,
-		similarityDescriptionRuntime{describer: describer, enabled: true},
+		codexRuntime{describer: describer, enabled: true},
 		cacheRoot,
 		true,
 	)
@@ -227,7 +227,7 @@ func TestSimilarityDescriptionsPersistCompletedBatchesBeforeFailure(t *testing.T
 	_, err := populateSimilarityDescriptions(
 		t.Context(),
 		blocks,
-		similarityDescriptionRuntime{
+		codexRuntime{
 			describer: new(similarityPartialTestDescriber),
 			enabled:   true,
 		},
@@ -243,7 +243,7 @@ func TestSimilarityDescriptionsPersistCompletedBatchesBeforeFailure(t *testing.T
 	digest, err := populateSimilarityDescriptions(
 		t.Context(),
 		blocks,
-		similarityDescriptionRuntime{describer: retry, enabled: true},
+		codexRuntime{describer: retry, enabled: true},
 		cacheRoot,
 		true,
 	)
@@ -292,6 +292,9 @@ func storeSimilarityCacheWithOlderPolicy(
 }
 
 func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T) {
+	// The fake describer needs the Codex channel on, whatever the host exports.
+	t.Setenv(codexEnv, "auto")
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
@@ -316,7 +319,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		embedder:        embedder,
 	}
 
-	issues, err := CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
+	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "description calls", describer.calls, 2)
@@ -341,7 +344,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	}
 
 	options.AcceptedPairIDs = nil
-	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "hot description calls", describer.calls, 2)
@@ -351,7 +354,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	// and descriptions, preserving reviewed content-bound acceptances.
 	cacheRoot := storeSimilarityCacheWithOlderPolicy(t, cacheDir, tmp, stamp)
 
-	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
 	requireNoSimilarityIssues(t, issues, err)
 	requireSimilarityCount(t, "policy change description calls", describer.calls, 2)
 	requireSimilarityCount(t, "policy change embedding batches", embedder.calls, 2)
@@ -367,9 +370,11 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 
 	withoutCodex := options
 	withoutCodex.describer = nil
-	withoutCodex.descriptionDisabled = true
-	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), withoutCodex)
+
+	t.Setenv(codexEnv, offText)
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), withoutCodex, nil)
 	requireNoSimilarityIssues(t, issues, err)
+	t.Setenv(codexEnv, "auto")
 
 	requireSimilarityCount(t, "embedding batches without Codex", embedder.calls, 2)
 
@@ -377,21 +382,23 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		Replace(similarityTestSource)
 	writeFile(t, filepath.Join(tmp, similarityTestFilename), renamed)
 
-	if _, err := CheckSimilarCode(
+	if _, err := checkSemanticCode(
 		t.Context(),
 		loadPackagesForTest(t, tmp),
-		SimilarityOptions{CI: true},
-	); err == nil {
+		SimilarityOptions{CI: true}, nil); err == nil {
 		t.Fatal("CI accepted stale source attestation after rename")
 	}
 
-	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), options)
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
 	requireSingleSimilarityIssue(t, issues, err)
 	requireSimilarityCount(t, "description requests after rename", describer.requests, 4)
 	requireSimilarityCount(t, "source embedding batches after rename", embedder.calls, 3)
 }
 
 func TestSimilarityDescriptionsCoverAllBlocksIndependentlyOfSource(t *testing.T) {
+	// The fake describer needs the Codex channel on, whatever the host exports.
+	t.Setenv(codexEnv, "auto")
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeFile(t, filepath.Join(tmp, similarityTestFilename), similarityTestSource+`
@@ -427,13 +434,14 @@ func third(values []int) int {
 		}
 	}}
 
-	issues, err := CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
+	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled:    true,
 		cacheDir:        cacheDir,
 		AcceptedPairIDs: []string{similarityAcceptAllID},
 		describer:       describer,
 		embedder:        embedder,
-	})
+	}, nil)
+
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "described blocks", describer.requests, 5)
@@ -444,6 +452,8 @@ func third(values []int) int {
 }
 
 func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
@@ -456,20 +466,21 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 
 		return []float32{float32(sourceScore), float32(math.Sqrt(1 - sourceScore*sourceScore))}
 	}}
-	issues, err := CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		embedder:            embedder,
-		descriptionDisabled: true,
-	})
-	requireNoSimilarityIssues(t, issues, err)
+	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
+		CacheEnabled: true,
+		cacheDir:     cacheDir,
+		embedder:     embedder,
+	}, nil)
 
-	issues, err = CheckSimilarCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
+	requireNoSimilarityIssues(t, issues, err)
+	t.Setenv(codexEnv, "auto")
+
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
 		describer:    new(similarityTestDescriber),
 		embedder:     embedder,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,15 +520,27 @@ func TestSimilarityDescriptionStampPolicyTracksEnrichment(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 
 	enriched := newSimilarityStamp("source", 2, nil, true, digest)
-	if !enriched.policyMatches() || !enriched.covers("source", true) ||
-		!enriched.covers("source", false) {
+	if !enriched.policyMatches() || !enriched.covers("source", true, false) ||
+		!enriched.covers("source", false, false) || enriched.covers("source", true, true) {
 		t.Fatalf("enriched stamp = %#v", enriched)
 	}
 
 	sourceOnly := newSimilarityStamp("source", 2, nil, false, "")
-	if !sourceOnly.policyMatches() || !sourceOnly.covers("source", false) ||
-		sourceOnly.covers("source", true) {
+	if !sourceOnly.policyMatches() || !sourceOnly.covers("source", false, false) ||
+		sourceOnly.covers("source", true, false) {
 		t.Fatalf("source-only stamp = %#v", sourceOnly)
+	}
+
+	reviewed := enriched
+	reviewed.Review = &codeReviewCurrentPolicy
+
+	if !reviewed.covers("source", true, true) {
+		t.Fatalf("reviewed stamp = %#v", reviewed)
+	}
+
+	reviewed.Review = &codeReviewPolicy{Schema: codeReviewCurrentPolicy.Schema - 1}
+	if reviewed.policyMatches() {
+		t.Fatal("obsolete review policy accepted")
 	}
 
 	enriched.DescriptionDigest = "short"
@@ -578,7 +601,7 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 		}
 	}
 	before := makeBlock(`func first(x int) int { y := x + 1; return y }`)
-	runtime := similarityDescriptionRuntime{enabled: true, describer: new(similarityTestDescriber)}
+	runtime := codexRuntime{enabled: true, describer: new(similarityTestDescriber)}
 
 	root := t.TempDir()
 	if _, err := populateSimilarityDescriptions(
@@ -647,7 +670,7 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 
 			describer := new(similarityTestDescriber)
 
-			runtime := similarityDescriptionRuntime{enabled: true, describer: describer}
+			runtime := codexRuntime{enabled: true, describer: describer}
 			if _, err := populateSimilarityDescriptions(
 				t.Context(),
 				[]*similarityBlock{after},

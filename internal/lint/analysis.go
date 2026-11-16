@@ -56,6 +56,7 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 		if entry, ok := cache.load(); ok {
 			if issues, ok := replayAnalysisCache(pass, pkg, entry, opts.CacheHitHook); ok {
 				sortIssues(issues)
+				issues, _ = splitCodeReviewCandidates(issues)
 
 				return issues, nil
 			}
@@ -85,7 +86,10 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 		maybePruneCaches(opts.cacheDir)
 	}
 
-	return l.issues, nil
+	// Vettool mode has no code review, so dropped-error candidates never report.
+	issues, _ := splitCodeReviewCandidates(l.issues)
+
+	return issues, nil
 }
 
 func (l *linter) exportAnalysisFacts(pass *analysis.Pass) {

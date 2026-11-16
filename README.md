@@ -1,7 +1,8 @@
 # slopelint
 
 Go analyzer for redundant checks, repeated behavior, dead code, and overbuilt APIs.
-Built on `go/analysis`, with optional Codex descriptions for semantic similarity.
+Built on `go/analysis`, with optional Codex descriptions for semantic similarity
+and Codex review of comments and dropped errors.
 Early-stage: expect breaking changes and conservative misses.
 
 ## Install and run
@@ -29,7 +30,8 @@ go vet -vettool="$(pwd)/bin/slopelint" ./...
 ```
 
 Standalone scans compare loaded packages. Vettool mode analyzes one package at a
-time and does not run semantic similarity or repo-wide dead-code reachability.
+time and does not run semantic similarity, code review, or repo-wide dead-code
+reachability.
 
 | Standalone flag | Purpose | Default |
 | --- | --- | --- |
@@ -74,14 +76,47 @@ SLOPELINT_SIMILARITY_ACCEPT=sim-1234,sim-5678 slopelint ./...
 
 `SLOPELINT_SIMILARITY_ACCEPT=all` accepts the entire current baseline; use only
 after review. Accepted pairs carry forward until their source changes.
-Once semantic findings are fixed or accepted, commit the generated
-`.slopelint-similarity.json` stamp.
+Once semantic findings are fixed or accepted and review findings are fixed,
+commit the generated `.slopelint-similarity.json` stamp.
 
 CI validates the stamp's policy and Git digest before structural lint, without
-model inference. Policy changes rescore cached vectors; unchanged embeddings
+model inference. Unless `SLOPELINT_CODEX_DESCRIPTIONS=off`, CI also requires the
+stamp to attest a current [code review](#code-review). Policy changes rescore cached vectors; unchanged embeddings
 remain reusable. Missing or stale stamps fail. Refresh locally and commit the
 stamp; the stamp itself is excluded from its digest. Each Go module needs its own
 stamp.
+
+### Code review
+
+Local standalone scans send each top-level declaration of handwritten Go files
+(production and test) that has a judged item to `gpt-6.1-terra` (low reasoning)
+through the Codex CLI. **Uncached declarations, with numbered source lines, are
+sent to the configured Codex service.** Items:
+
+- Comment groups in or attached to the declaration. Suppressions
+  (`//nolint`, `//exhaustive:ignore`, `//slopelint:ignore`, `//lint:ignore`) are
+  always judged, bare or with a reason; they pass only when the code shows a real
+  constraint. Other directives (`//go:build`, `//go:generate`, `//go:embed`,
+  `//slopelint:ensures`), cgo preambles, and file-level comments are skipped.
+- Production `if err != nil` checks that drop an error which is not read again
+  before being overwritten. Errors carried across loop iterations, captured by a
+  closure, or address-taken are not judged.
+
+The model returns one verdict and one sentence of advice per item. The finding
+message is that advice: `comment_noise` (restates code), `comment_excuse`
+(excuses a shortcut, suppression, or compatibility code), `comment_crutch`
+(explains code a rename or restructure would clarify), and `swallowed_error`.
+The prompt prefers accepting an item when unsure.
+
+There is no accept list, ignore directive, or override for review findings. The
+stamp records the review policy and is written only when review finds nothing.
+Without the Codex channel there are no `swallowed_error` findings. If `codex` is
+missing, the run warns and writes a stamp without review, which CI rejects unless
+`SLOPELINT_CODEX_DESCRIPTIONS=off`.
+
+Verdicts are cached per declaration, keyed by prompt version, model, effort,
+source, and items; unchanged declarations cause no model calls. Records accepted
+before a failure or SIGINT stay cached.
 
 ### Embedding server
 
@@ -110,10 +145,10 @@ slopelint ./...  # default SLOPELINT_LLAMA_URL
 | `SLOPELINT_LLAMA_URL` | Embedding server URL; default `http://127.0.0.1:18080` |
 | `SLOPELINT_SIMILARITY` | `local`, `ci`, or `off`; auto-selects `ci` when `CI`, `WORKERS_CI`, or `CF_PAGES` is truthy, otherwise `local` |
 | `SLOPELINT_SIMILARITY_ACCEPT` | Comma-separated reviewed pair IDs, or `all` |
-| `SLOPELINT_CODEX_DESCRIPTIONS` | `auto` (default) or `off` |
+| `SLOPELINT_CODEX_DESCRIPTIONS` | `auto` (default) or `off`; `off` also disables code review |
 | `SLOPELINT_CACHE` | `0` disables persistent caching |
 
-Results, descriptions, and vectors are cached under `os.UserCacheDir()/slopelint`.
+Results, descriptions, review verdicts, and vectors are cached under `os.UserCacheDir()/slopelint`.
 Linked Git worktrees share caches by repository identity. Unchanged scans replay
 before package loading; changed scans reuse unaffected work. Cache cleanup is
 automatic. Thresholds and cache rules live in [similarity.go](internal/lint/similarity.go)
@@ -128,9 +163,10 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Redundant collection guards, loops, and aliases | `append_ceremony`, `loop_ceremony`, `temp_alias` |
 | Loop performance traps | `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` |
 | Wrappers, repeated normalization, and comments that restate names | `trivial_wrapper`, `normalization_ceremony`, `serialization_ceremony`, `comment_noise` |
+| Codex [code review](#code-review) of comments and dropped errors | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error` |
 | Repeated function or block behavior | `behavior_clone`, `semantic_duplicate` |
 | Overbuilt APIs and signatures | `abstraction_overkill`, `api_overkill`, `result_wrapper`, `generic_naming`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple` |
-| Error panics, sentinel breaks, and errors dropped by error-returning functions | `prod_must_panic`, `sentinel_error_break`, `swallowed_error` |
+| Error panics and sentinel breaks | `prod_must_panic`, `sentinel_error_break` |
 | Unreachable declarations | `dead_code` |
 | Declaration grouping | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` |
 | Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list` |

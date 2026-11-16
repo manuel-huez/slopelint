@@ -190,9 +190,6 @@ func (graph deadCodeGraph) cacheReflectedWrapperUses(
 	}
 }
 
-// reflectedWrapperSource is a source function that may forward its
-// parameters to reflected codecs; paramIndexes maps parameter objects to
-// positions.
 type reflectedWrapperSource struct {
 	pkg          *Package
 	decl         *ast.FuncDecl

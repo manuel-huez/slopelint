@@ -18,6 +18,8 @@ const (
 )
 
 func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
@@ -33,12 +35,12 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		embedder:            embedder,
-		descriptionDisabled: true,
-	})
+	issues, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		CacheEnabled: true,
+		cacheDir:     cacheDir,
+		embedder:     embedder,
+	}, nil)
+
 	firstIssue := requireSingleSimilarityIssue(t, issues, err)
 
 	if _, err := os.Stat(filepath.Join(tmp, similarityStampName)); !os.IsNotExist(err) {
@@ -57,12 +59,11 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 	}
 
 	pairID := similarityIssuePairID(t, firstIssue.Message)
-	cachedIssues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		embedder:            embedder,
-		descriptionDisabled: true,
-	})
+	cachedIssues, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		CacheEnabled: true,
+		cacheDir:     cacheDir,
+		embedder:     embedder,
+	}, nil)
 
 	cachedIssue := requireSingleSimilarityIssue(t, cachedIssues, err)
 	if cachedIssue.Message != firstIssue.Message ||
@@ -70,13 +71,13 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 		t.Fatalf("cached issue = %#v, want exact replay", cachedIssue)
 	}
 
-	issues, err = CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		AcceptedPairIDs:     []string{pairID},
-		embedder:            embedder,
-		descriptionDisabled: true,
-	})
+	issues, err = checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		CacheEnabled:    true,
+		cacheDir:        cacheDir,
+		AcceptedPairIDs: []string{pairID},
+		embedder:        embedder,
+	}, nil)
+
 	requireNoSimilarityIssues(t, issues, err)
 	requireSimilarityCount(t, "cached acceptance embedding batches", embedder.calls, 1)
 
@@ -91,6 +92,8 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 }
 
 func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
@@ -101,13 +104,12 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
-	_, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		AcceptedPairIDs:     []string{similarityAcceptAllID},
-		embedder:            embedder,
-		descriptionDisabled: true,
-	})
+	_, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		CacheEnabled:    true,
+		cacheDir:        cacheDir,
+		AcceptedPairIDs: []string{similarityAcceptAllID},
+		embedder:        embedder,
+	}, nil)
 	if err != nil {
 		t.Fatalf("initial acceptance: %v", err)
 	}
@@ -124,12 +126,11 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 	)
 	pkgs = loadPackagesForTest(t, tmp)
 
-	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		CacheEnabled:        true,
-		cacheDir:            cacheDir,
-		AcceptedPairIDs:     []string{stamp.Accepted[0].ID},
-		descriptionDisabled: true,
-	})
+	issues, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		CacheEnabled:    true,
+		cacheDir:        cacheDir,
+		AcceptedPairIDs: []string{stamp.Accepted[0].ID},
+	}, nil)
 	if err != nil {
 		t.Fatalf("repeat accepted pair: %v", err)
 	}
@@ -140,6 +141,8 @@ func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
 }
 
 func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
 	writeSimilarityTestSource(t, tmp)
@@ -155,12 +158,11 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	issues, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		cacheDir:            cacheDir,
-		AcceptedPairIDs:     []string{similarityAcceptAllID},
-		embedder:            embedder,
-		descriptionDisabled: true,
-	})
+	issues, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		cacheDir:        cacheDir,
+		AcceptedPairIDs: []string{similarityAcceptAllID},
+		embedder:        embedder,
+	}, nil)
 	if err != nil {
 		t.Fatalf("accept all: %v", err)
 	}
@@ -191,15 +193,17 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 }
 
 func TestSimilarityRejectsUnknownAcceptance(t *testing.T) {
+	t.Setenv(codexEnv, offText)
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, similarityTestFilename), "package sample\n")
 
 	pkgs := loadPackagesForTest(t, tmp)
 
-	_, err := CheckSimilarCode(t.Context(), pkgs, SimilarityOptions{
-		AcceptedPairIDs:     []string{"sim-unknown"},
-		descriptionDisabled: true,
-	})
+	_, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+		AcceptedPairIDs: []string{"sim-unknown"},
+	}, nil)
+
 	if err == nil || !strings.Contains(err.Error(), "is not a current finding") {
 		t.Fatalf("unknown acceptance error = %v", err)
 	}

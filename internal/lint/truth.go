@@ -129,17 +129,15 @@ func (l *linter) truthBoolSymbol(st state, expr ast.Expr) (triState, *evidence) 
 
 func (l *linter) truthNegation(st state, expr ast.Expr) (triState, *evidence) {
 	tri, ev := l.truth(st, expr)
-
-	// triState unknown falls through to conservative unknown.
-	//exhaustive:ignore
-	switch tri {
-	case triTrue:
-		return triFalse, ev
-	case triFalse:
-		return triTrue, ev
-	default:
+	if tri == triUnknown {
 		return triUnknown, nil
 	}
+
+	if tri == triTrue {
+		return triFalse, ev
+	}
+
+	return triTrue, ev
 }
 
 func (l *linter) truthBinary(st state, expr *ast.BinaryExpr) (triState, *evidence) {

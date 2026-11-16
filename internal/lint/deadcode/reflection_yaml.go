@@ -32,7 +32,7 @@ func (walk reflectedUseWalk) yamlMarshalReturnUses(hook *types.Func, typ types.T
 	walk.codec = reflectedCodecUseForTag(reflectedYAMLTag)
 
 	yamlMarshalReturnScan{
-		walk:      walk,
+		hookWalk:  walk,
 		receiver:  receiver,
 		funcsSeen: make(map[string]struct{}),
 	}.declUses(decl)
@@ -40,7 +40,7 @@ func (walk reflectedUseWalk) yamlMarshalReturnUses(hook *types.Func, typ types.T
 
 func (scan yamlMarshalReturnScan) declUses(decl *ast.FuncDecl) {
 	scan.decl = decl
-	scan.namedResult = yamlMarshalRepresentationResult(scan.walk.l.pkg.TypesInfo, decl)
+	scan.namedResult = yamlMarshalRepresentationResult(scan.hookWalk.l.pkg.TypesInfo, decl)
 	scan.block(emptyYAMLMarshalReturnState(), decl.Body.List)
 }
 
@@ -49,7 +49,7 @@ func (scan yamlMarshalReturnScan) returnExprUses(expr ast.Expr) {
 		return
 	}
 
-	scan.returnTypeUses(reflectedValueType(scan.walk.l.pkg.TypesInfo, expr))
+	scan.returnTypeUses(reflectedValueType(scan.hookWalk.l.pkg.TypesInfo, expr))
 }
 
 func (scan yamlMarshalReturnScan) returnCallUses(expr ast.Expr) bool {
@@ -58,12 +58,12 @@ func (scan yamlMarshalReturnScan) returnCallUses(expr ast.Expr) bool {
 		return false
 	}
 
-	fn := calledFunc(scan.walk.l.pkg.TypesInfo, returnCall)
+	fn := calledFunc(scan.hookWalk.l.pkg.TypesInfo, returnCall)
 	if fn == nil {
 		return false
 	}
 
-	decl := scan.walk.l.reflectedFuncDeclForFunc(fn)
+	decl := scan.hookWalk.l.reflectedFuncDeclForFunc(fn)
 	if decl == nil || decl.Body == nil {
 		return false
 	}
@@ -88,10 +88,8 @@ type yamlMarshalReturnState struct {
 	slices map[fmtStringerVarRef][]ast.Expr
 }
 
-// yamlMarshalReturnScan walks one MarshalYAML-reachable function body. walk
-// uses the hook package linter and the YAML codec.
 type yamlMarshalReturnScan struct {
-	walk        reflectedUseWalk
+	hookWalk    reflectedUseWalk
 	decl        *ast.FuncDecl
 	receiver    *types.Named
 	funcsSeen   map[string]struct{}
@@ -231,7 +229,7 @@ func (scan yamlMarshalReturnScan) setValueState(
 	expr ast.Expr,
 	exprs []ast.Expr,
 ) {
-	ref, ok := fmtStringerVarForExpr(scan.walk.l.pkg.TypesInfo, expr)
+	ref, ok := fmtStringerVarForExpr(scan.hookWalk.l.pkg.TypesInfo, expr)
 	if !ok {
 		return
 	}
@@ -257,7 +255,7 @@ func (scan yamlMarshalReturnScan) updateAssignState(
 	snapshot := cloneYAMLMarshalReturnState(state)
 
 	for index, lhs := range left {
-		ref, ok := fmtStringerVarForExpr(scan.walk.l.pkg.TypesInfo, lhs)
+		ref, ok := fmtStringerVarForExpr(scan.hookWalk.l.pkg.TypesInfo, lhs)
 		if !ok {
 			continue
 		}
@@ -287,7 +285,7 @@ func (scan yamlMarshalReturnScan) returnStmt(
 	stmt *ast.ReturnStmt,
 ) {
 	for _, expr := range yamlMarshalReturnExprs(
-		scan.walk.l.pkg.TypesInfo,
+		scan.hookWalk.l.pkg.TypesInfo,
 		scan.namedResult,
 		state,
 		stmt,
@@ -317,14 +315,14 @@ func (scan yamlMarshalReturnScan) exprsForState(
 	state yamlMarshalReturnState,
 	expr ast.Expr,
 ) []ast.Expr {
-	return yamlMarshalExprsForState(scan.walk.l.pkg.TypesInfo, state, expr)
+	return yamlMarshalExprsForState(scan.hookWalk.l.pkg.TypesInfo, state, expr)
 }
 
 func (scan yamlMarshalReturnScan) sliceExprsForState(
 	state yamlMarshalReturnState,
 	expr ast.Expr,
 ) ([]ast.Expr, bool) {
-	if ref, ok := fmtStringerVarForExpr(scan.walk.l.pkg.TypesInfo, expr); ok {
+	if ref, ok := fmtStringerVarForExpr(scan.hookWalk.l.pkg.TypesInfo, expr); ok {
 		exprs, ok := state.slices[ref]
 
 		return exprs, ok
@@ -332,7 +330,7 @@ func (scan yamlMarshalReturnScan) sliceExprsForState(
 
 	switch expr := unparenReflectedExpr(expr).(type) {
 	case *ast.CompositeLit:
-		if !yamlMarshalSliceType(scan.walk.l.pkg.TypesInfo.TypeOf(expr)) {
+		if !yamlMarshalSliceType(scan.hookWalk.l.pkg.TypesInfo.TypeOf(expr)) {
 			return nil, false
 		}
 
@@ -360,7 +358,7 @@ func (scan yamlMarshalReturnScan) appendSliceExprsForState(
 	state yamlMarshalReturnState,
 	call *ast.CallExpr,
 ) ([]ast.Expr, bool) {
-	if !fmtStringerAppendCall(scan.walk.l.pkg.TypesInfo, call) {
+	if !fmtStringerAppendCall(scan.hookWalk.l.pkg.TypesInfo, call) {
 		return nil, false
 	}
 
@@ -523,12 +521,12 @@ func (scan yamlMarshalReturnScan) returnTypeUses(typ types.Type) {
 		return
 	}
 
-	target := scan.walk.l.reflectedAliasTargetNamedForFunc(named, scan.decl)
+	target := scan.hookWalk.l.reflectedAliasTargetNamedForFunc(named, scan.decl)
 	if !sameNamedType(scan.receiver, target) {
 		return
 	}
 
-	scan.walk.structFieldsWithOwners(
+	scan.hookWalk.structFieldsWithOwners(
 		[]*types.Named{scan.receiver},
 		structType,
 		reflectedMarshalStructFields,

@@ -20,7 +20,6 @@ const (
 	similarityDescriptionPromptSchema = 4
 	similarityDescriptionModel        = "gpt-6-luna"
 	similarityDescriptionEffort       = "low"
-	similarityDescriptionEnv          = "SLOPELINT_CODEX_DESCRIPTIONS"
 
 	similarityDescriptionProduction = "production"
 	similarityDescriptionTest       = "test"
@@ -42,8 +41,11 @@ const (
 	similarityDescriptionSignatureMaxChars = 180
 )
 
-type similarityDescriptionRuntime struct {
+// codexRuntime is the Codex channel for one run. Review runs only when a
+// reviewer is present; the stamp records whether it ran.
+type codexRuntime struct {
 	describer similarityDescriber
+	reviewer  codeReviewer
 	ready     func([]*similarityBlock)
 	enabled   bool
 }
@@ -124,45 +126,37 @@ type similarityDescriptionListRule struct {
 	maximum int
 }
 
-func similarityDescriptionRuntimeForOptions(
-	opts SimilarityOptions,
-) (similarityDescriptionRuntime, error) {
-	if opts.descriptionDisabled {
-		return similarityDescriptionRuntime{}, nil
-	}
-
-	mode := strings.ToLower(strings.TrimSpace(os.Getenv(similarityDescriptionEnv)))
-	if mode != "" && mode != "auto" && mode != offText {
-		return similarityDescriptionRuntime{}, fmt.Errorf(
-			"%s must be auto or off; got %q",
-			similarityDescriptionEnv,
-			mode,
-		)
-	}
-
-	if mode == offText {
-		return similarityDescriptionRuntime{}, nil
+func codexRuntimeForOptions(opts SimilarityOptions) (codexRuntime, error) {
+	enabled, err := codexEnabledFromEnv()
+	if err != nil || !enabled {
+		return codexRuntime{}, err
 	}
 
 	if opts.describer != nil {
-		return similarityDescriptionRuntime{describer: opts.describer, enabled: true}, nil
+		return codexRuntime{describer: opts.describer, reviewer: opts.reviewer, enabled: true}, nil
 	}
 
 	path, _ := exec.LookPath("codex")
 	if path == "" {
-		return similarityDescriptionRuntime{}, nil
+		_, _ = fmt.Fprintf(
+			os.Stderr,
+			"slopelint: codex CLI not found; descriptions and code review skipped; "+
+				"CI rejects this stamp unless %s=off\n",
+			codexEnv,
+		)
+
+		return codexRuntime{}, nil
 	}
 
-	return similarityDescriptionRuntime{
-		describer: &codexSimilarityDescriber{path: path},
-		enabled:   true,
-	}, nil
+	cli := &codexCLI{path: path}
+
+	return codexRuntime{describer: cli, reviewer: cli, enabled: true}, nil
 }
 
 func populateSimilarityDescriptions(
 	ctx context.Context,
 	blocks []*similarityBlock,
-	runtime similarityDescriptionRuntime,
+	runtime codexRuntime,
 	cacheRoot string,
 	cacheEnabled bool,
 ) (string, error) {
@@ -196,7 +190,7 @@ func populateSimilarityDescriptions(
 func populateSimilarityDetails(
 	ctx context.Context,
 	blocks []*similarityBlock,
-	runtime similarityDescriptionRuntime,
+	runtime codexRuntime,
 	cacheRoot string,
 	cacheEnabled bool,
 ) error {
@@ -224,7 +218,7 @@ func populateSimilarityDetails(
 func populateSimilarityMatchDetails(
 	ctx context.Context,
 	matches []similarityMatch,
-	runtime similarityDescriptionRuntime,
+	runtime codexRuntime,
 	cacheRoot string,
 	cacheEnabled bool,
 ) error {
@@ -346,7 +340,7 @@ func generateSimilarityDescriptions(
 	ctx context.Context,
 	missing []similarityDescriptionRequest,
 	inputs map[string]*similarityDescriptionInput,
-	runtime similarityDescriptionRuntime,
+	runtime codexRuntime,
 	cacheRoot string,
 	cacheEnabled bool,
 ) error {

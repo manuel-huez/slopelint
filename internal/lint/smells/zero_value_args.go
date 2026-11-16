@@ -232,8 +232,6 @@ func zeroValueScalarArg(l *Runner, arg ast.Expr, typ types.Type) bool {
 		return false
 	}
 
-	// Non-zero scalar kinds cannot prove a zero argument.
-	//exhaustive:ignore
 	switch value.kind {
 	case scalarNil:
 		return typeCanBeNil(typ)
@@ -251,6 +249,8 @@ func zeroValueScalarArg(l *Runner, arg ast.Expr, typ types.Type) bool {
 		}
 
 		return value.text == "0" && basic.Info()&types.IsInteger != 0
+	case scalarInvalid, scalarBool:
+		return false
 	}
 
 	return false

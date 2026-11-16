@@ -108,6 +108,8 @@ func substituteReflectedNamedTypeParams(
 		)
 	}
 
+	// Without validation, Instantiate fails only on a type-argument count
+	// mismatch, and typeArgs copies the count of typ's own arguments.
 	instantiated, err := types.Instantiate(nil, typ.Origin(), typeArgs, false)
 	if err != nil {
 		return typ

@@ -85,7 +85,6 @@ func (l *Runner) checkFunctionSize(fn *ast.FuncDecl) {
 	})
 }
 
-// nodeLineSpan counts lines from the node start to its end, both inclusive.
 func (l *Runner) nodeLineSpan(node ast.Node) int {
 	return l.pkg.FSet.Position(node.End()).Line - l.pkg.FSet.Position(node.Pos()).Line + 1
 }

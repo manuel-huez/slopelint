@@ -27,17 +27,19 @@ const (
 )
 
 type similarityStamp struct {
-	Schema            int                    `json:"schema"`
-	SourceDigest      string                 `json:"source_digest"`
-	RepositoryDigest  string                 `json:"repository_digest,omitempty"`
-	Model             string                 `json:"model"`
-	ModelDigest       string                 `json:"model_digest"`
-	DescriptionSchema int                    `json:"description_schema,omitempty"`
-	DescriptionModel  string                 `json:"description_model,omitempty"`
-	DescriptionEffort string                 `json:"description_effort,omitempty"`
-	DescriptionDigest string                 `json:"description_digest,omitempty"`
-	CheckedBlocks     int                    `json:"checked_blocks"`
-	Accepted          []similarityAcceptance `json:"accepted,omitempty"`
+	Schema            int    `json:"schema"`
+	SourceDigest      string `json:"source_digest"`
+	RepositoryDigest  string `json:"repository_digest,omitempty"`
+	Model             string `json:"model"`
+	ModelDigest       string `json:"model_digest"`
+	DescriptionSchema int    `json:"description_schema,omitempty"`
+	DescriptionModel  string `json:"description_model,omitempty"`
+	DescriptionEffort string `json:"description_effort,omitempty"`
+	DescriptionDigest string `json:"description_digest,omitempty"`
+	// Review attests that code review ran with this policy and found nothing.
+	Review        *codeReviewPolicy      `json:"review,omitempty"`
+	CheckedBlocks int                    `json:"checked_blocks"`
+	Accepted      []similarityAcceptance `json:"accepted,omitempty"`
 }
 
 type similarityAcceptance struct {
@@ -250,12 +252,14 @@ func newSimilarityStamp(
 }
 
 func (stamp similarityStamp) policyMatches() bool {
-	if stamp.Schema != similaritySchema ||
-		stamp.Model != similarityModelName ||
-		stamp.ModelDigest != similarityModelDigest {
-		return false
-	}
+	return stamp.Schema == similaritySchema &&
+		stamp.Model == similarityModelName &&
+		stamp.ModelDigest == similarityModelDigest &&
+		(stamp.Review == nil || *stamp.Review == codeReviewCurrentPolicy) &&
+		stamp.descriptionPolicyMatches()
+}
 
+func (stamp similarityStamp) descriptionPolicyMatches() bool {
 	if stamp.DescriptionModel == "" {
 		return stamp.DescriptionSchema == 0 &&
 			stamp.DescriptionEffort == "" &&
@@ -268,13 +272,19 @@ func (stamp similarityStamp) policyMatches() bool {
 		len(stamp.DescriptionDigest) == sha256.Size*2
 }
 
-func (stamp similarityStamp) covers(sourceDigest string, descriptionsEnabled bool) bool {
+func (stamp similarityStamp) covers(
+	sourceDigest string,
+	descriptionsEnabled bool,
+	reviewed bool,
+) bool {
 	return stamp.policyMatches() &&
 		stamp.SourceDigest == sourceDigest &&
-		(!descriptionsEnabled || stamp.DescriptionModel != "")
+		(!descriptionsEnabled || stamp.DescriptionModel != "") &&
+		(!reviewed || stamp.Review != nil)
 }
 
 // verifySimilarityStamp checks a committed stamp; a missing one has Schema 0.
+// Unless the Codex channel is off, the stamp must attest code review.
 func verifySimilarityStamp(stamp similarityStamp, sourceDigest string) error {
 	if stamp.Schema == 0 {
 		return fmt.Errorf(
@@ -287,6 +297,19 @@ func verifySimilarityStamp(stamp similarityStamp, sourceDigest string) error {
 		return fmt.Errorf(
 			"%s uses an obsolete semantic similarity policy; run slopelint locally",
 			similarityStampName,
+		)
+	}
+
+	reviewRequired, err := codexEnabledFromEnv()
+	if err != nil {
+		return err
+	}
+
+	if reviewRequired && stamp.Review == nil {
+		return fmt.Errorf(
+			"%s lacks code review; run slopelint locally with the Codex CLI, or set %s=off",
+			similarityStampName,
+			codexEnv,
 		)
 	}
 

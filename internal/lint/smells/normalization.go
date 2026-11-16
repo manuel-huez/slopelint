@@ -61,8 +61,6 @@ func (l *Runner) checkRepeatedNormalizationCalls(body *ast.BlockStmt) {
 	})
 }
 
-// recordNormalizationCall counts one normalization call and reports the
-// repeat once the same inputs reach the report count.
 func (l *Runner) recordNormalizationCall(
 	body *ast.BlockStmt,
 	occurrences []normalizationOccurrence,

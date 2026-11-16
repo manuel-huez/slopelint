@@ -46,6 +46,7 @@ func LintRepository(
 
 	var (
 		issues        []Issue
+		candidates    chan []Issue
 		similarityErr error
 		similarityRun sync.WaitGroup
 	)
@@ -56,15 +57,27 @@ func LintRepository(
 			return nil, filesErr
 		}
 
-		// Changed blocks spend most local similarity time waiting on Codex and the
-		// embedding server. Similarity parses its own syntax and shares no state
-		// with structural lint, so both run at once and join before persistence.
+		// Changed blocks spend most local semantic time waiting on Codex and the
+		// embedding server. Semantic checks parse their own syntax and share no
+		// state with structural lint, so both run at once. Only code review waits
+		// for the dropped-error candidates that structural lint finds.
+		candidates = make(chan []Issue, 1)
+
 		similarityRun.Go(func() {
-			issues, similarityErr = CheckSimilarCode(ctx, similarityPkgs, *similarity)
+			issues, similarityErr = checkSemanticCode(ctx, similarityPkgs, *similarity, candidates)
 		})
 	}
 
 	packageIssues, err := lintPackageTargets(targets, byImportPath, opts)
+	packageIssues, found := splitCodeReviewCandidates(packageIssues)
+
+	if candidates != nil {
+		if err == nil {
+			candidates <- found
+		}
+
+		close(candidates)
+	}
 
 	similarityRun.Wait()
 
@@ -118,16 +131,15 @@ func preflightSimilarityCI(dir string, opts *SimilarityOptions) error {
 		return err
 	}
 
-	exists := stamp.Schema != 0
-	if !exists || !stamp.policyMatches() || stamp.RepositoryDigest == "" {
-		if exists && stamp.policyMatches() {
-			return fmt.Errorf(
-				"%s lacks a repository digest; run slopelint locally",
-				similarityStampName,
-			)
-		}
+	if err := verifySimilarityStamp(stamp, stamp.SourceDigest); err != nil {
+		return err
+	}
 
-		return verifySimilarityStamp(stamp, stamp.SourceDigest)
+	if stamp.RepositoryDigest == "" {
+		return fmt.Errorf(
+			"%s lacks a repository digest; run slopelint locally",
+			similarityStampName,
+		)
 	}
 
 	digest, err := similarityRepositoryDigest(root)

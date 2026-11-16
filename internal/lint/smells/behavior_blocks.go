@@ -350,7 +350,6 @@ func (r *behaviorBlockRenamer) visit(node ast.Node) bool {
 	return true
 }
 
-// placeholder returns the placeholder name and its type or object key.
 func (r *behaviorBlockRenamer) placeholder(obj types.Object) (string, string) {
 	if !behaviorNormalizableObject(obj) {
 		objectKey, ok := r.runner.behaviorCanonicalObjectKey(obj, r.typeKeys)

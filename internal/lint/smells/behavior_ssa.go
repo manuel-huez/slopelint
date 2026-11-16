@@ -443,8 +443,7 @@ type behaviorSSAEncoding struct {
 	ok      bool
 }
 
-// behaviorSSAOperandOp returns a weight-1 encoding that fails closed when operand encoding failed.
-func behaviorSSAOperandOp(
+func behaviorSSAFailClosedOperandOp(
 	text string,
 	effects behaviorEffects,
 	operandsOK bool,
@@ -558,10 +557,10 @@ func (e *behaviorSSAEncoder) encodeComputeInstruction(
 		}
 	case *ssa.Call:
 		call, effects, ok := e.encodeCall(&instruction.Call)
-		return behaviorSSAOperandOp(call, effects, ok)
+		return behaviorSSAFailClosedOperandOp(call, effects, ok)
 	case *ssa.BinOp:
 		args, ok := e.operands(instruction.X, instruction.Y)
-		return behaviorSSAOperandOp("bin("+instruction.Op.String()+","+args+")", 0, ok)
+		return behaviorSSAFailClosedOperandOp("bin("+instruction.Op.String()+","+args+")", 0, ok)
 	case *ssa.UnOp:
 		arg, ok := e.operands(instruction.X)
 
@@ -574,7 +573,7 @@ func (e *behaviorSSAEncoder) encodeComputeInstruction(
 			effects |= behaviorEffectConcurrent
 		}
 
-		return behaviorSSAOperandOp(
+		return behaviorSSAFailClosedOperandOp(
 			fmt.Sprintf("unary(%s,ok=%t,%s)", instruction.Op, instruction.CommaOk, arg),
 			effects,
 			ok,
@@ -590,22 +589,22 @@ func (e *behaviorSSAEncoder) encodeConversionInstruction(
 	switch instruction := instruction.(type) {
 	case *ssa.ChangeType:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("changetype("+arg+")", 0, ok)
+		return behaviorSSAFailClosedOperandOp("changetype("+arg+")", 0, ok)
 	case *ssa.Convert:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("convert("+arg+")", 0, ok)
+		return behaviorSSAFailClosedOperandOp("convert("+arg+")", 0, ok)
 	case *ssa.MultiConvert:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("multiconvert("+arg+")", 0, ok)
+		return behaviorSSAFailClosedOperandOp("multiconvert("+arg+")", 0, ok)
 	case *ssa.ChangeInterface:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("changeinterface("+arg+")", 0, ok)
+		return behaviorSSAFailClosedOperandOp("changeinterface("+arg+")", 0, ok)
 	case *ssa.SliceToArrayPointer:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("slicetoarray("+arg+")", behaviorEffectPanic, ok)
+		return behaviorSSAFailClosedOperandOp("slicetoarray("+arg+")", behaviorEffectPanic, ok)
 	case *ssa.MakeInterface:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("makeinterface("+arg+")", 0, ok)
+		return behaviorSSAFailClosedOperandOp("makeinterface("+arg+")", 0, ok)
 	case *ssa.TypeAssert:
 		arg, ok := e.operands(instruction.X)
 
@@ -614,7 +613,7 @@ func (e *behaviorSSAEncoder) encodeConversionInstruction(
 			effects = behaviorEffectPanic
 		}
 
-		return behaviorSSAOperandOp(fmt.Sprintf(
+		return behaviorSSAFailClosedOperandOp(fmt.Sprintf(
 			"assert(%s,ok=%t,%s)",
 			e.typeKeys.typeKey(instruction.AssertedType),
 			instruction.CommaOk,
@@ -643,16 +642,16 @@ func (e *behaviorSSAEncoder) encodeAllocationInstruction(
 		}
 	case *ssa.MakeClosure:
 		args, ok := e.operands(append([]ssa.Value{instruction.Fn}, instruction.Bindings...)...)
-		return behaviorSSAOperandOp("closure("+args+")", behaviorEffectAllocate, ok)
+		return behaviorSSAFailClosedOperandOp("closure("+args+")", behaviorEffectAllocate, ok)
 	case *ssa.MakeMap:
 		arg, ok := e.operands(instruction.Reserve)
-		return behaviorSSAOperandOp("makemap("+arg+")", behaviorEffectAllocate, ok)
+		return behaviorSSAFailClosedOperandOp("makemap("+arg+")", behaviorEffectAllocate, ok)
 	case *ssa.MakeChan:
 		arg, ok := e.operands(instruction.Size)
-		return behaviorSSAOperandOp("makechan("+arg+")", behaviorEffectAllocate, ok)
+		return behaviorSSAFailClosedOperandOp("makechan("+arg+")", behaviorEffectAllocate, ok)
 	case *ssa.MakeSlice:
 		args, ok := e.operands(instruction.Len, instruction.Cap)
-		return behaviorSSAOperandOp("makeslice("+args+")", behaviorEffectAllocate, ok)
+		return behaviorSSAFailClosedOperandOp("makeslice("+args+")", behaviorEffectAllocate, ok)
 	default:
 		return behaviorSSAEncoding{}
 	}
@@ -664,7 +663,7 @@ func (e *behaviorSSAEncoder) encodeAccessInstruction(
 	switch instruction := instruction.(type) {
 	case *ssa.Slice:
 		args, ok := e.operands(instruction.X, instruction.Low, instruction.High, instruction.Max)
-		return behaviorSSAOperandOp("slice("+args+")", behaviorEffectPanic, ok)
+		return behaviorSSAFailClosedOperandOp("slice("+args+")", behaviorEffectPanic, ok)
 	case *ssa.FieldAddr:
 		arg, ok := e.operands(instruction.X)
 
@@ -673,31 +672,46 @@ func (e *behaviorSSAEncoder) encodeAccessInstruction(
 			effects = behaviorEffectPanic
 		}
 
-		return behaviorSSAOperandOp(
+		return behaviorSSAFailClosedOperandOp(
 			fmt.Sprintf("fieldaddr(%d,%s)", instruction.Field, arg),
 			effects,
 			ok,
 		)
 	case *ssa.Field:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp(fmt.Sprintf("field(%d,%s)", instruction.Field, arg), 0, ok)
+
+		return behaviorSSAFailClosedOperandOp(
+			fmt.Sprintf("field(%d,%s)", instruction.Field, arg),
+			0,
+			ok,
+		)
 	case *ssa.IndexAddr:
 		args, ok := e.operands(instruction.X, instruction.Index)
-		return behaviorSSAOperandOp("indexaddr("+args+")", behaviorEffectPanic, ok)
+		return behaviorSSAFailClosedOperandOp("indexaddr("+args+")", behaviorEffectPanic, ok)
 	case *ssa.Index:
 		args, ok := e.operands(instruction.X, instruction.Index)
-		return behaviorSSAOperandOp("index("+args+")", behaviorEffectRead|behaviorEffectPanic, ok)
+
+		return behaviorSSAFailClosedOperandOp(
+			"index("+args+")",
+			behaviorEffectRead|behaviorEffectPanic,
+			ok,
+		)
 	case *ssa.Lookup:
 		args, ok := e.operands(instruction.X, instruction.Index)
 
-		return behaviorSSAOperandOp(
+		return behaviorSSAFailClosedOperandOp(
 			fmt.Sprintf("lookup(ok=%t,%s)", instruction.CommaOk, args),
 			behaviorEffectRead,
 			ok,
 		)
 	case *ssa.Extract:
 		arg, ok := e.operands(instruction.Tuple)
-		return behaviorSSAOperandOp(fmt.Sprintf("extract(%d,%s)", instruction.Index, arg), 0, ok)
+
+		return behaviorSSAFailClosedOperandOp(
+			fmt.Sprintf("extract(%d,%s)", instruction.Index, arg),
+			0,
+			ok,
+		)
 	default:
 		return behaviorSSAEncoding{}
 	}
@@ -730,11 +744,11 @@ func (e *behaviorSSAEncoder) encodeIterationInstruction(
 		}
 	case *ssa.Range:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("range("+arg+")", behaviorEffectRead, ok)
+		return behaviorSSAFailClosedOperandOp("range("+arg+")", behaviorEffectRead, ok)
 	case *ssa.Next:
 		arg, ok := e.operands(instruction.Iter)
 
-		return behaviorSSAOperandOp(
+		return behaviorSSAFailClosedOperandOp(
 			fmt.Sprintf("next(string=%t,%s)", instruction.IsString, arg),
 			behaviorEffectRead,
 			ok,
@@ -765,7 +779,7 @@ func (e *behaviorSSAEncoder) encodeControlInstruction(
 			return behaviorSSAEncoding{}
 		}
 
-		return behaviorSSAOperandOp(fmt.Sprintf(
+		return behaviorSSAFailClosedOperandOp(fmt.Sprintf(
 			"if(%s,b%d,b%d)",
 			cond,
 			e.blockIDs[instruction.Block().Succs[0]],
@@ -773,7 +787,7 @@ func (e *behaviorSSAEncoder) encodeControlInstruction(
 		), 0, ok)
 	case *ssa.Return:
 		args, ok := e.operands(instruction.Results...)
-		return behaviorSSAOperandOp("return("+args+")", 0, ok)
+		return behaviorSSAFailClosedOperandOp("return("+args+")", 0, ok)
 	case *ssa.RunDefers:
 		return behaviorSSAEncoding{
 			text:    "rundefers",
@@ -783,22 +797,27 @@ func (e *behaviorSSAEncoder) encodeControlInstruction(
 		}
 	case *ssa.Panic:
 		arg, ok := e.operands(instruction.X)
-		return behaviorSSAOperandOp("panic("+arg+")", behaviorEffectPanic, ok)
+		return behaviorSSAFailClosedOperandOp("panic("+arg+")", behaviorEffectPanic, ok)
 	case *ssa.Go:
 		call, callEffects, ok := e.encodeCall(&instruction.Call)
-		return behaviorSSAOperandOp("go("+call+")", callEffects|behaviorEffectConcurrent, ok)
+
+		return behaviorSSAFailClosedOperandOp(
+			"go("+call+")",
+			callEffects|behaviorEffectConcurrent,
+			ok,
+		)
 	case *ssa.Defer:
 		call, callEffects, ok := e.encodeCall(&instruction.Call)
 		stack, stackOK := e.valueRef(instruction.DeferStack)
 
-		return behaviorSSAOperandOp(
+		return behaviorSSAFailClosedOperandOp(
 			"defer("+call+","+stack+")",
 			callEffects|behaviorEffectDefer,
 			ok && stackOK,
 		)
 	case *ssa.Send:
 		args, ok := e.operands(instruction.Chan, instruction.X)
-		return behaviorSSAOperandOp("send("+args+")", behaviorEffectConcurrent, ok)
+		return behaviorSSAFailClosedOperandOp("send("+args+")", behaviorEffectConcurrent, ok)
 	case *ssa.Store:
 		args, ok := e.operands(instruction.Addr, instruction.Val)
 
@@ -807,10 +826,10 @@ func (e *behaviorSSAEncoder) encodeControlInstruction(
 			effects = behaviorEffectWrite
 		}
 
-		return behaviorSSAOperandOp("store("+args+")", effects, ok)
+		return behaviorSSAFailClosedOperandOp("store("+args+")", effects, ok)
 	case *ssa.MapUpdate:
 		args, ok := e.operands(instruction.Map, instruction.Key, instruction.Value)
-		return behaviorSSAOperandOp("mapupdate("+args+")", behaviorEffectWrite, ok)
+		return behaviorSSAFailClosedOperandOp("mapupdate("+args+")", behaviorEffectWrite, ok)
 	default:
 		return behaviorSSAEncoding{}
 	}

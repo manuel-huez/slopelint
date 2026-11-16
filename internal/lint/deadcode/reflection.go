@@ -59,7 +59,6 @@ func (graph deadCodeGraph) reflectedUses(
 	}
 
 	out := make(map[string]struct{})
-	// Each target walks with its own codec and cycle guard.
 	walk := func(codec reflectedCodecUse) reflectedUseWalk {
 		return reflectedUseWalk{
 			graph: graph,

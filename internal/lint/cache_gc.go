@@ -37,7 +37,7 @@ const (
 	cachePruneAnalysis
 	cachePruneScan
 	cachePruneVector
-	cachePruneDescription
+	cachePruneCodexRecord
 )
 
 type cachePruneEntry struct {
@@ -251,16 +251,17 @@ func similarityCacheEntryKind(root string, path string) cachePruneEntryKind {
 		return cachePruneScan
 	case parts[0] == "vectors" && strings.HasSuffix(relative, ".bin"):
 		return cachePruneVector
-	case parts[0] == "descriptions" && strings.HasSuffix(relative, ".json"):
-		return cachePruneDescription
+	case (parts[0] == "descriptions" || parts[0] == "reviews") &&
+		strings.HasSuffix(relative, ".json"):
+		return cachePruneCodexRecord
 	default:
 		return cachePruneUnknown
 	}
 }
 
 // pruneUnusedCacheEntries removes lint results and scan snapshots unused for the
-// retention period. Per-block vectors and Codex descriptions stay until a cache
-// schema change: content keys keep them valid, and regenerating them costs model calls.
+// retention period. Per-block vectors and Codex description and review records
+// stay until a cache schema change: content keys keep them valid, and regenerating them costs model calls.
 func pruneUnusedCacheEntries(
 	entries []*cachePruneEntry,
 	now time.Time,
@@ -271,7 +272,7 @@ func pruneUnusedCacheEntries(
 
 	for _, entry := range entries {
 		if entry.modified.After(recent) ||
-			entry.kind == cachePruneVector || entry.kind == cachePruneDescription {
+			entry.kind == cachePruneVector || entry.kind == cachePruneCodexRecord {
 			continue
 		}
 

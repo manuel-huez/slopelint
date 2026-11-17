@@ -7,6 +7,8 @@ import (
 )
 
 func TestContractCommentsEstablishFactsAfterCall(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -37,6 +39,8 @@ func f(req *Req) {
 }
 
 func TestReportsMalformedContractComments(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -52,6 +56,8 @@ func check(value *int) {}
 }
 
 func TestInfersGuardHelperFactsAcrossCallBoundary(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -82,6 +88,8 @@ func f(req *Req) {
 }
 
 func TestInfersPredicateFactsAcrossCallBoundary(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -113,6 +121,8 @@ func f(req *Req) {
 }
 
 func TestInfersPredicateFactsAcrossMultipleCalls(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -148,6 +158,8 @@ func f(req *Req) {
 }
 
 func TestPropagatesPredicateFactsViaBoolVariable(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -180,6 +192,8 @@ func f(req *Req) {
 }
 
 func TestPropagatesPredicateFactsViaCopiedBoolVariable(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -213,6 +227,8 @@ func f(req *Req) {
 }
 
 func TestPropagatesNilFactsViaErrorVariable(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -247,6 +263,8 @@ func f(req *Req) {
 }
 
 func TestInfersFactsAcrossPackages(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "guard", "guard.go"), `package guard
 
@@ -298,6 +316,8 @@ func g(req *guard.Req) {
 }
 
 func TestSkipsInferredFactsWhenDeferMutatesParameter(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -322,6 +342,8 @@ func use(value *req) {
 }
 
 func TestSkipsExpandedVariadicParameterFacts(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -340,6 +362,8 @@ func use(value []int) {
 }
 
 func TestDeclarationCallContradictionDropsPath(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

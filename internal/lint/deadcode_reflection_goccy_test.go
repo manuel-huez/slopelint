@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsHooksThroughLocalGoccyJSONWrapper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
@@ -173,6 +175,8 @@ func parseStreamTime([]byte) error {
 }
 
 func TestRepoDeadCodeKeepsGoccyJSONOptionAndContextCodecUses(t *testing.T) {
+	t.Parallel()
+
 	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
@@ -307,6 +311,8 @@ func parseCustom([]byte) error {
 }
 
 func TestRepoDeadCodeKeepsGoccyJSONStreamOptionAndContextCodecUses(t *testing.T) {
+	t.Parallel()
+
 	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
@@ -438,6 +444,8 @@ func parseContext(context.Context, []byte) error {
 }
 
 func TestRepoDeadCodeDoesNotKeepGoccyJSONContextHooksThroughPlainCodecUses(t *testing.T) {
+	t.Parallel()
+
 	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 
@@ -590,6 +598,8 @@ func parseCustom(context.Context, []byte) error {
 }
 
 func TestRepoDeadCodeDoesNotKeepStdlibJSONContextHooks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)
 	_, _ = lib.Save()`)
@@ -647,6 +657,8 @@ func parseCustom([]byte) error {
 }
 
 func TestRepoDeadCodeDoesNotKeepLocalWrapperShadowedParamFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib

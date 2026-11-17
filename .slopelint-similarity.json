@@ -1,22 +1,24 @@
 {
-  "schema": 12,
-  "source_digest": "92549d83fef4645d0f0ff370008793ff41dabbb7b6de20669b0ed143fa7c0e1c",
-  "repository_digest": "53bee89a803ad73896cc0dfb98fc4a368897807a9a280679c272a84562b8e5c2",
+  "schema": 13,
+  "source_digest": "18c3e7a405bc72bcf824377cda01cfe89a517fac53597779e8cd69df17b96d46",
+  "repository_digest": "468aef6adf06739e5b2de6e439d64cc0908e6f285b69eace210831218336da08",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "c0ccf5435df6ae7ca937e3e6b42126b1740fc14c560baa60fe838c887e36513a",
+  "description_digest": "f76e5cd69687fae17b21edc3786fb0cc8bbe873de850fa3ee4604ec76cf1991c",
   "review": {
     "schema": 8,
-    "test_schema": 1,
+    "test_schema": 2,
     "typescript_schema": 4,
     "python_schema": 4,
+    "script_error_schema": 3,
+    "script_test_schema": 3,
     "model": "gpt-6.1-terra",
     "effort": "low"
   },
-  "checked_blocks": 1846,
+  "checked_blocks": 1894,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",
@@ -31,13 +33,6 @@
       "left_hash": "1f542ea63bd7d7dbd4d5f27765bb93d3e8395d908e9a9e2e05b20f1a77dc1ebf",
       "right": "internal/lint/structure/branches.go::exprHasCalls",
       "right_hash": "f0027126eee9ab36f62b34cf876eeeb6dd0d6e417b265aef8a4c46f2b37972d8"
-    },
-    {
-      "id": "sim-a427a069c1e4234a",
-      "left": "internal/lint/deadcode_test.go::TestRepoDeadCodeKeepsCrossPackageGenericConstraintMethods",
-      "left_hash": "dea2866ffaf5c1495d552de8a32d3f2b8666c48e6c7013663208e6a41b6333e1",
-      "right": "internal/lint/deadcode_test.go::TestRepoDeadCodeKeepsGenericConstraintMethods",
-      "right_hash": "53095abb8d244b7370dfc885e8cce8274dd678b26c1ccaffadc83a1615efaea9"
     },
     {
       "id": "sim-bdd2437aef77b411",

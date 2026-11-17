@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsCyclicLocalWrapperFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib

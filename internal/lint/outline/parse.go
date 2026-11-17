@@ -18,7 +18,7 @@ func Parse(name string, src []byte) (File, error) {
 	file := File{
 		Lines: lineCount(src),
 		Start: Pos{Line: 1, Column: 1},
-		Test:  testFile(name, language),
+		Test:  TestFile(name),
 	}
 
 	if generated(src) {
@@ -55,9 +55,16 @@ func Parse(name string, src []byte) (File, error) {
 		return File{}, fmt.Errorf("%d:%d: syntax error", point.Row+1, point.Column+1)
 	}
 
-	w := walker{grammar: grammar, src: src, language: language, file: &file}
+	w := walker{
+		syntax:   syntax{grammar: grammar, src: src},
+		name:     name,
+		language: language,
+		file:     &file,
+	}
 	w.walk(root, "")
 	w.finish(root)
+	w.finishTests()
+	w.finishBlocks()
 
 	return file, nil
 }
@@ -80,7 +87,18 @@ func firstSyntaxError(node *ts.Node) *ts.Node {
 	return node
 }
 
-const commentNode = "comment"
+const (
+	commentNode     = "comment"
+	tsCallNode      = "call_expression"
+	tsFieldNode     = "public_field_definition"
+	pyDecoratedNode = "decorated_definition"
+	pyFunctionNode  = "function_definition"
+	pyBlockNode     = "block"
+	pyCallNode      = "call"
+	tsAwaitNode     = "await_expression"
+	statementNode   = "expression_statement"
+	pyImportNode    = "import_from_statement"
+)
 
 type rawComment struct {
 	start, end  uint32
@@ -92,13 +110,27 @@ type rawComment struct {
 	docstring   bool
 }
 
+type syntax struct {
+	grammar *ts.Language
+	src     []byte
+}
+
 type walker struct {
-	grammar   *ts.Language
-	src       []byte
+	syntax
+
+	name      string
 	language  Language
 	file      *File
 	comments  []rawComment
 	moduleDoc *ts.Node
+	// sleeps wait for finishTests to drop those that fakeTimers, a patched
+	// sleep, or the module sleepImport names covers.
+	sleeps      []sleep
+	fakeTimers  bool
+	patched     []string
+	sleepImport string
+	blocks      []pendingBlock
+	blockSpans  map[[2]uint32]bool
 }
 
 // walk records functions, types, and comments. receiver is the class whose
@@ -154,18 +186,18 @@ func (w *walker) walkTypeScript(node *ts.Node, kind, receiver string) {
 	case "arrow_function", "function_expression", "generator_function":
 		name, anchor, owner := w.boundName(node)
 		w.function(node, name, anchor, owner)
+	case tsCallNode, tsAwaitNode, "catch_clause":
+		w.tsEvent(node, kind)
 	}
 
 	w.walkChildren(node, "")
 }
 
-// bindingFields maps a node that binds a value to a name to its value and
-// name fields.
 var bindingFields = map[string][2]string{
-	"variable_declarator":     {valueField, nameField},
-	"pair":                    {valueField, "key"},
-	"assignment_expression":   {"right", "left"},
-	"public_field_definition": {valueField, nameField},
+	"variable_declarator":   {valueField, nameField},
+	"pair":                  {valueField, "key"},
+	"assignment_expression": {"right", "left"},
+	tsFieldNode:             {valueField, nameField},
 }
 
 const (
@@ -192,8 +224,8 @@ func (w *walker) boundName(node *ts.Node) (string, *ts.Node, string) {
 		return "default", node, ""
 	case "arguments":
 		call := parent.Parent()
-		if parent.NamedChildCount() == 1 && call.Type(w.grammar) == "call_expression" &&
-			w.field(call, "function").Type(w.grammar) == "call_expression" {
+		if parent.NamedChildCount() == 1 && call.Type(w.grammar) == tsCallNode &&
+			w.field(call, "function").Type(w.grammar) == tsCallNode {
 			return w.boundName(call)
 		}
 	}
@@ -210,11 +242,32 @@ func (w *walker) boundName(node *ts.Node) (string, *ts.Node, string) {
 
 	// A class field sits in the class body, whose parent names the class.
 	owner := ""
-	if kind == "public_field_definition" {
+	if kind == tsFieldNode {
 		owner = w.text(w.field(parent.Parent().Parent(), nameField))
 	}
 
 	return w.text(name), name, owner
+}
+
+func (w *walker) tsEvent(node *ts.Node, kind string) {
+	switch {
+	case !w.file.Test && kind != tsAwaitNode:
+		w.handler(node, kind)
+	case w.file.Test && kind == tsCallNode:
+		w.tsTestCall(node)
+		w.tsClockCall(node)
+	case w.file.Test && kind == tsAwaitNode:
+		w.tsClockAwait(node)
+	}
+}
+
+func (w *walker) pythonEvent(node *ts.Node, kind string) {
+	switch {
+	case w.file.Test && (kind == pyCallNode || kind == pyImportNode):
+		w.pythonClock(node)
+	case !w.file.Test && kind != pyCallNode && kind != pyImportNode:
+		w.handler(node, kind)
+	}
 }
 
 func (w *walker) walkPython(node *ts.Node, kind, receiver string) {
@@ -235,13 +288,19 @@ func (w *walker) walkPython(node *ts.Node, kind, receiver string) {
 		}
 
 		return
-	case "decorated_definition":
+	case pyDecoratedNode:
 		w.walkChildren(node, receiver)
 		return
-	case "function_definition":
+	case pyFunctionNode:
 		w.docstring(w.field(node, "body"))
 		name := w.field(node, nameField)
 		w.function(node, w.text(name), name, receiver)
+
+		if w.file.Test {
+			w.pythonTestFunction(node, w.text(name))
+		}
+	case pyCallNode, pyImportNode, "except_clause", "except_group_clause", "with_statement":
+		w.pythonEvent(node, kind)
 	case "lambda":
 		w.function(node, "", nil, "")
 	case "module":
@@ -267,6 +326,13 @@ func (w *walker) function(node *ts.Node, name string, anchor *ts.Node, receiver 
 
 	if anchor != nil {
 		fn.Pos = w.pos(anchor)
+
+		symbol := name
+		if receiver != "" {
+			symbol = receiver + "." + name
+		}
+
+		w.block(symbol, anchor, node)
 	}
 
 	w.file.Funcs = append(w.file.Funcs, fn)
@@ -323,7 +389,7 @@ func (w *walker) docstring(body *ts.Node) *ts.Node {
 		switch child.Type(w.grammar) {
 		case commentNode:
 			continue
-		case "expression_statement":
+		case statementNode:
 			if child.NamedChildCount() != 1 || child.NamedChild(0).Type(w.grammar) != "string" {
 				return nil
 			}
@@ -364,23 +430,23 @@ func (w *walker) comment(node *ts.Node) {
 	})
 }
 
-func (w *walker) field(node *ts.Node, name string) *ts.Node {
+func (s syntax) field(node *ts.Node, name string) *ts.Node {
 	if node == nil {
 		return nil
 	}
 
-	return node.ChildByFieldName(name, w.grammar)
+	return node.ChildByFieldName(name, s.grammar)
 }
 
-func (w *walker) text(node *ts.Node) string {
+func (s syntax) text(node *ts.Node) string {
 	if node == nil {
 		return ""
 	}
 
-	return node.Text(w.src)
+	return node.Text(s.src)
 }
 
-func (w *walker) pos(node *ts.Node) Pos {
+func (s syntax) pos(node *ts.Node) Pos {
 	point := node.StartPoint()
 
 	return Pos{
@@ -392,7 +458,7 @@ func (w *walker) pos(node *ts.Node) Pos {
 
 // endLine is the line of the node's last byte; tree-sitter ends a node that
 // includes its newline at column 0 of the next line.
-func (w *walker) endLine(node *ts.Node) int {
+func (s syntax) endLine(node *ts.Node) int {
 	end := node.EndPoint()
 	if end.Column == 0 && end.Row > node.StartPoint().Row {
 		return int(end.Row)

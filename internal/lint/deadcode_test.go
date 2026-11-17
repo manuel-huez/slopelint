@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsDeadPrivateDecls(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -46,6 +48,8 @@ func Live() {}
 }
 
 func TestDeadPrivateDeclsFollowProductionRoots(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -76,6 +80,8 @@ func Live() {
 }
 
 func TestDeadPrivateDeclsIgnoreTestOnlyUses(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -102,6 +108,8 @@ func TestHelper(t *testing.T) {
 }
 
 func TestRepoDeadCodeReportsInternalTestOnlySubgraphRoot(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -151,6 +159,8 @@ func TestTestOnlyEntry(t *testing.T) {
 }
 
 func TestRepoDeadCodeReportsExternalTestOnlySubgraphRoot(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -241,6 +251,8 @@ func TestTaggedTestOnlyEntry(t *testing.T) {
 }
 
 func TestDeadPrivateDeclsSkipSideEffectVarInitializers(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -266,6 +278,8 @@ func Live() {}
 }
 
 func TestDeadPrivateDeclsIgnoreLocalShadows(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -289,6 +303,8 @@ func Live() {
 }
 
 func TestRepoDeadCodeFollowsMainEntrypoint(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -324,6 +340,8 @@ func deadPrivate() {}
 }
 
 func TestDeadCodeSkipsGeneratedDeclsAndKeepsTheirUses(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -368,6 +386,8 @@ func EasyjsonExported() {
 }
 
 func TestRepoDeadCodeDetectsUnusedMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -403,6 +423,8 @@ func (Service) unusedPrivate() {}
 }
 
 func TestRepoDeadCodeKeepsInterfaceMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Facts()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -438,6 +460,8 @@ func Facts() []Fact {
 }
 
 func TestRepoDeadCodeKeepsStructFieldInterfaceMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Response()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -479,6 +503,8 @@ func Response() *http.Response {
 }
 
 func TestRepoDeadCodeKeepsGenericConstraintMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -515,6 +541,8 @@ func Live() {
 }
 
 func TestRepoDeadCodeKeepsCrossPackageGenericConstraintMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
 
@@ -562,6 +590,8 @@ func Live() {
 }
 
 func TestDeadCodeKeepsPrivateMarkerMethodsWithoutLocalUse(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "contract", "contract.go"), `package contract
 
@@ -591,6 +621,8 @@ func (DailyBar) unusedPrivate() {}
 }
 
 func TestDeadCodeKeepsPrivateMarkerMethodsOnSealedInterfaces(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "contract", "contract.go"), `package contract
 
@@ -628,6 +660,8 @@ func (DailyBar) unusedPrivate() {}
 }
 
 func TestRepoDeadCodeKeepsErrorProtocolMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -689,6 +723,8 @@ func Live() {
 }
 
 func TestRepoDeadCodeReportsErrorProtocolNamesOnNonErrors(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib

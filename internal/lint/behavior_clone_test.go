@@ -7,6 +7,8 @@ import (
 )
 
 func TestBehaviorCloneNormalizesEquivalentFunctionTransformations(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -47,6 +49,8 @@ func changed(value int) int {
 }
 
 func TestBehaviorCloneFindsSharedBlockWhenFunctionsDiffer(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -103,6 +107,8 @@ func update(req request) error {
 }
 
 func TestBehaviorCloneDoesNotTreatOrdinaryCommentsAsSuppressions(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -135,6 +141,8 @@ func update(value request) error {
 }
 
 func TestBehaviorCloneDistinguishesClosureBehavior(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -165,6 +173,8 @@ func subtract(values []int) int {
 }
 
 func TestBehaviorCloneIncludesWritesAndConcurrency(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -202,6 +212,8 @@ func second(target *counter, values chan int) int {
 }
 
 func TestBehaviorCloneDistinguishesWrittenFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -227,6 +239,8 @@ func updateRight(c *counter, value int) int {
 }
 
 func TestBehaviorCloneKeepsReceiverIdentity(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -266,6 +280,8 @@ func (target *otherCounter) third(delta int) int {
 }
 
 func TestBehaviorCloneMatchesFunctionsAcrossPackages(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "first", "first.go"), `package first
 
@@ -294,6 +310,8 @@ func Compact(value int) int {
 }
 
 func TestBehaviorCloneMatchesBlocksAcrossImportAliases(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "first", "first.go"), `package first
 
@@ -334,6 +352,8 @@ func Update(value, category, ending, beginning, namespace string) string {
 }
 
 func TestBehaviorClonePropagatesThroughDeepLocalCalls(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -367,6 +387,8 @@ func right5(value int) int { return value + 1 }
 }
 
 func TestBehaviorCloneHandlesRecursiveFunctions(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -397,6 +419,8 @@ func Changed(value int) int {
 }
 
 func TestBehaviorCloneMatchesStaticLocalClosures(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -424,6 +448,8 @@ func Second(items []int) int {
 }
 
 func TestBehaviorCloneMatchesDynamicFunctionParameters(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -447,6 +473,8 @@ func Second(transform func(int) int, input int) int {
 }
 
 func TestBehaviorCloneMatchesReflectionAndUnsafeOperations(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -475,6 +503,8 @@ func Second(input *int) uintptr {
 }
 
 func TestBehaviorCloneKeepsNamedTypeIdentityAcrossPackages(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "first", "first.go"), `package first
 
@@ -502,6 +532,8 @@ func Transform(input Record) int {
 }
 
 func TestBehaviorCloneKeepsGlobalIdentityAcrossPackages(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "first", "shared.go"), `package shared
 
@@ -531,6 +563,8 @@ func Read(value int) int {
 }
 
 func TestBehaviorCloneHandlesMutualRecursion(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsFmtStringerThroughForwardedPackageAny(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
@@ -42,6 +44,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughPackageAnyInit(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
@@ -80,6 +84,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerFromLivePackageMutator(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Set()
 	_ = lib.Live()`)
@@ -113,6 +119,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeDoesNotKeepFmtStringerFromDeadPackageMutator(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -155,6 +163,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeDoesNotKeepFmtStringerFromDeadAnyCaller(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -198,6 +208,8 @@ func dead() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringersWithSamePackageQualifiedName(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "a", "model", "model.go"), `package model
@@ -252,6 +264,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeDistinguishesFmtStringerStructFieldOwners(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 
@@ -302,6 +316,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughLocalParallelAssignment(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 
@@ -347,6 +363,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughForwarderParallelAssignment(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 
@@ -393,6 +411,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerFromCrossPackageMutator(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Set()
 	_ = lib.Live()`)

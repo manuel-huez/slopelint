@@ -1,7 +1,6 @@
 package lint
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +12,8 @@ const (
 )
 
 func TestDetectsDuplicateValidationLadder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -67,6 +68,8 @@ var errBad error
 }
 
 func TestDetectsSingleUsePrivateHelper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -100,6 +103,8 @@ func run() {
 }
 
 func TestDetectsSingleUsePrivateWrapperWithReturnValue(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -131,6 +136,8 @@ func run(value string) string {
 }
 
 func TestDetectsSingleUsePrivateHelperReturnValueWithSpecificName(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -155,6 +162,8 @@ func run(value string) string {
 }
 
 func TestDetectsDocCommentedSingleUsePrivateHelper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -184,6 +193,8 @@ func bucket(start int, end int) string {
 }
 
 func TestSkipsSingleUsePrivateHelperWithFunctionValueUse(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -209,6 +220,8 @@ func run() {
 }
 
 func TestSkipsSingleUsePrivateHelperWithComplexBody(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -234,6 +247,8 @@ func run(values []int) {
 }
 
 func TestDetectsSingleImplInterface(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -266,6 +281,8 @@ func run() {
 }
 
 func TestSkipsExportedOnlySingleImplInterface(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -292,6 +309,8 @@ func use(value writer) {
 }
 
 func TestDetectsOptionsOverkill(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -327,6 +346,8 @@ func run() int {
 }
 
 func TestDetectsLargeUngroupedConstChunk(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -366,6 +387,8 @@ func use(state) {}
 }
 
 func TestSkipsLargeConstBlockWithGroupBreaks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -399,6 +422,8 @@ func use(state) {}
 }
 
 func TestDetectsLargeUngroupedConstChunkInTestFile(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -436,6 +461,8 @@ const (
 }
 
 func TestDetectsAdjacentUngroupedConstDecls(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -473,6 +500,8 @@ func use(state) {}
 }
 
 func TestDetectsLargeUngroupedVarChunk(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -508,6 +537,8 @@ var (
 }
 
 func TestDetectsAdjacentUngroupedTypeDecls(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -541,6 +572,8 @@ type reqL struct{}
 }
 
 func TestDetectsMixedConstPrefixes(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -570,6 +603,8 @@ const (
 }
 
 func TestSkipsMixedConstPrefixesWithGroupBreaks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -594,6 +629,8 @@ const (
 }
 
 func TestDetectsUnnamedLargeTableTest(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
@@ -636,6 +673,8 @@ func TestParse(t *testing.T) {
 }
 
 func TestSkipsNamedLargeTableTest(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
@@ -672,6 +711,8 @@ func TestParse(t *testing.T) {
 }
 
 func TestSkipsAdjacentConstDeclsWithGroupBreaks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -703,6 +744,8 @@ func use(state) {}
 }
 
 func TestSkipsOptionsOverkillWhenPrefixIsNotConstructorWord(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -738,6 +781,8 @@ func run() int {
 }
 
 func TestDetectsInternalResultWrapper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -767,6 +812,8 @@ func run() bool {
 }
 
 func TestSkipsStoredResultWrappers(t *testing.T) {
+	t.Parallel()
+
 	for _, storage := range []string{
 		"chan parseResult", "map[string]parseResult", "[]parseResult",
 		"[2]*parseResult", "struct { outcome parseResult }", "chan *aliasResult",
@@ -796,6 +843,8 @@ type aliasResult = parseResult
 }
 
 func TestDetectsRepeatedTestFixtureContent(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
@@ -815,6 +864,8 @@ func TestThree(t *testing.T) { writeFile(t, "go.mod", "module example.com/repeat
 }
 
 func TestDetectsPanicAfterTestingFatal(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
@@ -833,127 +884,9 @@ func mustValue(t *testing.T) *int {
 	}
 }
 
-func TestDetectsOversizedOwnerFile(t *testing.T) {
-	tmp := newTestModule(t)
-	source := "package sample\n\n" + strings.Repeat("var _ = 0\n", oversizedOwnerFixtureLines)
-	writeFile(t, filepath.Join(tmp, "sample.go"), source)
-
-	joined := joinMessages(lintInDir(t, tmp))
-	if !strings.Contains(
-		joined,
-		"source file has 1002 lines"+sizeLimitDeleteFirst+"split the rest by responsibility so whole-file review stays tractable",
-	) {
-		t.Fatalf("expected oversized-owner-file finding, got:\n%s", joined)
-	}
-}
-
-func TestSkipsOversizedGeneratedFile(t *testing.T) {
-	tmp := newTestModule(t)
-	source := "// Code generated by test. DO NOT EDIT.\npackage sample\n\n" +
-		strings.Repeat("var _ = 0\n", oversizedOwnerFixtureLines)
-	writeFile(t, filepath.Join(tmp, "sample.go"), source)
-
-	joined := joinMessages(lintInDir(t, tmp))
-	if strings.Contains(joined, "oversized_owner_file") {
-		t.Fatalf("unexpected oversized-owner-file finding for generated code:\n%s", joined)
-	}
-}
-
-func sizeLimitSource(header string, funcLines, litLines, params, results int) string {
-	return header + "package sample\n\nfunc long() {\n" + strings.Repeat("\t_ = 0\n", funcLines-2) +
-		"}\n\nfunc literal() {\n\tf := func() {\n" + strings.Repeat("\t\t_ = 0\n", litLines-2) +
-		"\t}\n\tf()\n}\n\nfunc params(" + strings.Repeat("_ int, ", params) + ") {}\n\n" +
-		"func results() (" + strings.Repeat("int, ", results) + ") { panic(0) }\n"
-}
-
-func TestDetectsFunctionSizeLimits(t *testing.T) {
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), sizeLimitSource("", 101, 41, 7, 4))
-
-	joined := joinMessages(lintInDir(t, tmp))
-	for _, want := range []string{
-		`function "long" has 101 lines` + sizeLimitDeleteFirst + "split the rest by responsibility",
-		"function literal has 41 lines" + sizeLimitDeleteFirst + "extract the rest into a named function",
-		`function "params" has 7 parameters` + sizeLimitDeleteFirst + "group related parameters into a struct or split the function",
-		`function "results" returns 4 results` + sizeLimitDeleteFirst + "return a named struct",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("expected %q, got:\n%s", want, joined)
-		}
-	}
-}
-
-func TestSkipsFunctionSizeLimitsAtLimitTestAndGenerated(t *testing.T) {
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), sizeLimitSource("", 100, 40, 6, 3))
-	writeFile(t, filepath.Join(tmp, "gen.go"), strings.ReplaceAll(
-		sizeLimitSource(
-			"// Code generated by test. DO NOT EDIT.\n",
-			101,
-			41,
-			7,
-			4,
-		),
-		"func ",
-		"func gen",
-	))
-	writeFile(t, filepath.Join(tmp, "sample_test.go"), strings.ReplaceAll(
-		sizeLimitSource("", 101, 41, 7, 4), "func ", "func test"))
-
-	issues := lintInDir(t, tmp)
-	for _, kind := range []string{"long_function", "long_func_literal", "long_param_list", "long_result_list"} {
-		if hasIssueKind(issues, kind) {
-			t.Fatalf("unexpected %s finding, got:\n%s", kind, joinMessages(issues))
-		}
-	}
-}
-
-func methodSource(header, receiver, prefix string, count int) string {
-	var source strings.Builder
-
-	source.WriteString(header + "package sample\n\n")
-
-	for index := range count {
-		fmt.Fprintf(&source, "func (%s) %s%d() {}\n", receiver, prefix, index)
-	}
-
-	return source.String()
-}
-
-func TestDetectsGodReceiver(t *testing.T) {
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "big.go"),
-		methodSource("", "b *big[T]", "pointer", 21)+"\ntype big[T any] struct{}\n")
-	writeFile(t, filepath.Join(tmp, "big_more.go"), methodSource("", "b big[T]", "value", 20))
-
-	joined := joinMessages(lintInDir(t, tmp))
-	want := `type "big" has 41 methods across 2 files` + sizeLimitDeleteFirst +
-		"split the rest by responsibility so each new type owns its own state; " +
-		"moving methods to functions that take the type as a parameter is not a fix"
-
-	if !strings.Contains(joined, want) {
-		t.Fatalf("expected %q, got:\n%s", want, joined)
-	}
-}
-
-func TestSkipsGodReceiverAtLimitTestAndGenerated(t *testing.T) {
-	tmp := newTestModule(t)
-	writeFile(
-		t,
-		filepath.Join(tmp, "big.go"),
-		methodSource("", "big", "prod", 40)+"\ntype big struct{}\n",
-	)
-	writeFile(t, filepath.Join(tmp, "gen.go"),
-		methodSource("// Code generated by test. DO NOT EDIT.\n", "big", "gen", 5))
-	writeFile(t, filepath.Join(tmp, "big_test.go"), methodSource("", "big", "test", 5))
-
-	issues := lintInDir(t, tmp)
-	if hasIssueKind(issues, "god_receiver") {
-		t.Fatalf("unexpected god_receiver finding, got:\n%s", joinMessages(issues))
-	}
-}
-
 func TestSkipsSingleImplInterfaceWithTestImplementation(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

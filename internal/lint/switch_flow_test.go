@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsUnreachableSwitchCases(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -38,6 +40,8 @@ func f(s Status) {
 }
 
 func TestSelectDoesNotBlindWholeFunction(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -60,6 +64,8 @@ func f(s string, ch chan int) {
 }
 
 func TestTypeSwitchDoesNotBlindWholeFunction(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -84,6 +90,8 @@ func f(s string, v any) {
 }
 
 func TestLabeledBreakDoesNotBlindWholeFunction(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -108,6 +116,8 @@ Loop:
 }
 
 func TestLabeledContinueDoesNotBlindWholeFunction(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -132,6 +142,8 @@ Outer:
 }
 
 func TestFallthroughMergesReachableStates(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -159,6 +171,8 @@ func f(s string) {
 }
 
 func TestInfersPredicateFactsThroughFallthroughSwitch(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

@@ -65,6 +65,8 @@ func Encode[T any](value T) ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepExternalGenericMarshalShadowedParamFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newJSONCodecTestModule(t)
 	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
 
@@ -98,6 +100,8 @@ func Encode[T any](value T) ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsExternalGenericMarshalMethodWithSameNameFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newJSONCodecTestModule(t)
 	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
 
@@ -140,6 +144,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsDelegatedExternalGenericMarshalWrapperFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newJSONCodecTestModule(t)
 	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
 
@@ -176,6 +182,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsSigsYAMLGenericMarshalWrapperJSONFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -232,6 +240,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepFakeYAMLGenericMarshalWrapperFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -295,6 +305,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepFakeExternalGenericMarshalWrapperFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newJSONCodecTestModule(t)
 	writeFile(t, filepath.Join(tmp, "jsoncodec", "codec.go"), `package jsoncodec
 
@@ -320,6 +332,8 @@ func Encode[T any](value T) ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeWithoutCodecOutput(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -362,6 +376,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeFromBareCodecPackage(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -404,6 +420,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeFromJSONNamedNonCodec(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -450,6 +468,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeJSONFromJSONNamedNonCodec(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -496,6 +516,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepGenericMarshalFromDeadFuncLiteral(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -533,6 +555,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeIgnoresYAMLMarshalNonRepresentationReturns(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)

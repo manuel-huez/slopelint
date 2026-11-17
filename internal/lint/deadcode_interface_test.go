@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsKnownOptionalByteReaderMethod(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 

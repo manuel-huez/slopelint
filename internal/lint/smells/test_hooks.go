@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 type functionVarDecl struct {
@@ -214,4 +216,28 @@ func (l testSupportCheck) checkFilenames() {
 			"shared test-only source must use a test_support filename marker (for example helpers_test_support.go); keep .go so other packages' tests can import it",
 		)
 	}
+}
+
+// CheckScriptTests reports real sleeps and focused tests in a TypeScript or
+// Python test file.
+func CheckScriptTests(file outline.File) []OutlineFinding {
+	var findings []OutlineFinding
+
+	for _, pos := range file.Sleeps {
+		findings = append(findings, OutlineFinding{
+			Pos:     pos,
+			Kind:    "test_sleep",
+			Message: `real sleep in test code; wait on the event, promise, or condition, or use fake timers instead`,
+		})
+	}
+
+	for _, pos := range file.Focused {
+		findings = append(findings, OutlineFinding{
+			Pos:     pos,
+			Kind:    "test_focused",
+			Message: `focused test skips every other test in its file; remove .only, fit, or fdescribe`,
+		})
+	}
+
+	return findings
 }

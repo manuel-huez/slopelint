@@ -7,6 +7,8 @@ import (
 )
 
 func TestRunnableTestLintsRequireBehavior(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -266,11 +268,79 @@ func TestMutablePackagePolicy(t *testing.T) {
 }
 `)
 
+	writeFile(t, filepath.Join(tmp, "serial_test.go"), `package sample
+
+import "testing"
+
+func parallelHelper(t *testing.T) {
+	t.Parallel()
+}
+
+func useEnv(t *testing.T) {
+	t.Setenv("SAMPLE", "1")
+}
+
+func TestParallelDirect(t *testing.T) {
+	checkLimit(t, ClampLimit(defaultLimit))
+	t.Parallel()
+}
+
+func TestParallelHelper(t *testing.T) {
+	parallelHelper(t)
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+
+func TestParallelOnlySubtest(t *testing.T) {
+	t.Run("sub", func(t *testing.T) {
+		t.Parallel()
+		checkLimit(t, ClampLimit(defaultLimit))
+	})
+}
+
+func TestSerialSubtestSetenv(t *testing.T) {
+	t.Run("sub", func(t *testing.T) {
+		t.Setenv("SAMPLE", "1")
+		checkLimit(t, ClampLimit(defaultLimit))
+	})
+}
+
+func TestSerialHelperSetenv(t *testing.T) {
+	useEnv(t)
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+
+//slopelint:serial SetMutableBanner writes the package-level banner
+func TestSerialMarked(t *testing.T) {
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+
+//slopelint:serial
+func TestSerialBare(t *testing.T) {
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+
+//slopelint:serial shared banner
+func TestSerialStale(t *testing.T) {
+	t.Parallel()
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+
+//slopelint:serial shared environment
+func TestSerialStaleSetenv(t *testing.T) {
+	t.Setenv("SAMPLE", "1")
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+`)
+
 	issues := lintInDir(t, tmp)
 	messages := make(map[string][]string)
 
 	for _, issue := range issues {
-		messages[issue.Kind] = append(messages[issue.Kind], issue.Message)
+		// The parallel cases live in serial_test.go; the other tests are all serial.
+		if issue.Kind != "test_not_parallel" ||
+			filepath.Base(issuePosition(issue).Filename) == "serial_test.go" {
+			messages[issue.Kind] = append(messages[issue.Kind], issue.Message)
+		}
 	}
 
 	// test_sleep must skip the production Pause helper.
@@ -290,6 +360,12 @@ func TestMutablePackagePolicy(t *testing.T) {
 			`test "TestClampOnlyLogs" has no failing path`,
 		},
 		"test_sleep": {"time.Sleep in test code", "time.Sleep in test code"},
+		"test_not_parallel": {
+			`test "TestParallelOnlySubtest" does not call t.Parallel()`,
+			`test "TestSerialBare" has //slopelint:serial without a reason`,
+			`test "TestSerialStale" calls t.Parallel(), so its //slopelint:serial marker is stale`,
+			`test "TestSerialStaleSetenv" uses t.Setenv or t.Chdir`,
+		},
 	}
 
 	for kind, fragments := range want {

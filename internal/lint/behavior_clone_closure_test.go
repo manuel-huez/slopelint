@@ -7,6 +7,8 @@ import (
 )
 
 func TestBehaviorCloneReportsIndependentClosureBodies(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

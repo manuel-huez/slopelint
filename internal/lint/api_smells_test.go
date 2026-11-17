@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsTestGlobalFuncStub(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -44,6 +46,8 @@ func testCall() {
 }
 
 func TestDetectsTestGlobalFuncStubWithTestingImport(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -79,6 +83,8 @@ func TestCall(t *testing.T) {
 }
 
 func TestDetectsBoolModeParamCalledWithLiteral(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -113,6 +119,8 @@ func run() {
 }
 
 func TestSkipsBoolModeParamWithoutLiteralCall(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -139,6 +147,8 @@ func run(final bool) {
 }
 
 func TestDetectsZeroValuePrivateArg(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -192,6 +202,8 @@ func coverageContainsDate(coverage Coverage, date string) bool {
 }
 
 func TestSkipsZeroValuePrivateArgWithRealCallerValue(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -225,6 +237,8 @@ func encodeInCoverage(rows []string, coverage Coverage) []string {
 }
 
 func TestDetectsOptionalResultTriple(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -253,6 +267,8 @@ func decode(value string) (string, bool, error) {
 }
 
 func TestDetectsProductionErrorPanic(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -284,6 +300,8 @@ func mustValue() string {
 }
 
 func TestSkipsProductionErrorPanicInTests(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
@@ -306,6 +324,8 @@ func testMustValue() {
 }
 
 func TestSkipsProductionErrorPanicWhenPanicIsShadowed(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -327,6 +347,8 @@ func run() {
 }
 
 func TestDetectsSentinelErrorBreak(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -371,6 +393,8 @@ func first() error {
 }
 
 func TestSkipsSentinelErrorCheckThatReturnsSentinel(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -411,6 +435,8 @@ func first() error {
 }
 
 func TestSkipsUnrelatedSentinelErrorSuppression(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -452,6 +478,8 @@ func first(err error) error {
 }
 
 func TestSkipsSentinelErrorSuppressionAfterErrorReassignment(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -480,6 +508,8 @@ func f() error {
 }
 
 func TestDetectsUnusedPrivateParameter(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -495,6 +525,8 @@ func parse(value string, unused int) string {
 }
 
 func TestDetectsStaleComplexitySuppression(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -514,6 +546,8 @@ func parse(value string) string {
 }
 
 func TestSkipsComplexitySuppressionWithDecision(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

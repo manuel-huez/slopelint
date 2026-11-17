@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsYAMLMapKeyHooks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
 
@@ -65,6 +67,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeKeepsYAMLMapKeyFieldsWithoutHooks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
 
@@ -101,6 +105,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeReportsUnusedMarshalHooks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -142,6 +148,8 @@ func Live() {
 }
 
 func TestRepoDeadCodeFallsThroughPointerMarshalHookForValueMarshal(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -177,6 +185,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeIgnoresInvalidReflectedHookSignatures(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -212,6 +222,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeIgnoresInvalidYAMLAndXMLHookSignatures(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
 
@@ -277,6 +289,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeMapsMarshalAliasFieldsToOriginalType(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -319,6 +333,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeMapsDelegatedMarshalAliasFieldsToOriginalType(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -363,6 +379,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeMapsPackageAliasFieldsToOriginalType(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)
 	_, _ = lib.Save()`)
@@ -421,6 +439,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeMapsTextHookAliasFieldsToOriginalType(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)
 	_, _ = lib.Save()`)
@@ -481,6 +501,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeKeepsFieldsPassedThroughGenericJSONMarshal(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -509,6 +531,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsFieldsPassedThroughGenericInterfaceConversions(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)
 	_, _ = lib.Save()`)
@@ -548,6 +572,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeKeepsPointerHooksPassedThroughGenericJSONMarshal(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.SavePointer()
 	_, _ = lib.SaveNamedSlice()
@@ -598,6 +624,8 @@ func SaveSlice() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepGenericJSONMapKeyFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -637,6 +665,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsGenericJSONMapKeyUnmarshalTextHook(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -682,6 +712,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeKeepsJSONMapKeyTextHooks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()
 	_, _ = lib.Load(nil)`)
@@ -736,6 +768,8 @@ func Load(body []byte) (map[Key]Value, error) {
 }
 
 func TestRepoDeadCodeKeepsXMLAttrHooks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save(lib.Item{})
 	_, _ = lib.Load(nil)`)
@@ -786,6 +820,8 @@ func Load(body []byte) (Item, error) {
 }
 
 func TestRepoDeadCodeKeepsXMLElementAPIHooksAndFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Save(lib.Payload{})
 	_, _ = lib.Load(nil)`)
@@ -858,6 +894,8 @@ func Load(body []byte) (Payload, error) {
 }
 
 func TestRepoDeadCodeKeepsGenericXMLElementDecodeFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Load(nil)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib

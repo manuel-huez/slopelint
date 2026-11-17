@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -113,7 +114,7 @@ func scriptPatternCovers(pattern, dir, fileDir string) bool {
 	return relative == "." || tree && filepath.IsLocal(relative)
 }
 
-// lintScriptFiles runs the size checks on each script file. Results are
+// lintScriptFiles runs the size and test checks on each script file. Results are
 // cached per file content and path, since paths decide test status.
 func lintScriptFiles(files []string, root string, opts Options) ([]Issue, error) {
 	results := make([][]Issue, len(files))
@@ -184,16 +185,14 @@ func lintScriptFile(name, root string, opts Options) ([]Issue, error) {
 
 	var issues []Issue
 
-	for _, finding := range smellcheck.CheckSizes([]outline.File{file}) {
+	findings := append(
+		smellcheck.CheckSizes([]outline.File{file}),
+		smellcheck.CheckScriptTests(file)...)
+	for _, finding := range findings {
 		issues = append(issues, Issue{
-			Kind:    finding.Kind,
-			Message: finding.Message,
-			position: token.Position{
-				Filename: name,
-				Offset:   finding.Pos.Offset,
-				Line:     finding.Pos.Line,
-				Column:   finding.Pos.Column,
-			},
+			Kind:     finding.Kind,
+			Message:  finding.Message,
+			position: scriptPosition(name, finding.Pos),
 		})
 	}
 
@@ -228,12 +227,7 @@ func collectScriptCodeReviewDeclarations(
 	groups := make([]codeReviewCommentGroup, len(file.Comments))
 	for index, comment := range file.Comments {
 		groups[index] = codeReviewCommentGroup{
-			position: token.Position{
-				Filename: filename,
-				Offset:   comment.Pos.Offset,
-				Line:     comment.Pos.Line,
-				Column:   comment.Pos.Column,
-			},
+			position:    scriptPosition(filename, comment.Pos),
 			lastLine:    comment.EndLine,
 			suppression: comment.Suppression,
 		}
@@ -243,25 +237,133 @@ func collectScriptCodeReviewDeclarations(
 
 	var declarations []codeReviewDeclaration
 
-	for _, decl := range file.Decls {
-		items := codeReviewCommentItems(groups, decl.StartLine, decl.EndLine)
+	add := func(start int, source []string, items []codeReviewPositionedItem) error {
 		if len(items) == 0 {
-			continue
+			return nil
 		}
 
 		declaration, err := newCodeReviewDeclaration(codeReviewRequest{
-			Location: fmt.Sprintf("%s:%d", filename, decl.StartLine),
+			Location: fmt.Sprintf("%s:%d", filename, start),
 			Language: outline.LanguageFor(filename),
 			File:     filepath.Base(filename),
 			Test:     file.Test,
-			Source:   numberedCodeReviewSource(lines[decl.StartLine-1 : decl.EndLine]),
+			Source:   numberedCodeReviewSource(source),
 		}, items, policy)
-		if err != nil {
+		declarations = append(declarations, declaration)
+
+		return err
+	}
+
+	for _, decl := range file.Decls {
+		items := codeReviewCommentItems(groups, decl.StartLine, decl.EndLine)
+		if err := add(decl.StartLine, lines[decl.StartLine-1:decl.EndLine], items); err != nil {
 			return nil, err
 		}
+	}
 
-		declarations = append(declarations, declaration)
+	// Caught errors and tests get their own requests, so comment requests
+	// keep the keys they had before those were judged.
+	units, handled := scriptErrorUnits(filename, file.Handlers)
+	for _, unit := range units {
+		if err := add(
+			unit.StartLine,
+			lines[unit.StartLine-1:unit.EndLine],
+			handled[unit],
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	gap := "// ..."
+	if outline.LanguageFor(filename) == outline.Python {
+		gap = "# ..."
+	}
+
+	for _, test := range file.Tests {
+		source, first := scriptTestSource(lines, test, gap)
+		item := codeReviewPositionedItem{
+			item: codeReviewItem{
+				Kind:  codeReviewTestItem,
+				Lines: codeReviewLines(first, first+test.EndLine-test.StartLine),
+			},
+			position: scriptPosition(filename, test.Pos),
+		}
+
+		if err := add(test.StartLine, source, []codeReviewPositionedItem{item}); err != nil {
+			return nil, err
+		}
 	}
 
 	return declarations, nil
+}
+
+// scriptErrorUnits groups caught errors by enclosing function: each unit
+// is one request.
+func scriptErrorUnits(
+	filename string,
+	handlers []outline.Handler,
+) ([]outline.Decl, map[outline.Decl][]codeReviewPositionedItem) {
+	var (
+		units   []outline.Decl
+		handled = make(map[outline.Decl][]codeReviewPositionedItem)
+	)
+
+	for _, handler := range handlers {
+		unit := handler.Unit
+		if handled[unit] == nil {
+			units = append(units, unit)
+		}
+
+		handled[unit] = append(handled[unit], codeReviewPositionedItem{
+			item: codeReviewItem{
+				Kind: codeReviewErrorItem,
+				Lines: codeReviewLines(
+					handler.StartLine-unit.StartLine+1,
+					handler.EndLine-unit.StartLine+1,
+				),
+			},
+			position: scriptPosition(filename, handler.Pos),
+		})
+	}
+
+	return units, handled
+}
+
+// scriptTestSource returns the test with its context lines in file order,
+// a gap line between ranges that are not adjacent, and the line number of
+// the test's first line in the result.
+func scriptTestSource(lines []string, test outline.Test, gap string) ([]string, int) {
+	span := outline.Decl{StartLine: test.StartLine, EndLine: test.EndLine}
+	spans := append(slices.Clone(test.Context), span)
+	slices.SortFunc(spans, outline.Decl.Compare)
+
+	var (
+		source []string
+		first  int
+		last   int
+	)
+
+	for _, each := range spans {
+		if last > 0 && each.StartLine > last+1 {
+			source = append(source, gap)
+		}
+
+		if each == span {
+			first = len(source) + 1
+		}
+
+		source = append(source, lines[each.StartLine-1:each.EndLine]...)
+		last = each.EndLine
+	}
+
+	return source, first
+}
+
+func scriptPosition(filename string, pos outline.Pos) token.Position {
+	return token.Position{
+		Filename: filename,
+		Offset:   pos.Offset,
+		Line:     pos.Line,
+		Column:   pos.Column,
+	}
 }

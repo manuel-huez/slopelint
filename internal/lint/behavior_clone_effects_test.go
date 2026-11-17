@@ -7,6 +7,8 @@ import (
 )
 
 func TestBehaviorClonePropagatesNestedCallEffects(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -38,6 +40,8 @@ func Second(input int) {
 }
 
 func TestBehaviorClonePropagatesEquivalentCallsAcrossPackages(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "first", "first.go"), `package first
 
@@ -70,6 +74,8 @@ func Transform(input int) int {
 }
 
 func TestBehaviorClonePropagatesEquivalentCallsIntoBlocks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "first", "first.go"), `package first
 

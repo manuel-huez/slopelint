@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsRedundantChecksAfterFiltering(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -31,6 +33,8 @@ func f(s string, p *int) {
 }
 
 func TestRuntimeTargetConstantsDoNotBecomeRedundantConditions(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -56,6 +60,8 @@ func f() {
 }
 
 func TestPointerCallsKeepRootNilnessButInvalidateFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -84,6 +90,8 @@ func f(r *Req) {
 }
 
 func TestSyncOnceClosureWriteInvalidatesLocalFact(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -108,6 +116,8 @@ func f() {
 }
 
 func TestGoFuncClosureWriteInvalidatesOuterFact(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -137,6 +147,8 @@ func f() {
 }
 
 func TestLocalFuncCallbackArgInvalidatesOuterFact(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -168,6 +180,8 @@ func f(writeRows func(func([]int) error) error) error {
 }
 
 func TestTracksAliasesBackToOriginalSelector(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -189,6 +203,8 @@ func f(req Req) {
 }
 
 func TestAliasWriteInvalidatesBackPropagation(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -211,6 +227,8 @@ func f(req Req) {
 }
 
 func TestTracksLenBasedRedundantChecks(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -271,6 +289,8 @@ func TestStateDedupePreservesFirstSeenOrder(t *testing.T) {
 }
 
 func TestNestedCallbackArgInvalidatesCapturedFact(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

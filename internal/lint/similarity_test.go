@@ -499,6 +499,8 @@ func TestSimilaritySkipsPackagesBeyondImmediateRelations(t *testing.T) {
 }
 
 func TestSimilarityBlockCacheParsesOnlyChangedFiles(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	firstPath := filepath.Join(tmp, "first.go")
 	secondPath := filepath.Join(tmp, "second.go")
@@ -511,6 +513,7 @@ func TestSimilarityBlockCacheParsesOnlyChangedFiles(t *testing.T) {
 
 	files, blocks, err := collectSimilarityBlocks(
 		loadPackagesForTest(t, tmp),
+		nil,
 		tmp,
 		similarityScanCache{},
 	)
@@ -533,7 +536,7 @@ func TestSimilarityBlockCacheParsesOnlyChangedFiles(t *testing.T) {
 
 	writeFile(t, firstPath, "// Changed file comment.\n"+similarityTestSource)
 
-	_, blocks, err = collectSimilarityBlocks(loadPackagesForTest(t, tmp), tmp, previous)
+	_, blocks, err = collectSimilarityBlocks(loadPackagesForTest(t, tmp), nil, tmp, previous)
 	if err != nil {
 		t.Fatal(err)
 	}

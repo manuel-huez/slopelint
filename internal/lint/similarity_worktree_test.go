@@ -58,6 +58,8 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 }
 
 func TestSimilarityBlockCacheReusesRenamedFile(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	originalPath := filepath.Join(tmp, similarityTestFilename)
 	renamedPath := filepath.Join(tmp, "renamed.go")
@@ -66,6 +68,7 @@ func TestSimilarityBlockCacheReusesRenamedFile(t *testing.T) {
 
 	files, blocks, err := collectSimilarityBlocks(
 		loadPackagesForTest(t, tmp),
+		nil,
 		tmp,
 		similarityScanCache{},
 	)
@@ -85,6 +88,7 @@ func TestSimilarityBlockCacheReusesRenamedFile(t *testing.T) {
 
 	_, renamedBlocks, err := collectSimilarityBlocks(
 		loadPackagesForTest(t, tmp),
+		nil,
 		tmp,
 		previous,
 	)
@@ -108,6 +112,8 @@ func TestSimilarityBlockCacheReusesRenamedFile(t *testing.T) {
 }
 
 func TestSimilarityBlockCacheDropsDeletedFileState(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	deletedPath := filepath.Join(tmp, similarityTestFilename)
 	writeSimilarityTestSource(t, tmp)
@@ -115,6 +121,7 @@ func TestSimilarityBlockCacheDropsDeletedFileState(t *testing.T) {
 
 	files, blocks, err := collectSimilarityBlocks(
 		loadPackagesForTest(t, tmp),
+		nil,
 		tmp,
 		similarityScanCache{},
 	)
@@ -141,6 +148,7 @@ func TestSimilarityBlockCacheDropsDeletedFileState(t *testing.T) {
 
 	_, current, err := collectSimilarityBlocks(
 		loadPackagesForTest(t, tmp),
+		nil,
 		tmp,
 		previous,
 	)
@@ -163,6 +171,8 @@ func TestSimilarityBlockCacheDropsDeletedFileState(t *testing.T) {
 }
 
 func TestSimilarityScanCacheBoundsPastSourceSnapshots(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	now := time.Date(2026, time.August, 25, 12, 0, 0, 0, time.UTC)
 	total := similarityScanCacheSnapshots + 3

@@ -55,6 +55,7 @@ func RunDefault(pkg *Package) []Finding {
 	constValueTestCheck{env}.check()
 	testSupportCheck{env}.checkFilenames()
 	testSupportCheck{env}.checkSleeps()
+	testParallelCheck{env}.check()
 
 	return env.findings
 }

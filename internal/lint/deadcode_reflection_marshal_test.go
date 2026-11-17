@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsReflectedMarshalAndUnmarshalMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
 
@@ -93,6 +95,8 @@ func Load(body []byte) (Manifest, error) {
 }
 
 func TestRepoDeadCodeUsesYAMLMarshalMethodSetForValueContainers(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -142,6 +146,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalAliasReturnFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -189,6 +195,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalAliasMapReturnFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -220,6 +228,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsCrossPackageYAMLMarshalAliasReturnFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -266,6 +276,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalNamedResultAliasFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -308,6 +320,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepYAMLMarshalStaleNamedResultAliasFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -348,6 +362,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalNamedResultAliasAcrossBranch(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -385,6 +401,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalExplicitNamedResultAliasFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -418,6 +436,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalLocalAliasReturnFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -451,6 +471,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalAliasAcrossSwitch(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -487,6 +509,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDoesNotKeepYAMLMarshalDefaultSwitchOverwriteFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
@@ -527,6 +551,8 @@ func Save() ([]byte, error) {
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalAliasAcrossAppendedRange(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeYAMLMarshalStub(t, tmp)
 	writeTestMain(t, tmp, `	_, _ = lib.Save()`)

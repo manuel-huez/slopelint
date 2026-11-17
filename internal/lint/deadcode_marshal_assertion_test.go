@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsValueMarshalHooksFromInterfaceAssertions(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -116,6 +118,8 @@ func Live() {}
 }
 
 func TestRepoDeadCodeKeepsValueTextMarshalHookThroughJSONEncoders(t *testing.T) {
+	t.Parallel()
+
 	tmp := newGoccyJSONTestModule(t)
 	writeFile(t, filepath.Join(tmp, "gojson", "json.go"), `package json
 

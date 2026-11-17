@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsRedundantBoolReturn(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -31,6 +33,8 @@ func f(ok bool) bool {
 }
 
 func TestDetectsRedundantBoolAssignment(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -54,6 +58,8 @@ func f(ok bool) bool {
 }
 
 func TestDetectsIdenticalIfElseBodies(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -82,6 +88,8 @@ func f(ok bool) error {
 }
 
 func TestSkipsIdenticalIfElseBodiesWhenScopeWouldChange(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -111,6 +119,8 @@ func f(ok bool) int {
 }
 
 func TestDetectsRedundantReturnGuardBeforeFallback(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -135,6 +145,8 @@ func f(err error) error {
 }
 
 func TestDetectsRedundantReturnGuardSetBeforeFallback(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -162,6 +174,8 @@ func f(first bool, second bool) int {
 }
 
 func TestSkipsRedundantReturnGuardWhenConditionMayPanic(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -188,6 +202,8 @@ func f(req *req) string {
 }
 
 func TestSkipsRedundantReturnGuardWhenEqualityMayPanic(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -222,6 +238,8 @@ func G(left box, right box) int {
 }
 
 func TestDetectsNestedFinalIfPyramid(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -246,6 +264,8 @@ func f(ok bool, ready bool) {
 }
 
 func TestSkipsNestedIfPyramidWhenWorkFollows(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -269,6 +289,8 @@ func f(ok bool, ready bool) {
 }
 
 func TestDetectsIdenticalSwitchCaseBodies(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -295,6 +317,8 @@ func f(ok bool) int {
 }
 
 func TestSkipsNonAdjacentPredicateSwitchBodies(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -323,6 +347,8 @@ func f(x int) int {
 }
 
 func TestDetectsExhaustiveBoolDefault(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -354,6 +380,8 @@ func f(ok bool) {
 }
 
 func TestSkipsExhaustiveBoolDefaultWithPanic(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -381,6 +409,8 @@ func f(ok bool) {
 }
 
 func TestSkipsExhaustiveConstSetDefault(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

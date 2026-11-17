@@ -7,6 +7,8 @@ import (
 )
 
 func TestDeadCodeCallContextFuncSkipsBodylessDeclarations(t *testing.T) {
+	t.Parallel()
+
 	context := &ast.FuncDecl{
 		Body: &ast.BlockStmt{Lbrace: token.Pos(1), Rbrace: token.Pos(10)},
 	}

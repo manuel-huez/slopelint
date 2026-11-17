@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsFmtStringerMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -44,6 +46,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeDoesNotRootAllStringersThroughAnyFmtArg(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live("x")`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -74,6 +78,8 @@ func Live(value any) string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerPassedThroughAnyParam(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live(lib.Digest("x"))`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -100,6 +106,8 @@ func Live(value any) string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerPassedThroughNestedAnyParam(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Wrap(lib.Digest("x"))`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -130,6 +138,8 @@ func Wrap(value any) string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerPassedThroughVariadicAnyParam(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Log(lib.Digest("x"))`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -156,6 +166,8 @@ func Log(values ...any) string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughAnyConversion(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -182,6 +194,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughAnyLocal(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -210,6 +224,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerForwardedThroughAnySlice(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.LogLiteral(lib.Digest("x"))
 	_ = lib.LogAppend(lib.Digest("x"))`)
@@ -246,6 +262,8 @@ func LogAppend(value any) string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughAnySliceLocal(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -274,6 +292,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughKeyedAnySliceLocal(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -302,6 +322,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerForwardedAcrossBranch(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Log(lib.Digest("x"), false)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -333,6 +355,8 @@ func Log(value any, drop bool) string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerLocalAnyPassedToWrapper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -365,6 +389,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerAnySlicePassedToWrapper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -397,6 +423,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerKeyedAnySlicePassedToWrapper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -429,6 +457,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerNonVariadicAnySlicePassedToWrapper(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -462,6 +492,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughSwitch(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live(1)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -496,6 +528,8 @@ func Live(mode int) string {
 }
 
 func TestRepoDeadCodeDoesNotKeepFmtStringerFromDefaultSwitchOverwrite(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -531,6 +565,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeDoesNotKeepTupleSiblingFmtStringer(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -575,6 +611,8 @@ func Live() string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughTupleForwarder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live(lib.Digest("x"))`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -607,6 +645,8 @@ func Live(value any) string {
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughRange(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib

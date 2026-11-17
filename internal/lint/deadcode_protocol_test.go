@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsInterfaceAssertionMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
 
@@ -141,6 +143,8 @@ func (db *DuckDB) unusedPrivate() {}
 }
 
 func TestRepoDeadCodeKeepsMarshalPrefixedMethods(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Save(lib.State{Status: lib.StatusReady, Name: "x"})
 	_, _ = lib.Load(nil)`)
@@ -239,6 +243,8 @@ func Load(body []byte) (State, error) {
 }
 
 func TestRepoDeadCodeKeepsMarshalOnlyFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
 
@@ -278,6 +284,8 @@ func Render() ([]byte, error) {
 }
 
 func TestRepoDeadCodeDetectsExportedTypesVarsConstsFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -330,6 +338,8 @@ func Live() {
 }
 
 func TestRepoDeadCodeKeepsUnkeyedCompositeFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib

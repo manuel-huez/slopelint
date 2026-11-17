@@ -1,7 +1,7 @@
 # slopelint
 
 Go analyzer for redundant checks, repeated behavior, dead code, and overbuilt APIs,
-with size and comment checks for TypeScript and Python.
+with size, test, review, and similarity checks for TypeScript and Python.
 Built on `go/analysis`, with optional Codex descriptions for semantic similarity
 and Codex review of comments and dropped errors.
 Early-stage: expect breaking changes and conservative misses.
@@ -39,10 +39,24 @@ patterns cover none. Skipped: hidden, `node_modules`, `vendor`, and `testdata`
 directories, `.d.ts`, `.gen.ts`, `.min.` files, and files with `@generated`,
 `DO NOT EDIT`, or `Code generated` in the first 5 lines. A nested `go.mod`
 does not stop them. A syntax error fails the run, as a Go parse error does.
-These files get the size rules and [code review](#code-review) of comments
-and suppressions only. Test files (`*.test.ts`, `*.spec.ts`, `__tests__/`,
-`test_*.py`, `*_test.py`, `tests/`, `conftest.py`) get only the file limit, as
-Go test files do. Named functions include methods, `def`, and function values
+These files get the size rules, [code review](#code-review), and
+[semantic similarity](#semantic-similarity). Test files (`*.test.ts`,
+`*.spec.ts`, `__tests__/`, `test_*.py`, `*_test.py`, `tests/`, `conftest.py`)
+get the file limit, as Go test files do, and two test rules:
+
+- `test_sleep`: an awaited real wait (`setTimeout` promise, `sleep`, `delay`,
+  `setTimeout` from `node:timers/promises`, `waitForTimeout`, `Bun.sleep`,
+  `Bun.sleepSync`), or `time.sleep`/`asyncio.sleep`. A literal zero delay only
+  yields. A TypeScript file that calls `useFakeTimers` is exempt, as Go files
+  that use `testing/synctest` are; a Python file that patches `time.sleep` or
+  `asyncio.sleep` is exempt for that function. freezegun and time-machine do
+  not count: they fake the clock, not sleep.
+- `test_focused` (TypeScript only): `.only` on `describe`/`it`/`test`/`suite`,
+  `fit`, or `fdescribe`.
+
+`test_no_assertion` is Go only: in TypeScript and Python an exception fails a
+test, and real tests without an assertion construct were deliberate
+"does not throw" checks. Named functions include methods, `def`, and function values
 bound to a name, also through a curried wrapper such as
 `Effect.fn("f")(function* () {})`; other function values and lambdas are
 literals. Classes own methods for `god_receiver`.
@@ -71,7 +85,10 @@ and `-flags` (list flags as JSON). These select analyzer mode.
 
 ## Semantic similarity
 
-Local scans compare named functions with at least 50 Go tokens. Generated files
+Local scans compare named functions with at least 50 Go tokens, and
+TypeScript and Python functions, methods, and test calls of that size, by
+source embedding only; the description channel below covers Go only. Script
+pairs never cross languages, and a directory stands in for a package. Generated files
 and function literals are excluded. Comparisons cover the same file, package,
 and immediate sibling or parent-child packages. Large functions use overlapping
 chunks without truncation; connected matches produce one grouped finding.
@@ -131,6 +148,15 @@ sent to the configured Codex service.** Items:
   closure, or address-taken are not judged.
 - Runnable test functions, `func TestXxx(t *testing.T)` in `_test.go` files, whole.
   `TestMain`, benchmarks, fuzz tests, and examples are not judged.
+- TypeScript `catch` clauses and promise `.catch(fn)` callbacks, and Python
+  `except` clauses and `contextlib.suppress` blocks, in production files,
+  unless they raise again on every path. Each is judged in its outermost
+  function, apart from comments.
+- TypeScript `test`/`it` calls with a callback (not `.skip`/`.todo`) and Python
+  `test*` functions and `Test*`/`TestCase` methods in `test*.py`/`*_test.py`,
+  each with its suite or class header lines and setup hooks.
+- The `//slopelint:serial <reason>` marker of such a test, judged alone: the
+  reason must name shared state the test races on.
 
 The model returns one verdict and one sentence of advice per item. The finding
 message is that advice: `comment_noise` (restates code), `comment_excuse`
@@ -138,9 +164,11 @@ message is that advice: `comment_noise` (restates code), `comment_excuse`
 (explains code a rename or restructure would clarify), `swallowed_error`,
 `test_trivial` (can fail only if a constant, literal, default, getter, or the
 test's own setup changes), `test_mock_only` (asserts only calls to or values
-from fakes), and `test_wasteful` (real waits, repeated runs, or oversized
-fixtures the checked behavior does not need). The model sees only the test, so it
-accepts a test when the verdict depends on production code it cannot see.
+from fakes), `test_wasteful` (real waits, repeated runs, or oversized
+fixtures the checked behavior does not need), and `test_serial_excuse` (a
+generic serial reason, or one naming state the test does not touch or could
+isolate). The model sees only the test, so it
+accepts a test or serial reason when the verdict depends on code it cannot see.
 A doc comment on an unexported declaration must add something the name,
 signature, and body do not show, such as a reason, constraint, ordering, or
 result contract. The prompt prefers accepting an item when unsure.
@@ -152,7 +180,7 @@ missing, the run warns and writes a stamp without review, which CI rejects unles
 `SLOPELINT_CODEX_DESCRIPTIONS=off`.
 
 Verdicts are cached per declaration, keyed by prompt version, model, effort,
-source, and items; each language has its own prompt version; unchanged declarations cause no model calls. Records accepted
+source, and items; each language and rule family has its own prompt version; unchanged declarations cause no model calls. Records accepted
 before a failure or SIGINT stay cached.
 
 ### Embedding server
@@ -200,14 +228,14 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Redundant collection guards, loops, and aliases | `append_ceremony`, `loop_ceremony`, `temp_alias` |
 | Loop performance traps | `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` |
 | Wrappers, repeated normalization, and comments that restate names | `trivial_wrapper`, `normalization_ceremony`, `serialization_ceremony`, `comment_noise` |
-| Codex [code review](#code-review) of comments, dropped errors, and tests | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error`, `test_trivial`, `test_mock_only`, `test_wasteful` |
+| Codex [code review](#code-review) of comments, dropped errors, and tests | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error`, `test_trivial`, `test_mock_only`, `test_wasteful`, `test_serial_excuse` |
 | Repeated function or block behavior | `behavior_clone`, `semantic_duplicate` |
 | Overbuilt APIs and signatures | `abstraction_overkill`, `api_overkill`, `result_wrapper`, `generic_naming`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple` |
 | Error panics and sentinel breaks | `prod_must_panic`, `sentinel_error_break` |
 | Unreachable declarations | `dead_code` |
 | Declaration grouping | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` |
 | Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results (Go only); types or classes over 40 methods; also for [TypeScript and Python](#languages) | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list`, `god_receiver` |
-| Test structure and support code | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_no_assertion`, `test_sleep`, `test_support_filename` |
+| Test structure and support code | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_no_assertion`, `test_not_parallel`, `test_sleep`, `test_focused`, `test_support_filename` |
 | Invalid contracts and stale suppressions | `invalid_contract`, `stale_complexity_suppression` |
 
 Path analysis tracks nil, string, length, boolean, enum, and no-argument `IsX()`
@@ -229,6 +257,16 @@ blocks. Intentional clones need an attached reason:
 
 ```go
 //slopelint:ignore behavior_clone -- separate protocol boundary
+```
+
+`test_not_parallel` reports a runnable test that does not call `t.Parallel()`
+in its body or in a same-package helper given `t`; tests that use `t.Setenv` or
+`t.Chdir` are exempt. A serial test needs a reason in its doc comment, which
+[code review](#code-review) judges. A marker without a reason, or on a parallel
+or exempt test, is reported:
+
+```go
+//slopelint:serial SetMutableBanner writes the package-level banner
 ```
 
 Production dead-code checks ignore test references. A full module-root `./...`

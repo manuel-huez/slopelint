@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsSingleUseTempAlias(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -34,6 +36,8 @@ func f(req Req) {
 }
 
 func TestDetectsRedundantAppendLenGuard(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -62,6 +66,8 @@ func f(dst []int, src []int) []int {
 }
 
 func TestSkipsAppendLenGuardWhenBodyDoesMore(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -84,6 +90,8 @@ func f(dst []int, src []int) []int {
 }
 
 func TestDetectsRedundantRangeLenGuard(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -112,6 +120,8 @@ func f(items []string) {
 }
 
 func TestDetectsRedundantRangeNilLenGuard(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -136,6 +146,8 @@ func f(items []string) {
 }
 
 func TestDetectsRedundantRangeNilGuard(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -160,6 +172,8 @@ func f(items map[string]int) {
 }
 
 func TestSkipsRangeLenGuardForChannel(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -181,6 +195,8 @@ func f(items chan int) {
 }
 
 func TestDetectsEmptyReturnGuardBeforeFinalRange(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -207,6 +223,8 @@ func f(items []string) {
 }
 
 func TestDetectsNilLenReturnGuardBeforeFinalRange(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -233,6 +251,8 @@ func f(items []string) {
 }
 
 func TestSkipsEmptyReturnGuardBeforeRangeWhenFunctionReturnsValue(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -258,6 +278,8 @@ func f(items []string) int {
 }
 
 func TestDetectsRepeatedIsPredicateSubexpression(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -292,6 +314,8 @@ func f(coverage coverage, requested coverage) {
 }
 
 func TestInvalidatesCopiedIsPredicateAfterFieldWrite(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -325,6 +349,8 @@ func f(coverage coverage) {
 }
 
 func TestDetectsDuplicateAdjacentRangeLoops(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -355,6 +381,8 @@ func f(values []string) {
 }
 
 func TestSkipsTempAliasWhenNameAddsMeaning(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -375,6 +403,8 @@ func f(req Req) {
 }
 
 func TestSkipsTempAliasWhenDeclarationHasComment(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -395,6 +425,8 @@ func f(req Req) {
 }
 
 func TestSkipsTempAliasWhenValueReadMultipleTimes(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -416,6 +448,8 @@ func f(req Req) {
 }
 
 func TestSkipsTempAliasAcrossSourceMutation(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -437,6 +471,8 @@ func f(req *Req) {
 }
 
 func TestSkipsAdjacentRangeLoopsOverDifferentSources(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

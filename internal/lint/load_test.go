@@ -80,6 +80,8 @@ const (
 )
 
 func TestRepositoryTestSupportRoleTracksImportersAndCache(t *testing.T) {
+	t.Parallel()
+
 	dir := newTestSupportModule(t)
 
 	var (
@@ -196,6 +198,8 @@ func TestRepositoryTestSupportRoleTracksImportersAndCache(t *testing.T) {
 }
 
 func TestTestSupportFilenamesTrackRenamesWithoutSuppressingProduction(t *testing.T) {
+	t.Parallel()
+
 	dir := newTestSupportModule(t)
 	writeFile(
 		t,

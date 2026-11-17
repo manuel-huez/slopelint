@@ -7,6 +7,8 @@ import (
 )
 
 func TestRangeLoopDoesNotKeepInitialNilFactAcrossIterations(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -31,6 +33,8 @@ func f(values []int) {
 }
 
 func TestRangeLoopLocalHelperWriteInvalidatesAfterLoopFact(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -77,6 +81,8 @@ func f(values []int) error {
 }
 
 func TestRangeLoopTracksLocalHelperClosureWrites(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -132,6 +138,8 @@ func f(values []int) {
 }
 
 func TestRangeLoopDoesNotDiscardBodyEffectsAtExit(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -157,6 +165,8 @@ func f(values []string) {
 }
 
 func TestRangeLoopExitStatesStayUnknownAfterLocalHelperWrites(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -203,6 +213,8 @@ func f(values []int) error {
 }
 
 func TestRunAnalysisRangeLoopDoesNotKeepInitialFacts(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -232,6 +244,8 @@ func f(values []string) {
 }
 
 func TestStateHashIncludesAliasAndBindingsWithoutFacts(t *testing.T) {
+	t.Parallel()
+
 	empty := newState()
 	withAlias := linkAlias(newState(), "pkg:a:1", "pkg:b:2")
 

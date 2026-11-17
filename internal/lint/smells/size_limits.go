@@ -22,8 +22,9 @@ const (
 // the size, and splitting first would spread dead code across new owners.
 const sizeLimitDeleteFirst = "first delete code that is no longer needed (legacy compatibility layers, redundant checks, defensive code for cases that cannot happen)"
 
-// SizeFinding is one size-limit finding in files[File] of a CheckSizes call.
-type SizeFinding struct {
+// OutlineFinding is one finding on outlines: in files[File] of a CheckSizes
+// call, or in the file of a CheckScriptTests call.
+type OutlineFinding struct {
 	File    int
 	Pos     outline.Pos
 	Kind    string
@@ -33,8 +34,8 @@ type SizeFinding struct {
 // CheckSizes reports size limits for files that share method owners: one Go
 // package, or one TypeScript or Python file. Test files get only the file
 // limit; generated files get none but still declare types.
-func CheckSizes(files []outline.File) []SizeFinding {
-	var findings []SizeFinding
+func CheckSizes(files []outline.File) []OutlineFinding {
+	var findings []OutlineFinding
 
 	methods := make(map[string]int)
 	methodFiles := make(map[string]map[int]struct{})
@@ -45,7 +46,7 @@ func CheckSizes(files []outline.File) []SizeFinding {
 		}
 
 		if file.Lines > ownerFileLineLimit {
-			findings = append(findings, SizeFinding{
+			findings = append(findings, OutlineFinding{
 				File: index,
 				Pos:  file.Start,
 				Kind: "oversized_owner_file",
@@ -61,7 +62,7 @@ func CheckSizes(files []outline.File) []SizeFinding {
 		}
 
 		for _, fn := range file.Funcs {
-			for _, finding := range funcSizeFindings(fn) {
+			for _, finding := range funcOutlineFindings(fn) {
 				finding.File = index
 				findings = append(findings, finding)
 			}
@@ -81,14 +82,12 @@ func CheckSizes(files []outline.File) []SizeFinding {
 	return append(findings, godReceiverFindings(files, methods, methodFiles)...)
 }
 
-// godReceiverFindings reports types of non-test files whose method count,
-// gathered across files, passes the limit.
 func godReceiverFindings(
 	files []outline.File,
 	methods map[string]int,
 	methodFiles map[string]map[int]struct{},
-) []SizeFinding {
-	var findings []SizeFinding
+) []OutlineFinding {
+	var findings []OutlineFinding
 
 	for index, file := range files {
 		for _, typ := range file.Types {
@@ -96,7 +95,7 @@ func godReceiverFindings(
 				continue
 			}
 
-			findings = append(findings, SizeFinding{
+			findings = append(findings, OutlineFinding{
 				File: index,
 				Pos:  typ.Pos,
 				Kind: "god_receiver",
@@ -113,13 +112,13 @@ func godReceiverFindings(
 	return findings
 }
 
-func funcSizeFindings(fn outline.Func) []SizeFinding {
-	var findings []SizeFinding
+func funcOutlineFindings(fn outline.Func) []OutlineFinding {
+	var findings []OutlineFinding
 
 	report := func(kind, format string, args ...any) {
 		findings = append(
 			findings,
-			SizeFinding{Pos: fn.Pos, Kind: kind, Message: fmt.Sprintf(format, args...)},
+			OutlineFinding{Pos: fn.Pos, Kind: kind, Message: fmt.Sprintf(format, args...)},
 		)
 	}
 

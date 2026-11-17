@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsFieldsSetByJSONDecoder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -68,6 +70,8 @@ func Load(reader io.Reader) error {
 }
 
 func TestRepoDeadCodeUsesXMLIgnoreTagsForXMLDecoder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -102,6 +106,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeUsesYAMLIgnoreTagsForYAMLDecoder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newYAMLTestModule(t)
 	writeFile(t, filepath.Join(tmp, "yaml", "yaml.go"), `package yaml
 
@@ -140,6 +146,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeReportsFieldsPassedToLocalDecode(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	lib.Run()`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -176,6 +184,8 @@ func Run() {
 }
 
 func TestRepoDeadCodeKeepsFieldsSetByGenericJSONDecoder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live(nil)`)
 	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec
@@ -226,6 +236,8 @@ func Live(body []byte) error {
 }
 
 func TestRepoDeadCodeKeepsFieldsSetByGenericReceiverJSONDecoder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live(nil)`)
 	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec
@@ -273,6 +285,8 @@ func Live(body []byte) error {
 }
 
 func TestRepoDeadCodeInspectsGenericDecoderCalledFromRootPackage(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
 
@@ -319,6 +333,8 @@ func Each[T any](body []byte, emit func(T) error) error {
 }
 
 func TestRepoDeadCodeReportsFieldsPassedAsNonPointerGenericDecodeTarget(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live(nil)`)
 	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec
@@ -362,6 +378,8 @@ func Live(body []byte) error {
 }
 
 func TestRepoDeadCodeReportsFieldsPassedToExternalGenericJSONNonDecoder(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -415,6 +433,8 @@ func Live() {
 }
 
 func TestRepoDeadCodeReportsFieldsReturnedByExternalGenericDecodeID(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -465,6 +485,8 @@ func Live() {
 }
 
 func TestRepoDeadCodeKeepsFieldsReturnedByExternalGenericDecodeJSON(t *testing.T) {
+	t.Parallel()
+
 	tmp := newJSONCodecTestModule(t)
 	writeFile(t, filepath.Join(tmp, "jsoncodec", "jsoncodec.go"), `package jsoncodec
 
@@ -532,6 +554,8 @@ func Live(body []byte) error {
 }
 
 func TestRepoDeadCodeKeepsExternalGoccyJSONGenericDecodeContextHooks(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -650,6 +674,8 @@ func parseCustom(context.Context, []byte) error {
 }
 
 func TestRepoDeadCodeKeepsFieldsSetByDelegatedGenericJSONDecoder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live(nil)`)
 	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec
@@ -707,6 +733,8 @@ func Live(body []byte) error {
 }
 
 func TestRepoDeadCodeStopsAtCustomJSONUnmarshalHook(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -761,6 +789,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeKeepsFieldsDecodedThroughCustomJSONUnmarshalAlias(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -817,6 +847,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeReportsOriginalFieldsWhenWireAliasIsDecoded(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -863,6 +895,8 @@ func Load(body []byte) error {
 }
 
 func TestRepoDeadCodeReportsGenericJSONTypeArgsWhenBodyDoesNotDecode(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Live()`)
 	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec

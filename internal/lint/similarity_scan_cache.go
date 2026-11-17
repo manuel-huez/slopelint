@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 const (
@@ -289,7 +291,7 @@ func validSimilarityCachedBlock(
 		return false
 	}
 
-	if descriptions {
+	if descriptions && similarityDescribed(block.RelativePath) {
 		return block.DescriptionVectorCount > 0 &&
 			similarityStringsPresent(block.Description, block.DescriptionHash) &&
 			len(block.DescriptionHash) == sha256.Size*2
@@ -328,7 +330,7 @@ func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
 	}
 
 	return block.Identity == block.RelativePath+"::"+block.Symbol &&
-		block.IsTest == strings.HasSuffix(block.RelativePath, "_test.go") &&
+		block.IsTest == outline.TestFile(block.RelativePath) &&
 		block.PackageDir == packageDir
 }
 
@@ -654,7 +656,7 @@ func (cache similarityScanCache) blocksForFile(
 				Line:     cached.Line,
 				Column:   cached.Column,
 			},
-			IsTest: strings.HasSuffix(currentPath, "_test.go"),
+			IsTest: outline.TestFile(currentPath),
 			// Shingles are cheap to rebuild and were half of each stored snapshot.
 			Structural:             structuralShingles(normalizedSimilarityTokens(cached.Content)),
 			VectorCount:            cached.VectorCount,

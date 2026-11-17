@@ -7,6 +7,8 @@ import (
 )
 
 func TestRepoDeadCodeKeepsBranchAssignedGenericCallbackDecodeFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil, true)`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
@@ -62,6 +64,8 @@ func runVisit(body []byte, visit func([]byte) error) error {
 }
 
 func TestRepoDeadCodeKeepsSwitchAssignedGenericCallbackDecodeFields(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_ = lib.Load(nil, "primary")`)
 	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib

@@ -186,7 +186,7 @@ func (runtime *similarityEmbeddingRuntime) populateDescriptions(
 	blockInputs := make([][]*similarityVectorInput, len(blocks))
 	for index, block := range blocks {
 		blockInputs[index] = byBlock[block]
-		if len(blockInputs[index]) == 0 {
+		if len(blockInputs[index]) == 0 && similarityDescribed(block.RelativePath) {
 			return similarityVectorMatrix{}, fmt.Errorf(
 				"description missing for %s",
 				block.Identity,

@@ -27,6 +27,7 @@ const (
 	codeReviewCommentItem = "comment"
 	codeReviewErrorItem   = "dropped_error"
 	codeReviewTestItem    = "test"
+	codeReviewSerialItem  = "serial"
 
 	codeReviewAdviceMaxChars = 240
 	codeReviewAdviceMinWords = 4
@@ -42,24 +43,27 @@ type codeReviewPolicy struct {
 	// item omit it, so changing those rules keeps comment and dropped-error
 	// records.
 	TestSchema int `json:"test_schema,omitempty"`
-	// TypeScriptSchema and PythonSchema version those languages' prompts.
-	// Each request keeps only its own language's version, so Go keys stay
-	// as they were and one language's change keeps the others' records.
-	TypeScriptSchema int    `json:"typescript_schema,omitempty"`
-	PythonSchema     int    `json:"python_schema,omitempty"`
-	Model            string `json:"model"`
-	Effort           string `json:"effort"`
+	// TypeScriptSchema and PythonSchema version those languages' comment and
+	// suppression rules. Each request keeps only its own language's version,
+	// so Go keys stay as they were and one language's change keeps the
+	// others' records.
+	TypeScriptSchema  int    `json:"typescript_schema,omitempty"`
+	PythonSchema      int    `json:"python_schema,omitempty"`
+	ScriptErrorSchema int    `json:"script_error_schema,omitempty"`
+	ScriptTestSchema  int    `json:"script_test_schema,omitempty"`
+	Model             string `json:"model"`
+	Effort            string `json:"effort"`
 }
 
 // codeReviewPolicyVersion must be bumped for any change to the comment,
-// suppression, or dropped-error rules: their prompt text, the output schema,
-// which comments are judged here, and which dropped errors the smells
-// candidate pass reports.
+// suppression, or dropped-error rules: their prompt text, their verdicts in
+// the output schema, which comments are judged here, and which dropped errors
+// the smells candidate pass reports.
 const codeReviewPolicyVersion = 8
 
-// codeReviewTestPolicyVersion must be bumped for any change to the test rules
-// in the prompt or to which test functions are judged.
-const codeReviewTestPolicyVersion = 1
+// codeReviewTestPolicyVersion must be bumped for any change to the test and
+// serial-marker rules in the prompt or to which test functions are judged.
+const codeReviewTestPolicyVersion = 2
 
 // codeReviewScriptPolicyVersions must be bumped for any change to that
 // language's prompt text, or to which comments and declaration lines the
@@ -69,41 +73,60 @@ const (
 	codeReviewPythonPolicyVersion     = 4
 )
 
+// codeReviewScriptErrorPolicyVersion must be bumped for any change to the
+// caught-error rules in the script prompt or to which handlers the outline
+// reports.
+const codeReviewScriptErrorPolicyVersion = 3
+
+// codeReviewScriptTestPolicyVersion must be bumped for any change to the test
+// rules in the script prompt or to which tests and context lines the outline
+// gives it.
+const codeReviewScriptTestPolicyVersion = 3
+
 var codeReviewCurrentPolicy = codeReviewPolicy{
-	Schema:           codeReviewPolicyVersion,
-	TestSchema:       codeReviewTestPolicyVersion,
-	TypeScriptSchema: codeReviewTypeScriptPolicyVersion,
-	PythonSchema:     codeReviewPythonPolicyVersion,
-	Model:            "gpt-6.1-terra",
-	Effort:           "low",
+	Schema:            codeReviewPolicyVersion,
+	TestSchema:        codeReviewTestPolicyVersion,
+	TypeScriptSchema:  codeReviewTypeScriptPolicyVersion,
+	PythonSchema:      codeReviewPythonPolicyVersion,
+	ScriptErrorSchema: codeReviewScriptErrorPolicyVersion,
+	ScriptTestSchema:  codeReviewScriptTestPolicyVersion,
+	Model:             "gpt-6.1-terra",
+	Effort:            "low",
 }
 
 const (
-	codeReviewKeep      = "keep"
-	codeReviewRestates  = "restates"
-	codeReviewExcuse    = "excuse"
-	codeReviewCrutch    = "crutch"
+	codeReviewKeep     = "keep"
+	codeReviewRestates = "restates"
+	codeReviewExcuse   = "excuse"
+	codeReviewCrutch   = "crutch"
+
 	codeReviewHandled   = "handled"
 	codeReviewSwallowed = "swallowed"
-	codeReviewSound     = "sound"
-	codeReviewTrivial   = "trivial"
-	codeReviewMockOnly  = "mock_only"
-	codeReviewWasteful  = "wasteful"
+
+	codeReviewSound    = "sound"
+	codeReviewTrivial  = "trivial"
+	codeReviewMockOnly = "mock_only"
+	codeReviewWasteful = "wasteful"
+
+	codeReviewSerialOK     = "serial_ok"
+	codeReviewSerialExcuse = "serial_excuse"
 )
 
 // codeReviewFindingKinds maps each verdict to its finding kind. Verdicts
 // without a kind accept the item.
 var codeReviewFindingKinds = map[string]string{
-	codeReviewKeep:      "",
-	codeReviewRestates:  "comment_noise",
-	codeReviewExcuse:    "comment_excuse",
-	codeReviewCrutch:    "comment_crutch",
-	codeReviewHandled:   "",
-	codeReviewSwallowed: "swallowed_error",
-	codeReviewSound:     "",
-	codeReviewTrivial:   "test_trivial",
-	codeReviewMockOnly:  "test_mock_only",
-	codeReviewWasteful:  "test_wasteful",
+	codeReviewKeep:         "",
+	codeReviewRestates:     "comment_noise",
+	codeReviewExcuse:       "comment_excuse",
+	codeReviewCrutch:       "comment_crutch",
+	codeReviewHandled:      "",
+	codeReviewSwallowed:    "swallowed_error",
+	codeReviewSound:        "",
+	codeReviewTrivial:      "test_trivial",
+	codeReviewMockOnly:     "test_mock_only",
+	codeReviewWasteful:     "test_wasteful",
+	codeReviewSerialOK:     "",
+	codeReviewSerialExcuse: "test_serial_excuse",
 }
 
 var codeReviewVerdicts = map[string][]string{
@@ -115,6 +138,7 @@ var codeReviewVerdicts = map[string][]string{
 		codeReviewMockOnly,
 		codeReviewWasteful,
 	},
+	codeReviewSerialItem: {codeReviewSerialOK, codeReviewSerialExcuse},
 }
 
 // codeReviewer returns only records validated against their requests.
@@ -631,21 +655,33 @@ func numberedCodeReviewSource(lines []string) string {
 // schema, or model change selects new records instead of deleting old ones.
 // forRequest returns the policy parts that decide this request's verdicts.
 func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewPolicy {
-	if !slices.ContainsFunc(request.Items, func(item codeReviewItem) bool {
-		return item.Kind == codeReviewTestItem
-	}) {
+	has := func(kind string) bool {
+		return slices.ContainsFunc(request.Items, func(item codeReviewItem) bool {
+			return item.Kind == kind
+		})
+	}
+
+	if request.Language != outline.Go || !has(codeReviewTestItem) {
 		policy.TestSchema = 0
 	}
 
-	if request.Language == outline.TypeScript || request.Language == outline.Python {
+	if request.Language != outline.Go {
 		policy.Schema = 0
 	}
 
-	if request.Language != outline.TypeScript {
+	if request.Language == outline.Go || !has(codeReviewErrorItem) {
+		policy.ScriptErrorSchema = 0
+	}
+
+	if request.Language == outline.Go || !has(codeReviewTestItem) {
+		policy.ScriptTestSchema = 0
+	}
+
+	if request.Language != outline.TypeScript || !has(codeReviewCommentItem) {
 		policy.TypeScriptSchema = 0
 	}
 
-	if request.Language != outline.Python {
+	if request.Language != outline.Python || !has(codeReviewCommentItem) {
 		policy.PythonSchema = 0
 	}
 

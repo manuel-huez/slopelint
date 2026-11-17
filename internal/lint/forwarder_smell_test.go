@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsIsPredicateWithNonBoolSignature(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -31,6 +33,8 @@ func IsReady() int {
 }
 
 func TestDetectsTrivialForwarder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -62,6 +66,8 @@ func use(name string) bool {
 }
 
 func TestDetectsTrivialForwarderAssignReturn(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -89,6 +95,8 @@ func use(name string) bool {
 }
 
 func TestDetectsTrivialForwarderVarReturn(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -117,6 +125,8 @@ func use(name string) bool {
 }
 
 func TestDetectsTrivialForwarderToImportedFunction(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -144,6 +154,8 @@ func use(value string) error {
 }
 
 func TestDetectsTrivialForwarderDespiteTestCallsite(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -180,6 +192,8 @@ func TestRun(t *testing.T) {
 }
 
 func TestDetectsTrivialForwarderWithParamMethodAdapter(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -213,6 +227,8 @@ func use(scope CacheScope) error {
 }
 
 func TestDetectsTrivialForwarderWithParamFieldAndConversionAdapters(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -248,6 +264,8 @@ func use(req request, code CurrencyCode) error {
 }
 
 func TestSkipsTrivialForwarderWithReorderedAdapterArgs(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -283,6 +301,8 @@ func use(req request, code CurrencyCode) error {
 }
 
 func TestSkipsTrivialForwarderWhenReturnOrderChanges(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -308,6 +328,8 @@ func use(name string) bool {
 }
 
 func TestSkipsTrivialForwarderWhenVarAddsExplicitType(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -341,6 +363,8 @@ func use(name string) bool {
 }
 
 func TestDetectsShortTrivialForwarderWithMultipleCallsites(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -369,6 +393,8 @@ func b(name string) bool { return run(name) }
 }
 
 func TestSkipsUnusedPrivateTrivialForwarder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -388,6 +414,8 @@ func run(name string) bool {
 }
 
 func TestSkipsLongTrivialForwarderWithMultipleCallsites(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -419,6 +447,8 @@ func b(name string) bool { return run("", name, "") }
 }
 
 func TestDetectsPrivateTrivialForwarderMethod(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -447,6 +477,8 @@ func use(r runner) bool { return r.run() }
 }
 
 func TestDetectsExportedTrivialForwarderMethodWithoutPrivateReceiverUse(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -474,6 +506,8 @@ func b(r Runner) bool { return r.Run("b") }
 }
 
 func TestDetectsDocumentedExportedTrivialForwarderMethod(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -502,6 +536,8 @@ func b(r Runner) bool { return r.Run("b") }
 }
 
 func TestSkipsExportedTrivialForwarderMethodWithPrivateReceiverField(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -528,6 +564,8 @@ func b(r Runner) bool { return r.Run() }
 }
 
 func TestSkipsExportedTrivialForwarderMethodWithPrivateReceiverMethod(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -561,6 +599,8 @@ func b(r Runner) bool { return r.Run() }
 }
 
 func TestSkipsExportedCodecHookForwarderMethod(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -586,6 +626,8 @@ func encode(p Payload) ([]byte, error) {
 }
 
 func TestDetectsRestatementComment(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -611,6 +653,8 @@ func validateUser(name string) bool {
 }
 
 func TestSkipsRestatementCommentWhenIntentAdded(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

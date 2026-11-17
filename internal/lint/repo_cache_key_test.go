@@ -8,6 +8,8 @@ import (
 )
 
 func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	sourcePath := filepath.Join(tmp, "sample.go")
 	source := "package sample\n"
@@ -67,6 +69,8 @@ func TestRepoAnalysisGitDigestTracksLintInputs(t *testing.T) {
 }
 
 func TestRepoAnalysisGitDigestSkipsIgnoredGoTreesAndNestedModules(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
 	writeFile(t, filepath.Join(tmp, ".gitignore"), ".cache/\nbackup/\n")
@@ -92,6 +96,8 @@ func TestRepoAnalysisGitDigestSkipsIgnoredGoTreesAndNestedModules(t *testing.T) 
 }
 
 func TestRepoAnalysisGitDigestTracksIgnoredReplacementSource(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(
 		t,
@@ -122,6 +128,8 @@ func TestRepoAnalysisGitDigestTracksIgnoredReplacementSource(t *testing.T) {
 }
 
 func TestRepoAnalysisGitDigestTracksEmbeddedFile(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(
 		t,
@@ -149,6 +157,8 @@ func TestRepoAnalysisGitDigestTracksEmbeddedFile(t *testing.T) {
 }
 
 func TestLintRepositoryCacheTracksIgnoredGoFiles(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		before string
@@ -241,6 +251,8 @@ func TestLintRepositoryCacheTracksIgnoredGoFiles(t *testing.T) {
 }
 
 func TestRepoAnalysisGitDigestStableAcrossCommits(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	sourcePath := filepath.Join(tmp, "sample.go")
 	writeFile(t, sourcePath, "package sample\n")
@@ -279,6 +291,8 @@ func TestRepoAnalysisGitDigestStableAcrossCommits(t *testing.T) {
 }
 
 func TestRepoAnalysisCacheKeyStableAcrossClones(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
 	initTestGitRepository(t, tmp)
@@ -407,6 +421,8 @@ func repoAnalysisSourceDigestForTest(
 }
 
 func TestRepoAnalysisSubmoduleSupportFollowsGoDirectoryRules(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n")
 	head := initTestGitRepository(t, tmp)

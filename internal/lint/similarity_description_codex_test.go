@@ -266,6 +266,8 @@ func TestSimilarityDescriptionBatchesRespectBytesWithoutTruncation(t *testing.T)
 
 // The child process exercises the real CLI transport without provider access.
 func TestSimilarityCodexProcess(t *testing.T) {
+	t.Parallel()
+
 	endpoint := os.Getenv("SLOPELINT_TEST_CODEX_ENDPOINT")
 	if endpoint == "" {
 		return

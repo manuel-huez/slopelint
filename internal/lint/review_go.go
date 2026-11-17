@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
 
 func collectGoCodeReviewDeclarations(
@@ -112,6 +113,7 @@ func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration
 			},
 			position: position,
 		})
+		items = append(items, source.serialItems(doc, startLine)...)
 	}
 
 	if len(items) == 0 {
@@ -130,16 +132,65 @@ func (source codeReviewSource) commentItems(startLine, endLine int) []codeReview
 	var groups []codeReviewCommentGroup
 
 	for _, group := range source.file.Comments {
-		if codeReviewHasItem(group) {
-			groups = append(groups, codeReviewCommentGroup{
-				position:    source.position(group.Pos()),
-				lastLine:    source.position(group.End()).Line,
-				suppression: codeReviewSuppression(group.List[0].Text),
-			})
+		if !codeReviewHasItem(group) {
+			continue
 		}
+
+		// A serial marker at either end of a group is judged as its test's
+		// serial item, so the comment item leaves it out.
+		comments := group.List
+		for serialMarkerComment(comments[0]) {
+			comments = comments[1:]
+		}
+
+		for serialMarkerComment(comments[len(comments)-1]) {
+			comments = comments[:len(comments)-1]
+		}
+
+		groups = append(groups, codeReviewCommentGroup{
+			position:    source.position(comments[0].Pos()),
+			lastLine:    source.position(comments[len(comments)-1].End()).Line,
+			suppression: codeReviewSuppression(comments[0].Text),
+		})
 	}
 
 	return codeReviewCommentItems(groups, startLine, endLine)
+}
+
+// serialItems returns the first //slopelint:serial marker with a reason in a
+// test's doc comment; the static rule reports a marker without one.
+func (source codeReviewSource) serialItems(
+	doc *ast.CommentGroup,
+	startLine int,
+) []codeReviewPositionedItem {
+	if doc == nil {
+		return nil
+	}
+
+	for _, comment := range doc.List {
+		if reason, ok := smellcheck.SerialMarker(comment.Text); ok && reason != "" {
+			position := source.position(comment.Pos())
+			line := position.Line - startLine + 1
+
+			return []codeReviewPositionedItem{
+				{
+					item: codeReviewItem{
+						Kind:  codeReviewSerialItem,
+						Lines: codeReviewLines(line, line),
+					},
+					position: position,
+				},
+			}
+		}
+	}
+
+	return nil
+}
+
+func serialMarkerComment(comment *ast.Comment) bool {
+	_, ok := smellcheck.SerialMarker(comment.Text)
+
+	return ok
 }
 
 func (source codeReviewSource) droppedErrorItems(

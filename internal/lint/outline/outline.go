@@ -38,6 +38,13 @@ type File struct {
 	Types     []Type
 	Comments  []Comment
 	Decls     []Decl
+	Handlers  []Handler
+	// Tests, Focused, and Sleeps describe test files: test cases, focused
+	// .only and fit calls, and real timer waits that no fake clock covers.
+	Tests   []Test
+	Focused []Pos
+	Sleeps  []Pos
+	Blocks  []Block
 }
 
 // Func is one function, method, or function literal.
@@ -79,6 +86,11 @@ type Decl struct {
 	EndLine   int
 }
 
+// Compare orders declarations by first line, for slices.SortFunc.
+func (decl Decl) Compare(other Decl) int {
+	return decl.StartLine - other.StartLine
+}
+
 // LanguageFor returns the language of a TypeScript or Python file that
 // slopelint lints, or "" for other files, including declaration files and
 // generated or minified bundles named by convention.
@@ -116,18 +128,23 @@ func generated(src []byte) bool {
 	return false
 }
 
-// testFile mirrors each ecosystem's test discovery: Jest and Vitest names
-// and __tests__ directories, pytest names, tests directories, and conftest.py.
-func testFile(name string, language Language) bool {
+// TestFile reports a test or test-support file. It mirrors each
+// ecosystem's test discovery: Go _test.go files, Jest and Vitest names and
+// __tests__ directories, pytest names, tests directories, and conftest.py.
+func TestFile(name string) bool {
 	name = strings.ReplaceAll(name, "\\", "/")
 	dirs := strings.Split(path.Dir(name), "/")
 	base := path.Base(name)
 
-	if language == TypeScript {
+	switch LanguageFor(name) {
+	case Go, "":
+		return strings.HasSuffix(base, "_test.go")
+	case TypeScript:
 		stem := strings.TrimSuffix(strings.TrimSuffix(base, ".tsx"), ".ts")
 
 		return strings.HasSuffix(stem, ".test") || strings.HasSuffix(stem, ".spec") ||
 			slices.Contains(dirs, "__tests__")
+	case Python:
 	}
 
 	return strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py") ||

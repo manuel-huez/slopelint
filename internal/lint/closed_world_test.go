@@ -8,6 +8,8 @@ import (
 )
 
 func TestRepoDeadCodeRequiresClosedWorld(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "cmd", "app", "main.go"), `package main
 
@@ -34,6 +36,8 @@ func PublicAPI() {}
 }
 
 func TestLintLoadedPackagesPreservesInputOrder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "a", "a.go"), "package a\n")
 	writeFile(t, filepath.Join(tmp, "b", "b.go"), "package b\n")

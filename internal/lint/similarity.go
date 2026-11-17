@@ -9,20 +9,20 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
-	"go/parser"
 	"go/scanner"
 	"go/token"
 	"hash/fnv"
-	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
-	"strings"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 const (
 	// Matching policy changes rescore findings without changing content-addressed vectors.
-	similaritySchema        = 12
+	similaritySchema        = 13
 	similarityMinimumBlocks = 2
 	// Immediate siblings and parent-child packages share refactor ownership.
 	// Deeper branches do not; skipping them bounds cold all-pairs work.
@@ -281,7 +281,7 @@ func analyzeChangedSimilarCode(
 		)
 	}
 
-	files, blocks, err := collectSimilarityBlocks(pkgs, check.root, previous)
+	files, blocks, err := collectSimilarityBlocks(pkgs, check.scripts, check.root, previous)
 	if err != nil {
 		return nil, similarityStamp{}, err
 	}
@@ -360,6 +360,7 @@ type similarityCheck struct {
 	root         string
 	sourceDigest string
 	stamp        similarityStamp
+	scripts      []string
 }
 
 func loadSimilarityCheck(pkgs []*LoadedPackage, scripts []string) (similarityCheck, error) {
@@ -378,7 +379,12 @@ func loadSimilarityCheck(pkgs []*LoadedPackage, scripts []string) (similarityChe
 		return similarityCheck{}, err
 	}
 
-	return similarityCheck{root: root, sourceDigest: sourceDigest, stamp: stamp}, nil
+	return similarityCheck{
+		root:         root,
+		sourceDigest: sourceDigest,
+		stamp:        stamp,
+		scripts:      scripts,
+	}, nil
 }
 
 func similarityMatchesForBlocks(
@@ -413,21 +419,26 @@ func similarityMatchesForBlocks(
 		)
 	}
 
-	scanBlocks := blocks
-
-	descriptionBlocks := blocks
+	scanBlocks, candidates := blocks, blocks
 	if previous.Schema != 0 {
 		scanBlocks = incrementalSimilarityScanBlocks(blocks, changed)
+		candidates = changedSimilarityBlocks(blocks, changed)
+	}
 
-		descriptionBlocks = changedSimilarityBlocks(blocks, changed)
-		if descriptionRuntime.enabled {
-			if err := reuseRenamedSimilarityDescriptions(
-				descriptionBlocks,
-				previous,
-				cacheRoot,
-			); err != nil {
-				return similarityScanResult{}, err
-			}
+	descriptionBlocks := slices.DeleteFunc(
+		slices.Clone(candidates),
+		func(block *similarityBlock) bool {
+			return !similarityDescribed(block.RelativePath)
+		},
+	)
+
+	if previous.Schema != 0 && descriptionRuntime.enabled {
+		if err := reuseRenamedSimilarityDescriptions(
+			descriptionBlocks,
+			previous,
+			cacheRoot,
+		); err != nil {
+			return similarityScanResult{}, err
 		}
 	}
 
@@ -647,117 +658,6 @@ func reviewSimilarityFindings(
 	return acceptances, issues, nil
 }
 
-func similaritySourceFiles(
-	pkgs []*LoadedPackage,
-	root string,
-) ([]similarityBlockSourceFile, error) {
-	filesByPath := make(map[string]similarityBlockSourceFile)
-
-	for _, pkg := range pkgs {
-		if pkg == nil {
-			continue
-		}
-
-		packageFiles, err := similarityPackageSourceFiles(pkg, root)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, file := range packageFiles {
-			if _, duplicate := filesByPath[file.relativePath]; !duplicate {
-				filesByPath[file.relativePath] = file
-			}
-		}
-	}
-
-	paths := make([]string, 0, len(filesByPath))
-	for path := range filesByPath {
-		paths = append(paths, path)
-	}
-
-	sort.Strings(paths)
-
-	files := make([]similarityBlockSourceFile, 0, len(paths))
-	for _, path := range paths {
-		files = append(files, filesByPath[path])
-	}
-
-	return files, nil
-}
-
-func similarityPackageSourceFiles(
-	pkg *LoadedPackage,
-	root string,
-) ([]similarityBlockSourceFile, error) {
-	syntax := make(map[string]*ast.File, len(pkg.Files))
-	for _, file := range pkg.Files {
-		if file != nil && pkg.FSet != nil {
-			filename := pkg.FSet.PositionFor(file.Package, true).Filename
-			syntax[filepath.Clean(filename)] = file
-		}
-	}
-
-	files := make([]similarityBlockSourceFile, 0, len(pkg.repoFiles))
-	for _, filename := range pkg.repoFiles {
-		absolutePath := filepath.Clean(filename)
-
-		relativePath, err := filepath.Rel(root, absolutePath)
-		if err != nil {
-			return nil, fmt.Errorf("resolve similarity path for %s: %w", filename, err)
-		}
-
-		relativePath = filepath.ToSlash(relativePath)
-		if !filepath.IsLocal(relativePath) {
-			return nil, fmt.Errorf("similarity source %s is outside module root", filename)
-		}
-
-		content, err := os.ReadFile(absolutePath)
-		if err != nil {
-			return nil, err
-		}
-
-		digest := sha256.Sum256(content)
-		files = append(files, similarityBlockSourceFile{
-			pkg:          pkg,
-			fset:         pkg.FSet,
-			file:         syntax[absolutePath],
-			absolutePath: absolutePath,
-			relativePath: relativePath,
-			contentHash:  hex.EncodeToString(digest[:]),
-		})
-	}
-
-	return files, nil
-}
-
-func collectSimilaritySourceFileBlocks(
-	source similarityBlockSourceFile,
-	root string,
-) ([]*similarityBlock, error) {
-	fset := source.fset
-	file := source.file
-
-	if file == nil || fset == nil {
-		fset = token.NewFileSet()
-
-		var err error
-
-		file, err = parser.ParseFile(fset, source.absolutePath, nil, parser.ParseComments)
-		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", source.absolutePath, err)
-		}
-	}
-
-	if ast.IsGenerated(file) {
-		return nil, nil
-	}
-
-	pkg := *source.pkg
-	pkg.FSet = fset
-
-	return collectSimilarityFileBlocks(&pkg, file, root)
-}
-
 func collectSimilarityFileBlocks(
 	pkg *LoadedPackage,
 	file *ast.File,
@@ -807,7 +707,7 @@ func collectSimilarityFileBlocks(
 			Content:      content,
 			ContentHash:  hex.EncodeToString(sum[:]),
 			Position:     pkg.FSet.Position(fn.Pos()),
-			IsTest:       strings.HasSuffix(relativePath, "_test.go"),
+			IsTest:       outline.TestFile(relativePath),
 			Structural:   structuralShingles(tokens),
 		})
 	}

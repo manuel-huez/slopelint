@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 type similarityScanJob struct {
@@ -154,7 +156,8 @@ func similarityMatchForPair(
 	right := blocks[rightIndex]
 
 	tier := similarityLocalityTier(left, right)
-	if tier > similarityMaximumLocalityTier {
+	if tier > similarityMaximumLocalityTier ||
+		similarityLanguage(left.RelativePath) != similarityLanguage(right.RelativePath) {
 		return similarityMatch{}, false
 	}
 
@@ -439,6 +442,23 @@ func similarityLocalityTier(left, right *similarityBlock) int {
 	rightDistance := len(rightParts) - common
 
 	return 1 + max(leftDistance, rightDistance)
+}
+
+// similarityLanguage is the language of a block file; TSX files are
+// TypeScript.
+func similarityLanguage(relativePath string) outline.Language {
+	if language := outline.LanguageFor(relativePath); language != "" {
+		return language
+	}
+
+	return outline.Go
+}
+
+// similarityDescribed reports a block file the description channel covers.
+// Its prompts describe Go, so TypeScript and Python blocks match by source
+// only.
+func similarityDescribed(relativePath string) bool {
+	return similarityLanguage(relativePath) == outline.Go
 }
 
 func similarityPathParts(path string) []string {

@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsRedundantJSONMarshalText(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -43,6 +45,8 @@ func (value Symbol) MarshalJSON() ([]byte, error) {
 }
 
 func TestSkipsJSONMarshalWhenNoMarshalText(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -68,6 +72,8 @@ func (value Status) MarshalJSON() ([]byte, error) {
 }
 
 func TestSkipsJSONMarshalWhenMarshalTextDiffersFromString(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -98,6 +104,8 @@ func (value Symbol) MarshalJSON() ([]byte, error) {
 }
 
 func TestDetectsRedundantTrimSpaceGuardReturn(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -128,6 +136,8 @@ func defaultName(name string) string {
 }
 
 func TestSkipsTrimSpaceGuardReturnWhenReturnDiffers(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -152,6 +162,8 @@ func defaultName(name string) string {
 }
 
 func TestSkipsRepeatedNormalizationAfterInputWrite(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -174,6 +186,8 @@ func normalize(name string) string {
 }
 
 func TestDetectsRepeatedNestedNormalizationCall(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -202,6 +216,8 @@ func complete(value string, candidates []string) []string {
 }
 
 func TestDetectsRepeatedNormalizationInFuncLiteral(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

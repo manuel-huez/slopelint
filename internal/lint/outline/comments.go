@@ -112,7 +112,15 @@ func (w *walker) finish(root *ts.Node) {
 		}
 	}
 
-	w.declarations(root, groups)
+	docs := leadingComments(groups)
+	w.declarations(root, docs)
+
+	for index := range w.file.Handlers {
+		unit := &w.file.Handlers[index].Unit
+		if start, ok := docs[unit.StartLine]; ok {
+			unit.StartLine = start
+		}
+	}
 
 	// A suppression outside every declaration, such as a file-wide
 	// `// @ts-nocheck`, is a declaration of its own so it is still judged.
@@ -127,15 +135,12 @@ func (w *walker) finish(root *ts.Node) {
 		}
 	}
 
-	slices.SortFunc(w.file.Decls, func(a, b Decl) int { return a.StartLine - b.StartLine })
+	slices.SortFunc(w.file.Decls, Decl.Compare)
 }
 
-// declarations records each top-level statement with the comment group
-// that ends on the line above it. Adjacent statements form one declaration,
-// as a Go import or var block does, so an import keeps the sys.path change
-// above it. A module docstring documents the file, as a Go package comment
-// does, so it starts none.
-func (w *walker) declarations(root *ts.Node, groups []commentGroup) {
+// leadingComments maps the line after each own-line comment group to the
+// group's first line.
+func leadingComments(groups []commentGroup) map[int]int {
 	docs := make(map[int]int)
 
 	for _, group := range groups {
@@ -145,6 +150,15 @@ func (w *walker) declarations(root *ts.Node, groups []commentGroup) {
 		}
 	}
 
+	return docs
+}
+
+// declarations records each top-level statement with the comment group
+// that ends on the line above it. Adjacent statements form one declaration,
+// as a Go import or var block does, so an import keeps the sys.path change
+// above it. A module docstring documents the file, as a Go package comment
+// does, so it starts none.
+func (w *walker) declarations(root *ts.Node, docs map[int]int) {
 	for index := range root.NamedChildCount() {
 		node := root.NamedChild(index)
 		if node.Type(w.grammar) == commentNode || node == w.moduleDoc {

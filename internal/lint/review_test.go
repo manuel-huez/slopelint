@@ -23,6 +23,7 @@ const (
 	reviewTestCrutchAdvice  = "Rename total to runningSum so the comment becomes unnecessary."
 	reviewTestSwallowAdvice = "Return lostErr to callers instead of silently using zero."
 	reviewTestTrivialAdvice = "Delete TestCountTrivial because it only checks its own literal."
+	reviewTestSerialAdvice  = "Name the shared state TestCountFlaky races on, or call t.Parallel."
 )
 
 const reviewTestSource = `package sample
@@ -228,10 +229,15 @@ func TestCountTrivial(t *testing.T) {
 func BenchmarkCount(b *testing.B) { Count(nil) }
 
 func Testcount(t *testing.T) { TestCount(t) }
+
+// TestCountFlaky keeps one count.
+//slopelint:serial excuse: flaky
+func TestCountFlaky(t *testing.T) { TestCount(t) }
 `
 
 // reviewTestModel answers from markers: comment text names its verdict,
-// lostErr is the only swallowed error, and only TestCountTrivial is trivial.
+// errors named lostErr are swallowed, only TestCountTrivial is trivial, and
+// only a flaky serial reason is an excuse.
 type reviewTestModel struct {
 	sync.Mutex
 	requests []codeReviewRequest
@@ -272,24 +278,20 @@ func (model *reviewTestModel) requestCount() int {
 }
 
 func reviewTestVerdict(item codeReviewItem, text string) codeReviewVerdict {
-	switch {
-	case item.Kind == codeReviewTestItem && strings.Contains(text, "TestCountTrivial"):
-		return codeReviewVerdict{Verdict: codeReviewTrivial, Advice: reviewTestTrivialAdvice}
-	case item.Kind == codeReviewTestItem:
-		return codeReviewVerdict{Verdict: codeReviewSound}
-	case item.Kind == codeReviewErrorItem && item.Error == "lostErr":
-		return codeReviewVerdict{Verdict: codeReviewSwallowed, Advice: reviewTestSwallowAdvice}
-	case item.Kind == codeReviewErrorItem:
-		return codeReviewVerdict{Verdict: codeReviewHandled}
-	case strings.Contains(text, codeReviewRestates):
-		return codeReviewVerdict{Verdict: codeReviewRestates, Advice: reviewTestRestateAdvice}
-	case strings.Contains(text, codeReviewExcuse):
-		return codeReviewVerdict{Verdict: codeReviewExcuse, Advice: reviewTestExcuseAdvice}
-	case strings.Contains(text, codeReviewCrutch):
-		return codeReviewVerdict{Verdict: codeReviewCrutch, Advice: reviewTestCrutchAdvice}
-	default:
-		return codeReviewVerdict{Verdict: codeReviewKeep}
+	for _, finding := range []struct{ kind, marker, verdict, advice string }{
+		{codeReviewTestItem, "TestCountTrivial", codeReviewTrivial, reviewTestTrivialAdvice},
+		{codeReviewSerialItem, "flaky", codeReviewSerialExcuse, reviewTestSerialAdvice},
+		{codeReviewErrorItem, "lostErr", codeReviewSwallowed, reviewTestSwallowAdvice},
+		{codeReviewCommentItem, codeReviewRestates, codeReviewRestates, reviewTestRestateAdvice},
+		{codeReviewCommentItem, codeReviewExcuse, codeReviewExcuse, reviewTestExcuseAdvice},
+		{codeReviewCommentItem, codeReviewCrutch, codeReviewCrutch, reviewTestCrutchAdvice},
+	} {
+		if item.Kind == finding.kind && strings.Contains(text, finding.marker) {
+			return codeReviewVerdict{Verdict: finding.verdict, Advice: finding.advice}
+		}
 	}
+
+	return keepAllForTest(item, text)
 }
 
 func reviewTestItemText(request codeReviewRequest, item codeReviewItem) string {
@@ -365,7 +367,8 @@ func reviewIssueSummary(issues []Issue) []string {
 			"comment_excuse",
 			"comment_crutch",
 			codeReviewFindingKinds[codeReviewSwallowed],
-			codeReviewFindingKinds[codeReviewTrivial]:
+			codeReviewFindingKinds[codeReviewTrivial],
+			codeReviewFindingKinds[codeReviewSerialExcuse]:
 			out = append(
 				out,
 				strconv.Itoa(issuePosition(issue).Line)+" "+issue.Kind+": "+issue.Message,
@@ -392,6 +395,7 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 		"17 comment_crutch: " + reviewTestCrutchAdvice,
 		"34 swallowed_error: " + reviewTestSwallowAdvice,
 		"13 test_trivial: " + reviewTestTrivialAdvice,
+		"25 test_serial_excuse: " + reviewTestSerialAdvice,
 	}
 	if got := reviewIssueSummary(issues); !slices.Equal(got, want) {
 		t.Fatalf(
@@ -420,11 +424,14 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 	slices.Sort(tests)
 
 	// Every runnable test is sent, also one without comments; TestMain,
-	// benchmarks, and lower-case names are not tests.
+	// benchmarks, and lower-case names are not tests. A serial marker is its
+	// own item; the findings above fail if a comment item also covers it.
 	if want := []string{
 		"func TestCount(t *testing.T) {",
+		"func TestCountFlaky(t *testing.T) { TestCount(t) }",
 		"func TestCountTrivial(t *testing.T) {",
-	}; !slices.Equal(tests, want) {
+		"//slopelint:serial excuse: flaky",
+	}; !slices.Equal(append(tests, items[codeReviewSerialItem]...), want) {
 		t.Fatalf("test items = %q, want %q", tests, want)
 	}
 
@@ -436,7 +443,6 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 		t.Fatalf("dropped-error items = %v, want %v", errs, want)
 	}
 
-	// Machine directives are skipped; suppressions are judged even when bare.
 	if sent := strings.Join(comments, "\n"); strings.Contains(sent, "go:generate") ||
 		strings.Contains(sent, "slopelint:ensures") {
 		t.Fatalf("directive was sent for review: %q", comments)
@@ -454,6 +460,8 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 }
 
 func TestCodeReviewWithoutModelReportsNoCandidates(t *testing.T) {
+	t.Parallel()
+
 	tmp, _ := newReviewTestModule(t)
 
 	issues, err := LintRepository(
@@ -487,6 +495,10 @@ func TestCodeReviewCachesVerdictsPerDeclaration(t *testing.T) {
 	}
 
 	cold := model.requestCount()
+
+	if _, err := os.Stat(filepath.Join(tmp, similarityStampName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("review findings still wrote a stamp: %v", err)
+	}
 
 	second, err := lintWithReviewForTest(t, tmp, cacheDir, model)
 	if err != nil {
@@ -880,24 +892,14 @@ func requireReviewCI(t *testing.T, dir string, reviewed bool) {
 	}
 }
 
-func TestCodeReviewFindingsBlockStamp(t *testing.T) {
-	tmp, _ := newReviewTestModule(t)
-
-	if _, err := lintWithReviewForTest(t, tmp, t.TempDir(), new(reviewTestModel)); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(tmp, similarityStampName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("review findings still wrote a stamp: %v", err)
-	}
-}
-
 func keepAllForTest(item codeReviewItem, _ string) codeReviewVerdict {
 	switch item.Kind {
 	case codeReviewErrorItem:
 		return codeReviewVerdict{Verdict: codeReviewHandled}
 	case codeReviewTestItem:
 		return codeReviewVerdict{Verdict: codeReviewSound}
+	case codeReviewSerialItem:
+		return codeReviewVerdict{Verdict: codeReviewSerialOK}
 	}
 
 	return codeReviewVerdict{Verdict: codeReviewKeep}

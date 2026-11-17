@@ -231,7 +231,7 @@ func populateSimilarityMatchDetails(
 
 	for _, match := range matches {
 		for _, block := range match.Members {
-			if _, ok := seen[block.Identity]; ok {
+			if _, ok := seen[block.Identity]; ok || !similarityDescribed(block.RelativePath) {
 				continue
 			}
 
@@ -485,6 +485,10 @@ func similarityDescriptionsDigest(blocks []*similarityBlock) (string, error) {
 	hash := sha256.New()
 
 	for _, block := range blocks {
+		if !similarityDescribed(block.RelativePath) {
+			continue
+		}
+
 		if block.DescriptionHash == "" {
 			return "", fmt.Errorf("description missing for %s", block.Identity)
 		}

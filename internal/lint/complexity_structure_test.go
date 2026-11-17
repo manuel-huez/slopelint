@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsBehaviorPreservingComplexityCluster(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -47,6 +49,8 @@ func f(dst []int, src []int, items []string, ok bool) []int {
 }
 
 func TestDetectsScatteredInputGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -95,6 +99,8 @@ var errBad error
 }
 
 func TestSkipsTopInputGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -132,6 +138,8 @@ var errBad error
 }
 
 func TestInputGuardPreparation(t *testing.T) {
+	t.Parallel()
+
 	for _, test := range []struct {
 		name  string
 		setup string
@@ -228,6 +236,8 @@ func f(value *req) error {
 }
 
 func TestInputGuardsDoNotTrackUnknownCallResults(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 import "io"
@@ -250,6 +260,8 @@ func write(writer io.Writer, payload []byte) error {
 }
 
 func TestSkipsInterleavedErrorGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -282,6 +294,8 @@ func f(first func() error, second func() error, third func() error) error {
 }
 
 func TestSkipsInterleavedNilSuccessReturns(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -323,6 +337,8 @@ var errBad error
 }
 
 func TestSkipsPackageVarStateChecksAsInputGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -362,6 +378,8 @@ var errBad error
 }
 
 func TestSkipsConstantOnlyChecksAsInputGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -401,6 +419,8 @@ var errBad error
 }
 
 func TestSkipsNewConstructorErrorGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -462,6 +482,8 @@ func f(root string, universeID string, modelRef string) (manifestResult, refResu
 }
 
 func TestSkipsComparatorDecisionLadder(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -497,6 +519,8 @@ func less(left row, right row) bool {
 }
 
 func TestSkipsMethodPredicateInputGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -534,6 +558,8 @@ var errBad error
 }
 
 func TestSkipsValidationPrepBetweenInputGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -591,6 +617,8 @@ var errBad error
 }
 
 func TestSkipsExportedValidationPrepBetweenInputGuards(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

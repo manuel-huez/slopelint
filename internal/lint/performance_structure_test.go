@@ -7,6 +7,8 @@ import (
 )
 
 func TestDetectsMembershipScanInsideLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -37,6 +39,8 @@ func f(items []string, allowed []string) {
 }
 
 func TestDetectsExplicitGenericMembershipScanInsideLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -63,6 +67,8 @@ func f(items []string, allowed []string) {
 }
 
 func TestSkipsLoopSpecificMembershipScan(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -90,6 +96,8 @@ func f(groups []group) {
 }
 
 func TestSkipsMembershipScanAfterCollectionReassignedInsideLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -118,6 +126,8 @@ func f(items []string, allowed []string) {
 }
 
 func TestSkipsMembershipScanAfterCollectionIndexMutationInsideLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -142,6 +152,8 @@ func f(items []string, allowed []string) {
 }
 
 func TestSkipsMembershipScanAfterHelperMayMutateCollectionInsideLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -168,6 +180,8 @@ func f(items []string, allowed []string) {
 }
 
 func TestDetectsSortInsideLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -197,6 +211,8 @@ func f(items []string, keys []int) {
 }
 
 func TestSkipsSortInsideLoopWhenComparatorVarUsesLoopValue(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -230,6 +246,8 @@ func f(groups []group, users []user) {
 }
 
 func TestDetectsLoopInvariantRegexp(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -261,6 +279,8 @@ func f(items []string) {
 }
 
 func TestDetectsNestedLookupLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -301,6 +321,8 @@ func f(orders []order, customers []customer) {
 }
 
 func TestSkipsNestedLookupLoopWithSideEffectStmt(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -337,6 +359,8 @@ func f(orders []order, customers []customer) {
 }
 
 func TestDetectsPairwiseComparisonLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -372,6 +396,8 @@ func f(spans []span) {
 }
 
 func TestSkipsPairwiseComparisonLoopForShadowedRangeSource(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -401,6 +427,8 @@ func f(spans []span) {
 }
 
 func TestDetectsNetworkCallInsideLoop(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -429,6 +457,8 @@ func f(urls []string) {
 }
 
 func TestNetworkLoopCallReceivers(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
@@ -464,6 +494,8 @@ func f(requests []*http.Request, client *http.Client, wrapped wrappedClient, ali
 }
 
 func TestDetectsNetworkCallWithLoopDerivedTemp(t *testing.T) {
+	t.Parallel()
+
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

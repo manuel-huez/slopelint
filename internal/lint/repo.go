@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"maps"
 	"sort"
+	"strings"
 	"sync"
 
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
@@ -785,6 +786,9 @@ func repoPackageDependencyLevels(inputs []repoPackageInput) [][]repoPackageInput
 		sort.Strings(imports)
 
 		for _, imported := range imports {
+			// External test packages import test variants such as "foo [foo.test]";
+			// they wait for "foo" so its call summaries are ready.
+			imported, _, _ = strings.Cut(imported, " ")
 			if dependency, ok := byPath[imported]; ok {
 				level = max(level, assignLevel(dependency)+1)
 			}

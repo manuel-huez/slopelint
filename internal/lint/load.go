@@ -43,6 +43,8 @@ type packageMeta struct {
 	Error *struct {
 		Err string `json:"Err"`
 	} `json:"Error"`
+	// ImportMap maps source imports to test variants such as "foo [foo.test]".
+	ImportMap map[string]string `json:"ImportMap"`
 
 	testOnly bool
 }
@@ -130,7 +132,7 @@ func goList(patterns []string, dir string) ([]*packageMeta, error) {
 			"-test",
 			"-export",
 			"-compiled",
-			"-json=Dir,ImportPath,Name,ForTest,Export,BuildID,GoFiles,CgoFiles,CompiledGoFiles,Imports,TestImports,XTestImports,Match,Module,Error",
+			"-json=Dir,ImportPath,Name,ForTest,Export,BuildID,GoFiles,CgoFiles,CompiledGoFiles,Imports,TestImports,XTestImports,ImportMap,Match,Module,Error",
 		},
 		patterns...,
 	)
@@ -197,22 +199,23 @@ func matchedPackageTargets(
 	targetsByImportPath := make(map[string]*packageMeta)
 
 	for _, meta := range metas {
-		if len(meta.Match) == 0 {
+		targetImportPath := meta.targetImportPath()
+
+		if meta.ForTest == "" {
+			// A later in-package test variant replaces this base: it adds test files.
+			if len(meta.Match) > 0 && targetsByImportPath[targetImportPath] == nil {
+				targetsByImportPath[targetImportPath] = meta
+			}
+
 			continue
 		}
 
-		targetImportPath := meta.ImportPath
-		if meta.ForTest != "" {
-			base := byImportPath[meta.ForTest]
-			if base == nil || meta.Name != base.Name {
-				continue
-			}
-
-			targetImportPath = meta.ForTest
-		}
-
-		if existing := targetsByImportPath[targetImportPath]; existing != nil &&
-			existing.ForTest != "" {
+		// go list matches only the base package. Its in-package test variant and
+		// its external test package are targets; other ForTest entries are
+		// dependencies recompiled against the test variant.
+		base := byImportPath[meta.ForTest]
+		if base == nil || len(base.Match) == 0 ||
+			targetImportPath != meta.ForTest && targetImportPath != meta.ForTest+"_test" {
 			continue
 		}
 
@@ -253,8 +256,15 @@ func newPackageLoadContext(byImportPath map[string]*packageMeta) *packageLoadCon
 	return &packageLoadContext{byImportPath: byImportPath, trimmedDirs: trimmedDirs}
 }
 
-func (loadContext *packageLoadContext) importer(fset *token.FileSet) types.Importer {
+func (loadContext *packageLoadContext) importer(
+	fset *token.FileSet,
+	importMap map[string]string,
+) types.Importer {
 	return importer.ForCompiler(fset, runtime.Compiler, func(path string) (io.ReadCloser, error) {
+		if variant, ok := importMap[path]; ok {
+			path = variant
+		}
+
 		dep := loadContext.byImportPath[path]
 		if dep == nil {
 			return nil, fmt.Errorf("missing package metadata for import %q", path)
@@ -273,12 +283,19 @@ func loadPackageTypeDigests(
 	loadContext *packageLoadContext,
 ) (map[string]string, error) {
 	fset := token.NewFileSet()
-	exportImporter := loadContext.importer(fset)
+	sharedImporter := loadContext.importer(fset, nil)
 	digests := make(map[string]string, len(paths))
 
 	// One importer reuses the transitive export graph when several changed build
-	// IDs need fresh public API digests.
+	// IDs need fresh public API digests. A test variant such as "foo [foo.test]"
+	// declares package path "foo" in its export data, so it needs its own
+	// importer to stay apart from the base package "foo".
 	for _, path := range paths {
+		exportImporter := sharedImporter
+		if strings.Contains(path, " ") {
+			exportImporter = loadContext.importer(fset, nil)
+		}
+
 		imported, err := exportImporter.Import(path)
 		if err != nil {
 			return nil, fmt.Errorf("import %s for cache fingerprint: %w", path, err)
@@ -378,7 +395,7 @@ func loadOne(meta *packageMeta, loadContext *packageLoadContext) (*LoadedPackage
 	}
 
 	conf := types.Config{
-		Importer: loadContext.importer(fset),
+		Importer: loadContext.importer(fset, meta.ImportMap),
 		Error: func(err error) {
 			// The type checker will keep going, and Check will return a summarized error.
 		},
@@ -399,6 +416,7 @@ func loadOne(meta *packageMeta, loadContext *packageLoadContext) (*LoadedPackage
 		Dir:         meta.Dir,
 		repoFiles:   repoFiles,
 		testOnly:    meta.testOnly,
+		importMap:   meta.ImportMap,
 		trimmedDirs: loadContext.trimmedDirs,
 		FSet:        fset,
 		Files:       files,
@@ -474,10 +492,10 @@ func resolvePackageFiles(meta *packageMeta, filesOnDisk []string) ([]string, err
 	return files, nil
 }
 
+// targetImportPath drops the " [foo.test]" variant suffix: the in-package test
+// variant lints as "foo" and the external test package as "foo_test".
 func (meta *packageMeta) targetImportPath() string {
-	if meta.ForTest != "" {
-		return meta.ForTest
-	}
+	path, _, _ := strings.Cut(meta.ImportPath, " ")
 
-	return meta.ImportPath
+	return path
 }

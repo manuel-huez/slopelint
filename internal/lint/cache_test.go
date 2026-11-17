@@ -447,6 +447,26 @@ type Value struct { Name string }
 func Present(value *Value) bool { return value != nil }
 `
 	writeFile(t, depPath, original)
+	// The external test package imports the "dep [dep.test]" variant, which adds
+	// TestName from an in-package test file, and calls dep.Present.
+	exportPath := filepath.Join(tmp, "dep", "export_test.go")
+	writeFile(t, exportPath, "package dep\n\nconst TestName = \"name\"\n")
+	writeFile(t, filepath.Join(tmp, "dep", "dep_test.go"), `package dep_test
+
+import (
+	"testing"
+	"time"
+
+	"example.com/sample/dep"
+)
+
+func TestPresent(t *testing.T) {
+	time.Sleep(time.Millisecond)
+	if !dep.Present(&dep.Value{Name: dep.TestName}) {
+		t.Fatal("value is missing")
+	}
+}
+`)
 	writeFile(t, filepath.Join(tmp, "use", "use.go"), `package use
 
 import (
@@ -479,6 +499,11 @@ func Value() int { return 1 }
 		t.Fatalf("first repo lint lacks cross-package behavior clone:\n%s", joinMessages(first))
 	}
 
+	sleeps := issueRelativePaths(t, tmp, first, "test_sleep")
+	if !slices.Equal(sleeps, []string{"dep/dep_test.go"}) {
+		t.Fatalf("external test package sleep findings = %v", sleeps)
+	}
+
 	writeFile(t, depPath, `// Package dep owns shared value guards.
 package dep
 
@@ -507,7 +532,7 @@ func Present(value *Value) bool { return value != nil }
 
 	sort.Strings(hits)
 
-	wantHits := []string{otherPkg, "example.com/sample/use"}
+	wantHits := []string{"example.com/sample/dep_test", otherPkg, "example.com/sample/use"}
 	if !slices.Equal(hits, wantHits) {
 		t.Fatalf("comment edit cache hits = %v, want %v", hits, wantHits)
 	}
@@ -557,8 +582,8 @@ func Present(value *Value) bool { return value != nil && value.Name != "" }
 
 	sort.Strings(hits)
 
-	// use keeps one entry per key, last written with the edited dep summary, so
-	// only use re-lints; the repo-wide behavior pass replays.
+	// use and dep_test keep one entry per key, last written with the edited dep
+	// summary, so only they re-lint; the repo-wide behavior pass replays.
 	wantHits = []string{
 		repoBehaviorCacheHitName,
 		"example.com/sample/dep",

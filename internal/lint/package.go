@@ -17,6 +17,8 @@ type LoadedPackage struct {
 	TypesInfo  *types.Info
 	repoFiles  []string
 	testOnly   bool
+	// importMap maps source imports to the go list test variants they load.
+	importMap map[string]string
 	// trimmedDirs maps -trimpath export-data directories to package dirs.
 	trimmedDirs map[string]string
 }

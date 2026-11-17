@@ -355,11 +355,18 @@ func analysisCacheTypeDigests(pkgs []*LoadedPackage) map[string]string {
 
 	for _, pkg := range pkgs {
 		for _, imported := range pkg.TypesPkg.Imports() {
-			if _, ok := digests[imported.Path()]; ok {
+			// Cache keys name imports by go list path, so a test variant keeps its
+			// " [foo.test]" suffix apart from the base package API.
+			path := imported.Path()
+			if variant, ok := pkg.importMap[path]; ok {
+				path = variant
+			}
+
+			if _, ok := digests[path]; ok {
 				continue
 			}
 
-			digests[imported.Path()] = analysisCacheTypeDigest(imported)
+			digests[path] = analysisCacheTypeDigest(imported)
 		}
 	}
 

@@ -190,9 +190,13 @@ func checkSemanticCode(
 		cancel()
 	}
 
-	reviewIssues, reviewErr := review.wait()
+	reviewIssues, groups, reviewErr := review.wait()
 	if err = errors.Join(err, reviewErr); err != nil {
 		return nil, err
+	}
+
+	for _, group := range uncoveredTestGroups(groups, issues) {
+		reviewIssues = append(reviewIssues, group.issue)
 	}
 
 	issues = append(issues, reviewIssues...)

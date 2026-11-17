@@ -1,6 +1,7 @@
 package outline
 
 import (
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -12,12 +13,19 @@ import (
 // Test is one test case: a TypeScript test or it call with a callback, or
 // a Python test function or method as pytest and unittest collect them.
 type Test struct {
+	// Name is the test title, or the function name with its class.
+	Name      string
 	Pos       Pos
 	StartLine int
 	EndLine   int
 	// Context is the line ranges review shows before the test: enclosing
 	// suite and class header lines and their setup hooks.
 	Context []Decl
+	// Calls are the distinct callees that can be steps the test shares with
+	// others, sorted: name for a plain call, .name for a member call.
+	// Assertion chains, test framework calls, and builtins tell tests apart
+	// by nothing and are left out.
+	Calls []string
 }
 
 // hookLineLimit bounds a setup hook shown whole as test context; a longer
@@ -101,10 +109,12 @@ func (w *walker) tsTestCall(call *ts.Node) {
 	}
 
 	w.file.Tests = append(w.file.Tests, Test{
+		Name:      strings.Trim(w.title(call), "'\"`"),
 		Pos:       w.pos(call),
 		StartLine: w.pos(call).Line,
 		EndLine:   w.endLine(call),
 		Context:   w.tsTestContext(call),
+		Calls:     w.testCalls(w.lastFunctionArgument(call)),
 	})
 	w.block(root+" "+w.title(call), call, call)
 }
@@ -227,16 +237,57 @@ func (w *walker) pythonTestFunction(fn *ts.Node, name string) {
 		}
 
 		context = w.classContext(class, owner)
+		name = w.text(w.field(class, nameField)) + "." + name
 	default:
 		return
 	}
 
 	w.file.Tests = append(w.file.Tests, Test{
+		Name:      name,
 		Pos:       w.pos(fn),
 		StartLine: w.pos(definition).Line,
 		EndLine:   w.endLine(definition),
 		Context:   context,
+		Calls:     w.testCalls(w.field(fn, "body")),
 	})
+}
+
+var testNoiseRoots = map[string]bool{
+	"expect": true, "assert": true, "test": true, "it": true, "describe": true,
+	"vi": true, "jest": true, "console": true, "JSON": true, "Object": true,
+	"Array": true, "Math": true, "Number": true, "String": true, "Promise": true,
+	"pytest": true, "len": true, "str": true, "int": true, "float": true,
+	"bool": true, "list": true, "dict": true, "set": true, "tuple": true,
+	"range": true, "enumerate": true, "zip": true, "sorted": true,
+	"isinstance": true, "print": true, "repr": true, "type": true, "sum": true,
+	"min": true, "max": true, "any": true, "all": true, "getattr": true,
+	"setattr": true, "hasattr": true,
+}
+
+func (s syntax) testCalls(body *ts.Node) []string {
+	calls := make(map[string]bool)
+
+	s.contains(body, func(*ts.Node) bool { return false }, func(node *ts.Node) bool {
+		kind := node.Type(s.grammar)
+		if kind != tsCallNode && kind != pyCallNode {
+			return false
+		}
+
+		chain := s.chain(node)
+		last := lastName(chain)
+
+		switch {
+		case len(chain) == 0 || testNoiseRoots[chain[0]] || strings.HasPrefix(last, "assert"):
+		case len(chain) == 1:
+			calls[last] = true
+		default:
+			calls["."+last] = true
+		}
+
+		return false
+	})
+
+	return slices.Sorted(maps.Keys(calls))
 }
 
 func (s syntax) classContext(class, body *ts.Node) []Decl {

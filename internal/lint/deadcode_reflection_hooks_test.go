@@ -378,18 +378,55 @@ func Save() ([]byte, error) {
 	}
 }
 
+type repoDeadCodeMapsAliasAndMapKeyHooksCase struct {
+	name, mainBody, source, failure string
+	unexpecteds                     []string
+}
+
+func runRepoDeadCodeMapsAliasAndMapKeyHooks(
+	t *testing.T,
+	cases []repoDeadCodeMapsAliasAndMapKeyHooksCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeTestMain(t, tmp, test.mainBody)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			for _, unexpected := range test.unexpecteds {
+				if strings.Contains(joined, unexpected) {
+					t.Fatalf(
+						test.failure,
+						unexpected,
+						joined,
+					)
+				}
+			}
+		})
+	}
+}
+
 func TestRepoDeadCodeMapsPackageAliasFieldsToOriginalType(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Load(nil)
-	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeMapsAliasAndMapKeyHooks(t, []repoDeadCodeMapsAliasAndMapKeyHooksCase{
+		{
+			name: "RepoDeadCodeMapsPackageAliasFieldsToOriginalType",
+			mainBody: `	_ = lib.Load(nil)
+	_, _ = lib.Save()`,
+			source: `package lib
 
 import "encoding/json"
 
 type Payload struct {
-	Name string `+"`json:\"name\"`"+`
+	Name string ` + "`json:\"name\"`" + `
 }
 
 type rawPayload Payload
@@ -418,38 +455,31 @@ func Load(body []byte) error {
 
 	return json.Unmarshal(body, &payload)
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		wantFieldPayloadName,
-		wantMethodMarshalJSON,
-		wantMethodUnmarshalJSON,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"package alias dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
+`,
+			unexpecteds: []string{
+				wantFieldPayloadName,
+				wantMethodMarshalJSON,
+				wantMethodUnmarshalJSON,
+			},
+			failure: "package alias dependency reported dead for %q, got:\n%s",
+		},
+	})
 }
 
 func TestRepoDeadCodeMapsTextHookAliasFieldsToOriginalType(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Load(nil)
-	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeMapsAliasAndMapKeyHooks(t, []repoDeadCodeMapsAliasAndMapKeyHooksCase{
+		{
+			name: "RepoDeadCodeMapsTextHookAliasFieldsToOriginalType",
+			mainBody: `	_ = lib.Load(nil)
+	_, _ = lib.Save()`,
+			source: `package lib
 
 import "encoding/json"
 
 type Payload struct {
-	Name string `+"`json:\"name\"`"+`
+	Name string ` + "`json:\"name\"`" + `
 }
 
 func (payload Payload) MarshalText() ([]byte, error) {
@@ -480,24 +510,64 @@ func Load(body []byte) error {
 
 	return json.Unmarshal(body, &payload)
 }
-`)
+`,
+			unexpecteds: []string{
+				wantFieldPayloadName,
+				wantMethodMarshalText,
+				wantMethodUnmarshalText,
+			},
+			failure: "text hook alias dependency reported dead for %q, got:\n%s",
+		},
+	})
+}
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+func TestRepoDeadCodeKeepsJSONMapKeyTextHooks(t *testing.T) {
+	t.Parallel()
 
-	for _, unexpected := range []string{
-		wantFieldPayloadName,
-		wantMethodMarshalText,
-		wantMethodUnmarshalText,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"text hook alias dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
+	runRepoDeadCodeMapsAliasAndMapKeyHooks(t, []repoDeadCodeMapsAliasAndMapKeyHooksCase{
+		{
+			name: "RepoDeadCodeKeepsJSONMapKeyTextHooks",
+			mainBody: `	_, _ = lib.Save()
+	_, _ = lib.Load(nil)`,
+			source: `package lib
+
+import "encoding/json"
+
+type Key string
+
+func (key Key) MarshalText() ([]byte, error) {
+	return []byte(key), nil
+}
+
+func (key *Key) UnmarshalText(text []byte) error {
+	*key = Key(text)
+
+	return nil
+}
+
+type Value struct {
+	Name string ` + "`json:\"name\"`" + `
+}
+
+func Save() ([]byte, error) {
+	return json.Marshal(map[Key]Value{Key("id"): {Name: "x"}})
+}
+
+func Load(body []byte) (map[Key]Value, error) {
+	var payload map[Key]Value
+	err := json.Unmarshal(body, &payload)
+
+	return payload, err
+}
+`,
+			unexpecteds: []string{
+				wantMethodMarshalText,
+				wantMethodUnmarshalText,
+				`field "Value.Name"`,
+			},
+			failure: "JSON map-key text hook dependency reported dead for %q, got:\n%s",
+		},
+	})
 }
 
 func TestRepoDeadCodeKeepsFieldsPassedThroughGenericJSONMarshal(t *testing.T) {
@@ -711,69 +781,43 @@ func Load(body []byte) error {
 	}
 }
 
-func TestRepoDeadCodeKeepsJSONMapKeyTextHooks(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()
-	_, _ = lib.Load(nil)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "encoding/json"
-
-type Key string
-
-func (key Key) MarshalText() ([]byte, error) {
-	return []byte(key), nil
+type repoDeadCodeKeepsXMLHooksCase struct {
+	name, mainBody, source, failure string
+	unexpecteds                     []string
 }
 
-func (key *Key) UnmarshalText(text []byte) error {
-	*key = Key(text)
+func runRepoDeadCodeKeepsXMLHooks(t *testing.T, cases []repoDeadCodeKeepsXMLHooksCase) {
+	t.Helper()
 
-	return nil
-}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-type Value struct {
-	Name string `+"`json:\"name\"`"+`
-}
+			tmp := newTestModule(t)
+			writeTestMain(t, tmp, test.mainBody)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source)
 
-func Save() ([]byte, error) {
-	return json.Marshal(map[Key]Value{Key("id"): {Name: "x"}})
-}
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
 
-func Load(body []byte) (map[Key]Value, error) {
-	var payload map[Key]Value
-	err := json.Unmarshal(body, &payload)
-
-	return payload, err
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		wantMethodMarshalText,
-		wantMethodUnmarshalText,
-		`field "Value.Name"`,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"JSON map-key text hook dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
+			for _, unexpected := range test.unexpecteds {
+				if strings.Contains(joined, unexpected) {
+					t.Fatalf(test.failure, unexpected, joined)
+				}
+			}
+		})
 	}
 }
 
 func TestRepoDeadCodeKeepsXMLAttrHooks(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_, _ = lib.Save(lib.Item{})
-	_, _ = lib.Load(nil)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeKeepsXMLHooks(t, []repoDeadCodeKeepsXMLHooksCase{
+		{
+			name: "RepoDeadCodeKeepsXMLAttrHooks",
+			mainBody: `	_, _ = lib.Save(lib.Item{})
+	_, _ = lib.Load(nil)`,
+			source: `package lib
 
 import "encoding/xml"
 
@@ -790,7 +834,7 @@ func (attr *Attr) UnmarshalXMLAttr(value xml.Attr) error {
 }
 
 type Item struct {
-	ID Attr `+"`xml:\"id,attr\"`"+`
+	ID Attr ` + "`xml:\"id,attr\"`" + `
 }
 
 func Save(item Item) ([]byte, error) {
@@ -803,29 +847,26 @@ func Load(body []byte) (Item, error) {
 
 	return item, err
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		`method "MarshalXMLAttr"`,
-		`method "UnmarshalXMLAttr"`,
-		`field "Item.ID"`,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf("XML attr hook dependency reported dead for %q, got:\n%s", unexpected, joined)
-		}
-	}
+`,
+			unexpecteds: []string{
+				`method "MarshalXMLAttr"`,
+				`method "UnmarshalXMLAttr"`,
+				`field "Item.ID"`,
+			},
+			failure: "XML attr hook dependency reported dead for %q, got:\n%s",
+		},
+	})
 }
 
 func TestRepoDeadCodeKeepsXMLElementAPIHooksAndFields(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Save(lib.Payload{})
-	_, _ = lib.Load(nil)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeKeepsXMLHooks(t, []repoDeadCodeKeepsXMLHooksCase{
+		{
+			name: "RepoDeadCodeKeepsXMLElementAPIHooksAndFields",
+			mainBody: `	_ = lib.Save(lib.Payload{})
+	_, _ = lib.Load(nil)`,
+			source: `package lib
 
 import (
 	"bytes"
@@ -850,8 +891,8 @@ func (value *XMLValue) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement
 }
 
 type Payload struct {
-	Value XMLValue `+"`xml:\"value\"`"+`
-	Name  string   `+"`xml:\"name\"`"+`
+	Value XMLValue ` + "`xml:\"value\"`" + `
+	Name  string   ` + "`xml:\"name\"`" + `
 }
 
 func Save(payload Payload) error {
@@ -872,33 +913,26 @@ func Load(body []byte) (Payload, error) {
 
 	return payload, err
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		`method "MarshalXML"`,
-		`method "UnmarshalXML"`,
-		`field "Payload.Value"`,
-		wantFieldPayloadName,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"XML element API dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
+`,
+			unexpecteds: []string{
+				`method "MarshalXML"`,
+				`method "UnmarshalXML"`,
+				`field "Payload.Value"`,
+				wantFieldPayloadName,
+			},
+			failure: "XML element API dependency reported dead for %q, got:\n%s",
+		},
+	})
 }
 
 func TestRepoDeadCodeKeepsGenericXMLElementDecodeFields(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_, _ = lib.Load(nil)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeKeepsXMLHooks(t, []repoDeadCodeKeepsXMLHooksCase{
+		{
+			name:     "RepoDeadCodeKeepsGenericXMLElementDecodeFields",
+			mainBody: `	_, _ = lib.Load(nil)`,
+			source: `package lib
 
 import (
 	"bytes"
@@ -919,8 +953,8 @@ func (value *XMLValue) UnmarshalXML(decoder *xml.Decoder, start xml.StartElement
 }
 
 type Payload struct {
-	Value XMLValue `+"`xml:\"value\"`"+`
-	Name  string   `+"`xml:\"name\"`"+`
+	Value XMLValue ` + "`xml:\"value\"`" + `
+	Name  string   ` + "`xml:\"name\"`" + `
 }
 
 func decodeElement[T any](
@@ -939,22 +973,13 @@ func Load(body []byte) (Payload, error) {
 
 	return decodeElement[Payload](decoder, start)
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		`method "UnmarshalXML"`,
-		`field "Payload.Value"`,
-		wantFieldPayloadName,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"generic XML element dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
+`,
+			unexpecteds: []string{
+				`method "UnmarshalXML"`,
+				`field "Payload.Value"`,
+				wantFieldPayloadName,
+			},
+			failure: "generic XML element dependency reported dead for %q, got:\n%s",
+		},
+	})
 }

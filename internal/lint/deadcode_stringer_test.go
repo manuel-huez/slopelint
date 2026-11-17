@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const mainCallsLive = `	_ = lib.Live()`
+
 func TestRepoDeadCodeKeepsFmtStringerMethods(t *testing.T) {
 	t.Parallel()
 
@@ -45,12 +47,45 @@ func Live() string {
 	}
 }
 
-func TestRepoDeadCodeDoesNotRootAllStringersThroughAnyFmtArg(t *testing.T) {
+type repoDeadCodeDoesNotKeepUnusedFmtStringersCase struct {
+	name, mainBody, source, want, failure string
+}
+
+func runRepoDeadCodeDoesNotKeepUnusedFmtStringers(
+	t *testing.T,
+	cases []repoDeadCodeDoesNotKeepUnusedFmtStringersCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeTestMain(t, tmp, test.mainBody)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if !strings.Contains(
+				joined,
+				test.want,
+			) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepUnusedFmtStringers(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live("x")`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeDoesNotKeepUnusedFmtStringers(t, []repoDeadCodeDoesNotKeepUnusedFmtStringersCase{
+		{
+			name:     "RepoDeadCodeDoesNotRootAllStringersThroughAnyFmtArg",
+			mainBody: `	_ = lib.Live("x")`,
+			source: `package lib
 
 import "fmt"
 
@@ -64,475 +99,14 @@ func Live(value any) string {
 	_ = digest("")
 	return fmt.Sprintf("%v", value)
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`exported method "String" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected unused String method finding, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerPassedThroughAnyParam(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live(lib.Digest("x"))`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Live(value any) string {
-	return fmt.Sprintf("%v", value)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt Stringer method passed through any reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerPassedThroughNestedAnyParam(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Wrap(lib.Digest("x"))`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Log(value any) string {
-	return fmt.Sprint(value)
-}
-
-func Wrap(value any) string {
-	return Log(value)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt nested any Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerPassedThroughVariadicAnyParam(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Log(lib.Digest("x"))`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Log(values ...any) string {
-	return fmt.Sprint(values...)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt variadic any Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerThroughAnyConversion(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Live() string {
-	return fmt.Sprint(any(Digest("x")))
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt any conversion Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerThroughAnyLocal(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Live() string {
-	var value any = Digest("x")
-
-	return fmt.Sprint(value)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt any local Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerForwardedThroughAnySlice(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.LogLiteral(lib.Digest("x"))
-	_ = lib.LogAppend(lib.Digest("x"))`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func LogLiteral(value any) string {
-	values := []any{value}
-
-	return fmt.Sprint(values...)
-}
-
-func LogAppend(value any) string {
-	values := []any{}
-	values = append(values, value)
-
-	return fmt.Sprint(values...)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt any slice forwarded Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerThroughAnySliceLocal(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Live() string {
-	values := []any{Digest("x")}
-
-	return fmt.Sprint(values...)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt any slice local Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerThroughKeyedAnySliceLocal(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Live() string {
-	values := []any{0: Digest("x")}
-
-	return fmt.Sprint(values...)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt keyed any slice local Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerForwardedAcrossBranch(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Log(lib.Digest("x"), false)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Log(value any, drop bool) string {
-	forwarded := value
-	if drop {
-		forwarded = nil
-	}
-
-	return fmt.Sprint(forwarded)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt branch forwarded Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerLocalAnyPassedToWrapper(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Log(value any) string {
-	return fmt.Sprint(value)
-}
-
-func Live() string {
-	var value any = Digest("x")
-
-	return Log(value)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt wrapper local any Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerAnySlicePassedToWrapper(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Log(values ...any) string {
-	return fmt.Sprint(values...)
-}
-
-func Live() string {
-	values := []any{Digest("x")}
-
-	return Log(values...)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt wrapper any slice Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerKeyedAnySlicePassedToWrapper(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Log(values ...any) string {
-	return fmt.Sprint(values...)
-}
-
-func Live() string {
-	values := []any{0: Digest("x")}
-
-	return Log(values...)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt keyed wrapper any slice Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerNonVariadicAnySlicePassedToWrapper(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Log(values []any) string {
-	return fmt.Sprint(values...)
-}
-
-func Live() string {
-	return Log([]any{Digest("x")})
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf(
-			"fmt non-variadic any slice wrapper Stringer method reported dead, got:\n%s",
-			joined,
-		)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerThroughSwitch(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live(1)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "fmt"
-
-type Digest string
-
-func (Digest) String() string {
-	return "digest"
-}
-
-func Live(mode int) string {
-	var value any
-	switch mode {
-	case 1:
-		value = Digest("x")
-	default:
-		value = nil
-	}
-
-	return fmt.Sprint(value)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt switch Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeDoesNotKeepFmtStringerFromDefaultSwitchOverwrite(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+			want:    `exported method "String" is unreachable from repo entrypoints; remove it`,
+			failure: "expected unused String method finding, got:\n%s",
+		},
+		{
+			name:     "RepoDeadCodeDoesNotKeepFmtStringerFromDefaultSwitchOverwrite",
+			mainBody: `	_ = lib.Live()`,
+			source: `package lib
 
 import "fmt"
 
@@ -551,25 +125,14 @@ func Live() string {
 
 	return fmt.Sprint(value)
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`method "String" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected default switch overwrite to leave Stringer dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeDoesNotKeepTupleSiblingFmtStringer(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+			want:    `method "String" is unreachable from repo entrypoints; remove it`,
+			failure: "expected default switch overwrite to leave Stringer dead, got:\n%s",
+		},
+		{
+			name:     "RepoDeadCodeDoesNotKeepTupleSiblingFmtStringer",
+			mainBody: `	_ = lib.Live()`,
+			source: `package lib
 
 import "fmt"
 
@@ -597,17 +160,438 @@ func Live() string {
 
 	return fmt.Sprint(live)
 }
-`)
+`,
+			want:    `method "String" is unreachable from repo entrypoints; remove it`,
+			failure: "expected tuple sibling String method to stay dead, got:\n%s",
+		},
+	})
+}
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+type repoDeadCodeKeepsFmtStringerThroughAnyParamsCase struct {
+	name, mainBody, source, failure string
+}
 
-	if !strings.Contains(
-		joined,
-		`method "String" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected tuple sibling String method to stay dead, got:\n%s", joined)
+func runRepoDeadCodeKeepsFmtStringerThroughAnyParams(
+	t *testing.T,
+	cases []repoDeadCodeKeepsFmtStringerThroughAnyParamsCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeTestMain(t, tmp, test.mainBody)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, `method "String"`) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
 	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughAnyParams(t *testing.T) {
+	t.Parallel()
+
+	runRepoDeadCodeKeepsFmtStringerThroughAnyParams(
+		t,
+		[]repoDeadCodeKeepsFmtStringerThroughAnyParamsCase{
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerPassedThroughAnyParam",
+				mainBody: `	_ = lib.Live(lib.Digest("x"))`,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live(value any) string {
+	return fmt.Sprintf("%v", value)
+}
+`,
+				failure: "fmt Stringer method passed through any reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerPassedThroughNestedAnyParam",
+				mainBody: `	_ = lib.Wrap(lib.Digest("x"))`,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(value any) string {
+	return fmt.Sprint(value)
+}
+
+func Wrap(value any) string {
+	return Log(value)
+}
+`,
+				failure: "fmt nested any Stringer method reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerPassedThroughVariadicAnyParam",
+				mainBody: `	_ = lib.Log(lib.Digest("x"))`,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values ...any) string {
+	return fmt.Sprint(values...)
+}
+`,
+				failure: "fmt variadic any Stringer method reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerThroughAnyConversion",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	return fmt.Sprint(any(Digest("x")))
+}
+`,
+				failure: "fmt any conversion Stringer method reported dead, got:\n%s",
+			},
+		},
+	)
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughAnyLocals(t *testing.T) {
+	t.Parallel()
+
+	runRepoDeadCodeKeepsFmtStringerThroughAnyParams(
+		t,
+		[]repoDeadCodeKeepsFmtStringerThroughAnyParamsCase{
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerThroughAnyLocal",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	var value any = Digest("x")
+
+	return fmt.Sprint(value)
+}
+`,
+				failure: "fmt any local Stringer method reported dead, got:\n%s",
+			},
+			{
+				name: "RepoDeadCodeKeepsFmtStringerForwardedThroughAnySlice",
+				mainBody: `	_ = lib.LogLiteral(lib.Digest("x"))
+	_ = lib.LogAppend(lib.Digest("x"))`,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func LogLiteral(value any) string {
+	values := []any{value}
+
+	return fmt.Sprint(values...)
+}
+
+func LogAppend(value any) string {
+	values := []any{}
+	values = append(values, value)
+
+	return fmt.Sprint(values...)
+}
+`,
+				failure: "fmt any slice forwarded Stringer method reported dead, got:\n%s",
+			},
+		},
+	)
+}
+
+type repoDeadCodeKeepsFmtStringerThroughLocalsAndWrappersCase struct {
+	name, mainBody, source, failure string
+}
+
+func runRepoDeadCodeKeepsFmtStringerThroughLocalsAndWrappers(
+	t *testing.T,
+	cases []repoDeadCodeKeepsFmtStringerThroughLocalsAndWrappersCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeTestMain(t, tmp, test.mainBody)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, `method "String"`) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughSliceLocals(t *testing.T) {
+	t.Parallel()
+
+	runRepoDeadCodeKeepsFmtStringerThroughLocalsAndWrappers(
+		t,
+		[]repoDeadCodeKeepsFmtStringerThroughLocalsAndWrappersCase{
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerThroughAnySliceLocal",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	values := []any{Digest("x")}
+
+	return fmt.Sprint(values...)
+}
+`,
+				failure: "fmt any slice local Stringer method reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerThroughKeyedAnySliceLocal",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live() string {
+	values := []any{0: Digest("x")}
+
+	return fmt.Sprint(values...)
+}
+`,
+				failure: "fmt keyed any slice local Stringer method reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerForwardedAcrossBranch",
+				mainBody: `	_ = lib.Log(lib.Digest("x"), false)`,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(value any, drop bool) string {
+	forwarded := value
+	if drop {
+		forwarded = nil
+	}
+
+	return fmt.Sprint(forwarded)
+}
+`,
+				failure: "fmt branch forwarded Stringer method reported dead, got:\n%s",
+			},
+		},
+	)
+}
+
+func TestRepoDeadCodeKeepsFmtStringerPassedToWrappers(t *testing.T) {
+	t.Parallel()
+
+	runRepoDeadCodeKeepsFmtStringerThroughLocalsAndWrappers(
+		t,
+		[]repoDeadCodeKeepsFmtStringerThroughLocalsAndWrappersCase{
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerLocalAnyPassedToWrapper",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(value any) string {
+	return fmt.Sprint(value)
+}
+
+func Live() string {
+	var value any = Digest("x")
+
+	return Log(value)
+}
+`,
+				failure: "fmt wrapper local any Stringer method reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerAnySlicePassedToWrapper",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values ...any) string {
+	return fmt.Sprint(values...)
+}
+
+func Live() string {
+	values := []any{Digest("x")}
+
+	return Log(values...)
+}
+`,
+				failure: "fmt wrapper any slice Stringer method reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerKeyedAnySlicePassedToWrapper",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values ...any) string {
+	return fmt.Sprint(values...)
+}
+
+func Live() string {
+	values := []any{0: Digest("x")}
+
+	return Log(values...)
+}
+`,
+				failure: "fmt keyed wrapper any slice Stringer method reported dead, got:\n%s",
+			},
+		},
+	)
+}
+
+func TestRepoDeadCodeKeepsFmtStringerThroughWrapperSlicesAndSwitch(t *testing.T) {
+	t.Parallel()
+
+	runRepoDeadCodeKeepsFmtStringerThroughLocalsAndWrappers(
+		t,
+		[]repoDeadCodeKeepsFmtStringerThroughLocalsAndWrappersCase{
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerNonVariadicAnySlicePassedToWrapper",
+				mainBody: mainCallsLive,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Log(values []any) string {
+	return fmt.Sprint(values...)
+}
+
+func Live() string {
+	return Log([]any{Digest("x")})
+}
+`,
+				failure: "fmt non-variadic any slice wrapper Stringer method reported dead, got:\n%s",
+			},
+			{
+				name:     "RepoDeadCodeKeepsFmtStringerThroughSwitch",
+				mainBody: `	_ = lib.Live(1)`,
+				source: `package lib
+
+import "fmt"
+
+type Digest string
+
+func (Digest) String() string {
+	return "digest"
+}
+
+func Live(mode int) string {
+	var value any
+	switch mode {
+	case 1:
+		value = Digest("x")
+	default:
+		value = nil
+	}
+
+	return fmt.Sprint(value)
+}
+`,
+				failure: "fmt switch Stringer method reported dead, got:\n%s",
+			},
+		},
+	)
 }
 
 func TestRepoDeadCodeKeepsFmtStringerThroughTupleForwarder(t *testing.T) {

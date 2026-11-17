@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const loopExternalCallKind = "loop_external_call"
+
 func TestDetectsMembershipScanInsideLoop(t *testing.T) {
 	t.Parallel()
 
@@ -66,11 +68,15 @@ func f(items []string, allowed []string) {
 	}
 }
 
-func TestSkipsLoopSpecificMembershipScan(t *testing.T) {
+func TestSkipsMutatedMembershipScans(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	for _, test := range []struct {
+		name, source, failure string
+	}{
+		{
+			name: "SkipsLoopSpecificMembershipScan",
+			source: `package sample
 
 import "slices"
 
@@ -85,21 +91,12 @@ func f(groups []group) {
 		}
 	}
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `scans invariant collection`) {
-		t.Fatalf("unexpected membership scan finding, got:\n%s", joined)
-	}
-}
-
-func TestSkipsMembershipScanAfterCollectionReassignedInsideLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure: "unexpected membership scan finding, got:\n%s",
+		},
+		{
+			name: "SkipsMembershipScanAfterCollectionReassignedInsideLoop",
+			source: `package sample
 
 import "slices"
 
@@ -115,21 +112,12 @@ func f(items []string, allowed []string) {
 		}
 	}
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `scans invariant collection`) {
-		t.Fatalf("unexpected membership scan finding for reassigned collection, got:\n%s", joined)
-	}
-}
-
-func TestSkipsMembershipScanAfterCollectionIndexMutationInsideLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure: "unexpected membership scan finding for reassigned collection, got:\n%s",
+		},
+		{
+			name: "SkipsMembershipScanAfterCollectionIndexMutationInsideLoop",
+			source: `package sample
 
 import "slices"
 
@@ -141,21 +129,12 @@ func f(items []string, allowed []string) {
 		}
 	}
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `scans invariant collection`) {
-		t.Fatalf("unexpected membership scan finding after indexed mutation, got:\n%s", joined)
-	}
-}
-
-func TestSkipsMembershipScanAfterHelperMayMutateCollectionInsideLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure: "unexpected membership scan finding after indexed mutation, got:\n%s",
+		},
+		{
+			name: "SkipsMembershipScanAfterHelperMayMutateCollectionInsideLoop",
+			source: `package sample
 
 import "slices"
 
@@ -169,13 +148,23 @@ func f(items []string, allowed []string) {
 		}
 	}
 }
-`)
+`,
+			failure: "unexpected membership scan finding after helper mutation, got:\n%s",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
 
-	if strings.Contains(joined, `scans invariant collection`) {
-		t.Fatalf("unexpected membership scan finding after helper mutation, got:\n%s", joined)
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, `scans invariant collection`) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
 	}
 }
 
@@ -245,11 +234,44 @@ func f(groups []group, users []user) {
 	}
 }
 
-func TestDetectsLoopInvariantRegexp(t *testing.T) {
+type detectsLoopPerformanceSmellsCase struct {
+	name, source, want, failure, kind, failure2 string
+}
+
+func runDetectsLoopPerformanceSmells(t *testing.T, cases []detectsLoopPerformanceSmellsCase) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if !strings.Contains(
+				joined,
+				test.want,
+			) {
+				t.Fatalf(test.failure, joined)
+			}
+
+			if !hasIssueKind(issues, test.kind) {
+				t.Fatalf(test.failure2, issues)
+			}
+		})
+	}
+}
+
+func TestDetectsLoopInvariantAndNestedWork(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runDetectsLoopPerformanceSmells(t, []detectsLoopPerformanceSmellsCase{
+		{
+			name: "DetectsLoopInvariantRegexp",
+			source: `package sample
 
 import "regexp"
 
@@ -261,28 +283,15 @@ func f(items []string) {
 		}
 	}
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`regexp.MustCompile is recomputed inside loop without loop inputs; compute it before the loop`,
-	) {
-		t.Fatalf("expected loop-invariant regexp finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "loop_invariant_work") {
-		t.Fatalf("expected loop_invariant_work kind, got %#v", issues)
-	}
-}
-
-func TestDetectsNestedLookupLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:     `regexp.MustCompile is recomputed inside loop without loop inputs; compute it before the loop`,
+			failure:  "expected loop-invariant regexp finding, got:\n%s",
+			kind:     "loop_invariant_work",
+			failure2: "expected loop_invariant_work kind, got %#v",
+		},
+		{
+			name: "DetectsNestedLookupLoop",
+			source: `package sample
 
 type order struct {
 	customerID int
@@ -303,21 +312,79 @@ func f(orders []order, customers []customer) {
 		}
 	}
 }
-`)
+`,
+			want:     `nested range scans customers for each orders item; build a lookup map before the outer loop`,
+			failure:  "expected nested lookup finding, got:\n%s",
+			kind:     "nested_lookup_loop",
+			failure2: "expected nested_lookup_loop kind, got %#v",
+		},
+		{
+			name: "DetectsPairwiseComparisonLoop",
+			source: `package sample
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+type span struct {
+	start int
+	end int
+}
 
-	if !strings.Contains(
-		joined,
-		`nested range scans customers for each orders item; build a lookup map before the outer loop`,
-	) {
-		t.Fatalf("expected nested lookup finding, got:\n%s", joined)
+func f(spans []span) {
+	for _, left := range spans {
+		for _, right := range spans {
+			if left.start < right.end && right.start < left.end {
+				println("overlap")
+			}
+		}
 	}
+}
+`,
+			want:     `nested range compares pairs from spans; consider sort/two-pointer, sweep line, or bucketing for growing inputs`,
+			failure:  "expected pairwise comparison finding, got:\n%s",
+			kind:     "pairwise_comparison_loop",
+			failure2: "expected pairwise_comparison_loop kind, got %#v",
+		},
+	})
+}
 
-	if !hasIssueKind(issues, "nested_lookup_loop") {
-		t.Fatalf("expected nested_lookup_loop kind, got %#v", issues)
+func TestDetectsNetworkCallsInLoops(t *testing.T) {
+	t.Parallel()
+
+	runDetectsLoopPerformanceSmells(t, []detectsLoopPerformanceSmellsCase{
+		{
+			name: "DetectsNetworkCallInsideLoop",
+			source: `package sample
+
+import "net/http"
+
+func f(urls []string) {
+	for _, url := range urls {
+		http.Get(url)
 	}
+}
+`,
+			want:     `network call http.Get inside loop can become N+1 work; batch fetch or move request outside loop`,
+			failure:  "expected network call loop finding, got:\n%s",
+			kind:     loopExternalCallKind,
+			failure2: "expected loop_external_call kind, got %#v",
+		},
+		{
+			name: "DetectsNetworkCallWithLoopDerivedTemp",
+			source: `package sample
+
+import "net/http"
+
+func f(ids []string, baseURL string) {
+	for _, id := range ids {
+		url := baseURL + "/" + id
+		http.Get(url)
+	}
+}
+`,
+			want:     `network call http.Get inside loop can become N+1 work; batch fetch or move request outside loop`,
+			failure:  "expected network call loop finding through temp, got:\n%s",
+			kind:     loopExternalCallKind,
+			failure2: "expected loop_external_call kind, got %#v",
+		},
+	})
 }
 
 func TestSkipsNestedLookupLoopWithSideEffectStmt(t *testing.T) {
@@ -358,43 +425,6 @@ func f(orders []order, customers []customer) {
 	}
 }
 
-func TestDetectsPairwiseComparisonLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type span struct {
-	start int
-	end int
-}
-
-func f(spans []span) {
-	for _, left := range spans {
-		for _, right := range spans {
-			if left.start < right.end && right.start < left.end {
-				println("overlap")
-			}
-		}
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`nested range compares pairs from spans; consider sort/two-pointer, sweep line, or bucketing for growing inputs`,
-	) {
-		t.Fatalf("expected pairwise comparison finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "pairwise_comparison_loop") {
-		t.Fatalf("expected pairwise_comparison_loop kind, got %#v", issues)
-	}
-}
-
 func TestSkipsPairwiseComparisonLoopForShadowedRangeSource(t *testing.T) {
 	t.Parallel()
 
@@ -426,36 +456,6 @@ func f(spans []span) {
 	}
 }
 
-func TestDetectsNetworkCallInsideLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-import "net/http"
-
-func f(urls []string) {
-	for _, url := range urls {
-		http.Get(url)
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`network call http.Get inside loop can become N+1 work; batch fetch or move request outside loop`,
-	) {
-		t.Fatalf("expected network call loop finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "loop_external_call") {
-		t.Fatalf("expected loop_external_call kind, got %#v", issues)
-	}
-}
-
 func TestNetworkLoopCallReceivers(t *testing.T) {
 	t.Parallel()
 
@@ -483,43 +483,12 @@ func f(requests []*http.Request, client *http.Client, wrapped wrappedClient, ali
 	var calls []string
 
 	for _, issue := range lintInDir(t, tmp) {
-		if issue.Kind == "loop_external_call" {
+		if issue.Kind == loopExternalCallKind {
 			calls = append(calls, issue.Message)
 		}
 	}
 
 	if len(calls) != 5 || strings.Contains(strings.Join(calls, "\n"), "Header.Get") {
 		t.Fatalf("want five client calls and no header reads, got %v", calls)
-	}
-}
-
-func TestDetectsNetworkCallWithLoopDerivedTemp(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-import "net/http"
-
-func f(ids []string, baseURL string) {
-	for _, id := range ids {
-		url := baseURL + "/" + id
-		http.Get(url)
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`network call http.Get inside loop can become N+1 work; batch fetch or move request outside loop`,
-	) {
-		t.Fatalf("expected network call loop finding through temp, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "loop_external_call") {
-		t.Fatalf("expected loop_external_call kind, got %#v", issues)
 	}
 }

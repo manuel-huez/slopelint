@@ -6,11 +6,42 @@ import (
 	"testing"
 )
 
-func TestDetectsUnreachableSwitchCases(t *testing.T) {
+const wantEmptyStringAlwaysFalse = `condition "s == \"\"" is always false here`
+
+type switchFlowKeepsAnalyzingFunctionCase struct {
+	name, source, want, failure string
+}
+
+func runSwitchFlowKeepsAnalyzingFunction(
+	t *testing.T,
+	cases []switchFlowKeepsAnalyzingFunctionCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+
+			joined := joinMessages(issues)
+			if !strings.Contains(joined, test.want) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestSwitchFlowKeepsAnalyzingFunction(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runSwitchFlowKeepsAnalyzingFunction(t, []switchFlowKeepsAnalyzingFunctionCase{
+		{
+			name: "DetectsUnreachableSwitchCases",
+			source: `package sample
 
 type Status string
 
@@ -29,21 +60,13 @@ func f(s Status) {
 		}
 	}
 }
-`)
-
-	issues := lintInDir(t, tmp)
-
-	joined := joinMessages(issues)
-	if !strings.Contains(joined, `switch case "Done" is unreachable here`) {
-		t.Fatalf("expected unreachable switch case, got:\n%s", joined)
-	}
-}
-
-func TestSelectDoesNotBlindWholeFunction(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    `switch case "Done" is unreachable here`,
+			failure: "expected unreachable switch case, got:\n%s",
+		},
+		{
+			name: "SelectDoesNotBlindWholeFunction",
+			source: `package sample
 
 func f(s string, ch chan int) {
 	if s == "" { return }
@@ -53,21 +76,13 @@ func f(s string, ch chan int) {
 	}
 	if s == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "s == \"\"" is always false here`) {
-		t.Fatalf("expected check after select to still be analyzed, got:\n%s", joined)
-	}
-}
-
-func TestTypeSwitchDoesNotBlindWholeFunction(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    wantEmptyStringAlwaysFalse,
+			failure: "expected check after select to still be analyzed, got:\n%s",
+		},
+		{
+			name: "TypeSwitchDoesNotBlindWholeFunction",
+			source: `package sample
 
 func f(s string, v any) {
 	if s == "" { return }
@@ -79,21 +94,13 @@ func f(s string, v any) {
 	}
 	if s == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "s == \"\"" is always false here`) {
-		t.Fatalf("expected check after type switch to still be analyzed, got:\n%s", joined)
-	}
-}
-
-func TestLabeledBreakDoesNotBlindWholeFunction(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    wantEmptyStringAlwaysFalse,
+			failure: "expected check after type switch to still be analyzed, got:\n%s",
+		},
+		{
+			name: "LabeledBreakDoesNotBlindWholeFunction",
+			source: `package sample
 
 func f(n int, s string) {
 	if s == "" { return }
@@ -105,21 +112,20 @@ Loop:
 	}
 	if s == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "s == \"\"" is always false here`) {
-		t.Fatalf("expected labeled break function to still be analyzed, got:\n%s", joined)
-	}
+`,
+			want:    wantEmptyStringAlwaysFalse,
+			failure: "expected labeled break function to still be analyzed, got:\n%s",
+		},
+	})
 }
 
-func TestLabeledContinueDoesNotBlindWholeFunction(t *testing.T) {
+func TestLabeledContinueAndFallthroughFlow(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runSwitchFlowKeepsAnalyzingFunction(t, []switchFlowKeepsAnalyzingFunctionCase{
+		{
+			name: "LabeledContinueDoesNotBlindWholeFunction",
+			source: `package sample
 
 func f(items []int, s string) {
 	if s == "" { return }
@@ -131,14 +137,38 @@ Outer:
 	}
 	if s == "" { println("bad") }
 }
-`)
+`,
+			want:    wantEmptyStringAlwaysFalse,
+			failure: "expected labeled continue function to still be analyzed, got:\n%s",
+		},
+		{
+			name: "InfersPredicateFactsThroughFallthroughSwitch",
+			source: `package sample
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+type Req struct{}
 
-	if !strings.Contains(joined, `condition "s == \"\"" is always false here`) {
-		t.Fatalf("expected labeled continue function to still be analyzed, got:\n%s", joined)
+func valid(req *Req, s string) bool {
+	if req == nil { return false }
+	switch s {
+	case "a":
+		fallthrough
+	case "b":
+		return true
+	default:
+		return false
 	}
+}
+
+func f(req *Req, s string) {
+	ok := valid(req, s)
+	if !ok { return }
+	if req == nil { println("bad") }
+}
+`,
+			want:    `condition "req == nil" is always false here`,
+			failure: "expected fallthrough-backed helper facts, got:\n%s",
+		},
+	})
 }
 
 func TestFallthroughMergesReachableStates(t *testing.T) {
@@ -167,40 +197,5 @@ func f(s string) {
 
 	if strings.Contains(joined, `condition "s == \"a\"" is always false here`) {
 		t.Fatalf("fallthrough should keep prior case state reachable, got:\n%s", joined)
-	}
-}
-
-func TestInfersPredicateFactsThroughFallthroughSwitch(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type Req struct{}
-
-func valid(req *Req, s string) bool {
-	if req == nil { return false }
-	switch s {
-	case "a":
-		fallthrough
-	case "b":
-		return true
-	default:
-		return false
-	}
-}
-
-func f(req *Req, s string) {
-	ok := valid(req, s)
-	if !ok { return }
-	if req == nil { println("bad") }
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected fallthrough-backed helper facts, got:\n%s", joined)
 	}
 }

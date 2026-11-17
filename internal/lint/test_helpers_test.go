@@ -322,3 +322,21 @@ func namedObject(files []*ast.File, info *types.Info, name string) *types.Var {
 
 	return nil
 }
+
+func requireDeadCode(t *testing.T, dir string, kept, dead []string) {
+	t.Helper()
+
+	joined := joinMessages(lintInDir(t, dir))
+
+	for _, message := range kept {
+		if strings.Contains(joined, message) {
+			t.Fatalf("%s reported dead, got:\n%s", message, joined)
+		}
+	}
+
+	for _, message := range dead {
+		if !strings.Contains(joined, message) {
+			t.Fatalf("missing dead-code finding %q, got:\n%s", message, joined)
+		}
+	}
+}

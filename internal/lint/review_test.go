@@ -580,7 +580,7 @@ func TestCodeReviewPolicyChangeSelectsNewRecords(t *testing.T) {
 	bumped.Schema++
 
 	review := codeReview{reviewer: model, policy: bumped, cacheRoot: cacheRoot, cacheEnabled: true}
-	if _, err := review.run(t.Context(), []string{sourcePath}, nil); err != nil {
+	if _, _, err := review.run(t.Context(), []string{sourcePath}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -900,6 +900,8 @@ func keepAllForTest(item codeReviewItem, _ string) codeReviewVerdict {
 		return codeReviewVerdict{Verdict: codeReviewSound}
 	case codeReviewSerialItem:
 		return codeReviewVerdict{Verdict: codeReviewSerialOK}
+	case codeReviewTestGroupItem:
+		return codeReviewVerdict{Verdict: codeReviewDistinct}
 	}
 
 	return codeReviewVerdict{Verdict: codeReviewKeep}

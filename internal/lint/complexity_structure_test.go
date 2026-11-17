@@ -98,11 +98,40 @@ var errBad error
 	}
 }
 
-func TestSkipsTopInputGuards(t *testing.T) {
+type skipsInputGuardsBetweenStatementsCase struct {
+	name, source, failure string
+}
+
+func runSkipsInputGuardsBetweenStatements(
+	t *testing.T,
+	cases []skipsInputGuardsBetweenStatementsCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, `input guard returns are interleaved`) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestSkipsTopAndInterleavedErrorGuards(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runSkipsInputGuardsBetweenStatements(t, []skipsInputGuardsBetweenStatementsCase{
+		{
+			name: "SkipsTopInputGuards",
+			source: `package sample
 
 type req struct {
 	name string
@@ -127,14 +156,108 @@ func f(value req) error {
 }
 
 var errBad error
-`)
+`,
+			failure: "unexpected scattered guard finding for top guards, got:\n%s",
+		},
+		{
+			name: "SkipsInterleavedErrorGuards",
+			source: `package sample
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for top guards, got:\n%s", joined)
+func f(first func() error, second func() error, third func() error) error {
+	err := first()
+	if err != nil {
+		return err
 	}
+
+	err = second()
+	if err != nil {
+		return err
+	}
+
+	err = third()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+`,
+			failure: "unexpected scattered guard finding for error guards, got:\n%s",
+		},
+	})
+}
+
+func TestSkipsNilReturnsAndPackageStateGuards(t *testing.T) {
+	t.Parallel()
+
+	runSkipsInputGuardsBetweenStatements(t, []skipsInputGuardsBetweenStatementsCase{
+		{
+			name: "SkipsInterleavedNilSuccessReturns",
+			source: `package sample
+
+type req struct {
+	name string
+	kind string
+	size int
+}
+
+func f(value req) (req, error) {
+	if value.name == "" {
+		return value, nil
+	}
+
+	println("prepare")
+
+	if value.kind == "" {
+		return value, nil
+	}
+
+	println("build")
+
+	if value.size == 0 {
+		return value, nil
+	}
+
+	return req{}, errBad
+}
+
+var errBad error
+`,
+			failure: "unexpected scattered guard finding for nil success returns, got:\n%s",
+		},
+		{
+			name: "SkipsPackageVarStateChecksAsInputGuards",
+			source: `package sample
+
+var featureEnabled bool
+var stateReady bool
+var allowFallback bool
+
+func f() error {
+	if featureEnabled {
+		return errBad
+	}
+
+	println("prepare")
+
+	if stateReady {
+		return errBad
+	}
+
+	println("build")
+
+	if allowFallback {
+		return errBad
+	}
+
+	return nil
+}
+
+var errBad error
+`,
+			failure: "unexpected scattered guard finding for package vars, got:\n%s",
+		},
+	})
 }
 
 func TestInputGuardPreparation(t *testing.T) {
@@ -259,129 +382,40 @@ func write(writer io.Writer, payload []byte) error {
 	}
 }
 
-func TestSkipsInterleavedErrorGuards(t *testing.T) {
+type skipsChecksThatAreNotInputGuardsCase struct {
+	name, source, failure string
+}
+
+func runSkipsChecksThatAreNotInputGuards(
+	t *testing.T,
+	cases []skipsChecksThatAreNotInputGuardsCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, `input guard returns are interleaved`) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestSkipsConstantAndConstructorGuards(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func f(first func() error, second func() error, third func() error) error {
-	err := first()
-	if err != nil {
-		return err
-	}
-
-	err = second()
-	if err != nil {
-		return err
-	}
-
-	err = third()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for error guards, got:\n%s", joined)
-	}
-}
-
-func TestSkipsInterleavedNilSuccessReturns(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type req struct {
-	name string
-	kind string
-	size int
-}
-
-func f(value req) (req, error) {
-	if value.name == "" {
-		return value, nil
-	}
-
-	println("prepare")
-
-	if value.kind == "" {
-		return value, nil
-	}
-
-	println("build")
-
-	if value.size == 0 {
-		return value, nil
-	}
-
-	return req{}, errBad
-}
-
-var errBad error
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for nil success returns, got:\n%s", joined)
-	}
-}
-
-func TestSkipsPackageVarStateChecksAsInputGuards(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-var featureEnabled bool
-var stateReady bool
-var allowFallback bool
-
-func f() error {
-	if featureEnabled {
-		return errBad
-	}
-
-	println("prepare")
-
-	if stateReady {
-		return errBad
-	}
-
-	println("build")
-
-	if allowFallback {
-		return errBad
-	}
-
-	return nil
-}
-
-var errBad error
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for package vars, got:\n%s", joined)
-	}
-}
-
-func TestSkipsConstantOnlyChecksAsInputGuards(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runSkipsChecksThatAreNotInputGuards(t, []skipsChecksThatAreNotInputGuardsCase{
+		{
+			name: "SkipsConstantOnlyChecksAsInputGuards",
+			source: `package sample
 
 const featureEnabled = true
 
@@ -408,21 +442,12 @@ func f() error {
 }
 
 var errBad error
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for constant checks, got:\n%s", joined)
-	}
-}
-
-func TestSkipsNewConstructorErrorGuards(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure: "unexpected scattered guard finding for constant checks, got:\n%s",
+		},
+		{
+			name: "SkipsNewConstructorErrorGuards",
+			source: `package sample
 
 type store struct{}
 type manifestResult struct{}
@@ -468,24 +493,19 @@ func f(root string, universeID string, modelRef string) (manifestResult, refResu
 
 	return manifest, ref, resolved, nil
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf(
-			"unexpected scattered guard finding for constructor error guards, got:\n%s",
-			joined,
-		)
-	}
+`,
+			failure: "unexpected scattered guard finding for constructor error guards, got:\n%s",
+		},
+	})
 }
 
-func TestSkipsComparatorDecisionLadder(t *testing.T) {
+func TestSkipsComparatorAndMethodPredicateGuards(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runSkipsChecksThatAreNotInputGuards(t, []skipsChecksThatAreNotInputGuardsCase{
+		{
+			name: "SkipsComparatorDecisionLadder",
+			source: `package sample
 
 type row struct {
 	name string
@@ -508,21 +528,12 @@ func less(left row, right row) bool {
 
 	return false
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for comparator, got:\n%s", joined)
-	}
-}
-
-func TestSkipsMethodPredicateInputGuards(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure: "unexpected scattered guard finding for comparator, got:\n%s",
+		},
+		{
+			name: "SkipsMethodPredicateInputGuards",
+			source: `package sample
 
 type id string
 
@@ -547,21 +558,19 @@ func f(first id, second id, third id) error {
 }
 
 var errBad error
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for method predicates, got:\n%s", joined)
-	}
+`,
+			failure: "unexpected scattered guard finding for method predicates, got:\n%s",
+		},
+	})
 }
 
 func TestSkipsValidationPrepBetweenInputGuards(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runSkipsChecksThatAreNotInputGuards(t, []skipsChecksThatAreNotInputGuardsCase{
+		{
+			name: "SkipsValidationPrepBetweenInputGuards",
+			source: `package sample
 
 import "strings"
 
@@ -606,21 +615,19 @@ func f(instrumentID id, tradeDate int, dteBucket string, moneynessBucket string,
 }
 
 var errBad error
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf("unexpected scattered guard finding for validation prep, got:\n%s", joined)
-	}
+`,
+			failure: "unexpected scattered guard finding for validation prep, got:\n%s",
+		},
+	})
 }
 
 func TestSkipsExportedValidationPrepBetweenInputGuards(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runSkipsChecksThatAreNotInputGuards(t, []skipsChecksThatAreNotInputGuardsCase{
+		{
+			name: "SkipsExportedValidationPrepBetweenInputGuards",
+			source: `package sample
 
 import "strings"
 
@@ -660,15 +667,8 @@ func f(name string, kind string, size int) error {
 }
 
 var errBad error
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `input guard returns are interleaved`) {
-		t.Fatalf(
-			"unexpected scattered guard finding for exported validation prep, got:\n%s",
-			joined,
-		)
-	}
+`,
+			failure: "unexpected scattered guard finding for exported validation prep, got:\n%s",
+		},
+	})
 }

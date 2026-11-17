@@ -11,6 +11,10 @@ import (
 const tableTestCaseLimit = 10
 const repeatedFixtureMinLength = 16
 
+// RepeatedTestFixture is the kind of a fixture literal written three times;
+// code review drops test group findings over the same tests.
+const RepeatedTestFixture = "repeated_test_fixture"
+
 type tableTestCheck struct {
 	ruleEnv
 }
@@ -105,7 +109,7 @@ func (l tableTestCheck) checkRepeatedFixtures() {
 			if counts[contents] == reportCount {
 				l.report(
 					call.Args[2].Pos(),
-					"repeated_test_fixture",
+					RepeatedTestFixture,
 					fmt.Sprintf(
 						"test fixture content is repeated %d times; centralize it in the owning test builder",
 						reportCount,

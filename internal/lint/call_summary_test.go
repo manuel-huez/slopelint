@@ -6,11 +6,41 @@ import (
 	"testing"
 )
 
-func TestContractCommentsEstablishFactsAfterCall(t *testing.T) {
+type infersFactsAcrossCallsCase struct {
+	name, source, failure, failure2 string
+}
+
+func runInfersFactsAcrossCalls(t *testing.T, cases []infersFactsAcrossCallsCase) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if !strings.Contains(joined, `condition "req == nil" is always false here`) {
+				t.Fatalf(test.failure, joined)
+			}
+
+			if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
+				t.Fatalf(test.failure2, joined)
+			}
+		})
+	}
+}
+
+func TestInfersFactsAcrossCallBoundary(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runInfersFactsAcrossCalls(t, []infersFactsAcrossCallsCase{
+		{
+			name: "ContractCommentsEstablishFactsAfterCall",
+			source: `package sample
 
 type Req struct { Name string }
 
@@ -24,42 +54,13 @@ func f(req *Req) {
 	if req.Name == "" { println("bad") }
 }
 
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected contract-backed nil check, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
-		t.Fatalf("expected contract-backed field check, got:\n%s", joined)
-	}
-}
-
-func TestReportsMalformedContractComments(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-// check validates value.
-//slopelint:ensures missing != nil
-func check(value *int) {}
-`)
-
-	joined := joinMessages(lintInDir(t, tmp))
-	if !strings.Contains(joined, `invalid slopelint:ensures contract`) {
-		t.Fatalf("expected malformed contract diagnostic, got:\n%s", joined)
-	}
-}
-
-func TestInfersGuardHelperFactsAcrossCallBoundary(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure:  "expected contract-backed nil check, got:\n%s",
+			failure2: "expected contract-backed field check, got:\n%s",
+		},
+		{
+			name: "InfersGuardHelperFactsAcrossCallBoundary",
+			source: `package sample
 
 type Req struct { Name string }
 
@@ -73,25 +74,13 @@ func f(req *Req) {
 	if req == nil { println("bad") }
 	if req.Name == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected inferred helper nil check, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
-		t.Fatalf("expected inferred helper field check, got:\n%s", joined)
-	}
-}
-
-func TestInfersPredicateFactsAcrossCallBoundary(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure:  "expected inferred helper nil check, got:\n%s",
+			failure2: "expected inferred helper field check, got:\n%s",
+		},
+		{
+			name: "InfersPredicateFactsAcrossCallBoundary",
+			source: `package sample
 
 type Req struct { Name string }
 
@@ -106,25 +95,20 @@ func f(req *Req) {
 	if req == nil { println("bad") }
 	if req.Name == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected predicate-backed nil check, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
-		t.Fatalf("expected predicate-backed field check, got:\n%s", joined)
-	}
+`,
+			failure:  "expected predicate-backed nil check, got:\n%s",
+			failure2: "expected predicate-backed field check, got:\n%s",
+		},
+	})
 }
 
-func TestInfersPredicateFactsAcrossMultipleCalls(t *testing.T) {
+func TestPropagatesPredicateFactsAcrossCalls(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runInfersFactsAcrossCalls(t, []infersFactsAcrossCallsCase{
+		{
+			name: "InfersPredicateFactsAcrossMultipleCalls",
+			source: `package sample
 
 type Req struct { Name string }
 
@@ -143,25 +127,13 @@ func f(req *Req) {
 	if req == nil { println("bad") }
 	if req.Name == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected multi-hop nil check, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
-		t.Fatalf("expected multi-hop field check, got:\n%s", joined)
-	}
-}
-
-func TestPropagatesPredicateFactsViaBoolVariable(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure:  "expected multi-hop nil check, got:\n%s",
+			failure2: "expected multi-hop field check, got:\n%s",
+		},
+		{
+			name: "PropagatesPredicateFactsViaBoolVariable",
+			source: `package sample
 
 type Req struct { Name string }
 
@@ -177,25 +149,13 @@ func f(req *Req) {
 	if req == nil { println("bad") }
 	if req.Name == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected bool-var nil check, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
-		t.Fatalf("expected bool-var field check, got:\n%s", joined)
-	}
-}
-
-func TestPropagatesPredicateFactsViaCopiedBoolVariable(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			failure:  "expected bool-var nil check, got:\n%s",
+			failure2: "expected bool-var field check, got:\n%s",
+		},
+		{
+			name: "PropagatesPredicateFactsViaCopiedBoolVariable",
+			source: `package sample
 
 type Req struct { Name string }
 
@@ -212,25 +172,20 @@ func f(req *Req) {
 	if req == nil { println("bad") }
 	if req.Name == "" { println("bad") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected copied bool-var nil check, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
-		t.Fatalf("expected copied bool-var field check, got:\n%s", joined)
-	}
+`,
+			failure:  "expected copied bool-var nil check, got:\n%s",
+			failure2: "expected copied bool-var field check, got:\n%s",
+		},
+	})
 }
 
 func TestPropagatesNilFactsViaErrorVariable(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runInfersFactsAcrossCalls(t, []infersFactsAcrossCallsCase{
+		{
+			name: "PropagatesNilFactsViaErrorVariable",
+			source: `package sample
 
 import "errors"
 
@@ -248,17 +203,27 @@ func f(req *Req) {
 	if req == nil { println("bad") }
 	if req.Name == "" { println("bad") }
 }
+`,
+			failure:  "expected error-var nil check, got:\n%s",
+			failure2: "expected error-var field check, got:\n%s",
+		},
+	})
+}
+
+func TestReportsMalformedContractComments(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+// check validates value.
+//slopelint:ensures missing != nil
+func check(value *int) {}
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `condition "req == nil" is always false here`) {
-		t.Fatalf("expected error-var nil check, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `condition "req.Name == \"\"" is always false here`) {
-		t.Fatalf("expected error-var field check, got:\n%s", joined)
+	joined := joinMessages(lintInDir(t, tmp))
+	if !strings.Contains(joined, `invalid slopelint:ensures contract`) {
+		t.Fatalf("expected malformed contract diagnostic, got:\n%s", joined)
 	}
 }
 

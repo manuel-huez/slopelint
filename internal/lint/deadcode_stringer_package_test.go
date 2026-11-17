@@ -6,12 +6,15 @@ import (
 	"testing"
 )
 
-func TestRepoDeadCodeKeepsFmtStringerThroughForwardedPackageAny(t *testing.T) {
+func TestRepoDeadCodeKeepsFmtStringerThroughPackageAny(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
+	for _, test := range []struct {
+		name, source, source2, failure string
+	}{
+		{
+			name: "RepoDeadCodeKeepsFmtStringerThroughForwardedPackageAny",
+			source: `package model
 
 type Digest string
 
@@ -21,8 +24,8 @@ func (Digest) String() string {
 
 var Value any = Wrapped
 var Wrapped any = Digest("x")
-`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+			source2: `package lib
 
 import (
 	"fmt"
@@ -33,22 +36,12 @@ import (
 func Live() string {
 	return fmt.Sprint(model.Value)
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt package any Stringer method reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFmtStringerThroughPackageAnyInit(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "model", "model.go"), `package model
+`,
+			failure: "fmt package any Stringer method reported dead, got:\n%s",
+		},
+		{
+			name: "RepoDeadCodeKeepsFmtStringerThroughPackageAnyInit",
+			source: `package model
 
 type Digest string
 
@@ -61,8 +54,8 @@ var Value any
 func init() {
 	Value = Digest("x")
 }
-`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+			source2: `package lib
 
 import (
 	"fmt"
@@ -73,13 +66,25 @@ import (
 func Live() string {
 	return fmt.Sprint(model.Value)
 }
-`)
+`,
+			failure: "fmt package init any Stringer method reported dead, got:\n%s",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+			tmp := newTestModule(t)
+			writeTestMain(t, tmp, `	_ = lib.Live()`)
+			writeFile(t, filepath.Join(tmp, "model", "model.go"), test.source)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source2)
 
-	if strings.Contains(joined, `method "String"`) {
-		t.Fatalf("fmt package init any Stringer method reported dead, got:\n%s", joined)
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, `method "String"`) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
 	}
 }
 

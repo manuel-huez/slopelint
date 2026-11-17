@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const wantSecondCloneOfFirst = `function "Second" has same supported behavior as "First"`
+
 func TestBehaviorCloneNormalizesEquivalentFunctionTransformations(t *testing.T) {
 	t.Parallel()
 
@@ -351,11 +353,38 @@ func Update(value, category, ending, beginning, namespace string) string {
 	}
 }
 
-func TestBehaviorClonePropagatesThroughDeepLocalCalls(t *testing.T) {
+type behaviorCloneMatchesLocalCallShapesCase struct {
+	name, source, want, failure string
+}
+
+func runBehaviorCloneMatchesLocalCallShapes(
+	t *testing.T,
+	cases []behaviorCloneMatchesLocalCallShapesCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			joined := joinMessages(lintInDir(t, tmp))
+			if !strings.Contains(joined, test.want) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestBehaviorCloneMatchesLocalCallsAndClosures(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runBehaviorCloneMatchesLocalCallShapes(t, []behaviorCloneMatchesLocalCallShapesCase{
+		{
+			name: "BehaviorClonePropagatesThroughDeepLocalCalls",
+			source: `package sample
 
 func Left(value int) int {
 	next := left1(value)
@@ -378,12 +407,84 @@ func right2(value int) int { return right3(value) + 1 }
 func right3(value int) int { return right4(value) + 1 }
 func right4(value int) int { return right5(value) + 1 }
 func right5(value int) int { return value + 1 }
-`)
+`,
+			want:    `function "Right" has same supported behavior as "Left"`,
+			failure: "expected clone through more than four local calls, got:\n%s",
+		},
+		{
+			name: "BehaviorCloneMatchesStaticLocalClosures",
+			source: `package sample
 
-	joined := joinMessages(lintInDir(t, tmp))
-	if !strings.Contains(joined, `function "Right" has same supported behavior as "Left"`) {
-		t.Fatalf("expected clone through more than four local calls, got:\n%s", joined)
-	}
+func First(values []int) int {
+	total := 0
+	apply := func(value int) { total += value }
+	for _, value := range values { apply(value) }
+	if total > 10 { return total * 2 }
+	return total
+}
+
+func Second(items []int) int {
+	sum := 0
+	add := func(item int) { sum += item }
+	for _, item := range items { add(item) }
+	if sum > 10 { return sum * 2 }
+	return sum
+}
+`,
+			want:    wantSecondCloneOfFirst,
+			failure: "expected static closure clone, got:\n%s",
+		},
+		{
+			name: "BehaviorCloneMatchesDynamicFunctionParameters",
+			source: `package sample
+
+func First(apply func(int) int, value int) int {
+	result := apply(value)
+	if result > 10 { return result * 2 }
+	return result
+}
+
+func Second(transform func(int) int, input int) int {
+	result := transform(input)
+	if result > 10 { return result * 2 }
+	return result
+}
+`,
+			want:    wantSecondCloneOfFirst,
+			failure: "expected dynamic function-parameter clone, got:\n%s",
+		},
+	})
+}
+
+func TestBehaviorCloneMatchesReflectionAndUnsafeOperations(t *testing.T) {
+	t.Parallel()
+
+	runBehaviorCloneMatchesLocalCallShapes(t, []behaviorCloneMatchesLocalCallShapesCase{
+		{
+			name: "BehaviorCloneMatchesReflectionAndUnsafeOperations",
+			source: `package sample
+
+import (
+	"reflect"
+	"unsafe"
+)
+
+func First(value *int) uintptr {
+	reflected := reflect.ValueOf(value)
+	if reflected.IsNil() { return 0 }
+	return uintptr(unsafe.Pointer(value))
+}
+
+func Second(input *int) uintptr {
+	reflected := reflect.ValueOf(input)
+	if reflected.IsNil() { return 0 }
+	return uintptr(unsafe.Pointer(input))
+}
+`,
+			want:    wantSecondCloneOfFirst,
+			failure: "expected reflection and unsafe operation clone, got:\n%s",
+		},
+	})
 }
 
 func TestBehaviorCloneHandlesRecursiveFunctions(t *testing.T) {
@@ -415,90 +516,6 @@ func Changed(value int) int {
 
 	if strings.Contains(joined, `function "Changed" has same supported behavior`) {
 		t.Fatalf("unexpected recursive clone with changed base case, got:\n%s", joined)
-	}
-}
-
-func TestBehaviorCloneMatchesStaticLocalClosures(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func First(values []int) int {
-	total := 0
-	apply := func(value int) { total += value }
-	for _, value := range values { apply(value) }
-	if total > 10 { return total * 2 }
-	return total
-}
-
-func Second(items []int) int {
-	sum := 0
-	add := func(item int) { sum += item }
-	for _, item := range items { add(item) }
-	if sum > 10 { return sum * 2 }
-	return sum
-}
-`)
-
-	joined := joinMessages(lintInDir(t, tmp))
-	if !strings.Contains(joined, `function "Second" has same supported behavior as "First"`) {
-		t.Fatalf("expected static closure clone, got:\n%s", joined)
-	}
-}
-
-func TestBehaviorCloneMatchesDynamicFunctionParameters(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func First(apply func(int) int, value int) int {
-	result := apply(value)
-	if result > 10 { return result * 2 }
-	return result
-}
-
-func Second(transform func(int) int, input int) int {
-	result := transform(input)
-	if result > 10 { return result * 2 }
-	return result
-}
-`)
-
-	joined := joinMessages(lintInDir(t, tmp))
-	if !strings.Contains(joined, `function "Second" has same supported behavior as "First"`) {
-		t.Fatalf("expected dynamic function-parameter clone, got:\n%s", joined)
-	}
-}
-
-func TestBehaviorCloneMatchesReflectionAndUnsafeOperations(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-import (
-	"reflect"
-	"unsafe"
-)
-
-func First(value *int) uintptr {
-	reflected := reflect.ValueOf(value)
-	if reflected.IsNil() { return 0 }
-	return uintptr(unsafe.Pointer(value))
-}
-
-func Second(input *int) uintptr {
-	reflected := reflect.ValueOf(input)
-	if reflected.IsNil() { return 0 }
-	return uintptr(unsafe.Pointer(input))
-}
-`)
-
-	joined := joinMessages(lintInDir(t, tmp))
-	if !strings.Contains(joined, `function "Second" has same supported behavior as "First"`) {
-		t.Fatalf("expected reflection and unsafe operation clone, got:\n%s", joined)
 	}
 }
 

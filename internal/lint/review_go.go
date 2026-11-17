@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -68,7 +69,182 @@ func collectGoCodeReviewDeclarations(
 		}
 	}
 
-	return declarations, nil
+	if !source.test {
+		return declarations, nil
+	}
+
+	tests, helpers := source.groupedTests()
+	testGroups, err := testGroupDeclarations(filename, source.lines, tests, helpers, policy)
+
+	return append(declarations, testGroups...), err
+}
+
+func (source codeReviewSource) groupedTests() ([]groupedTest, map[string]string) {
+	var tests []groupedTest
+
+	helpers := make(map[string]string)
+	packages := make(map[string]bool)
+
+	for _, spec := range source.file.Imports {
+		packages[goImportName(spec)] = true
+	}
+
+	for _, decl := range source.file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+
+		if !runnableGoTest(fn) {
+			if fn.Recv == nil {
+				helpers[fn.Name.Name] = "func " + fn.Name.Name +
+					strings.TrimPrefix(types.ExprString(fn.Type), "func")
+			}
+
+			continue
+		}
+
+		start := fn.Pos()
+		if fn.Doc != nil {
+			start = fn.Doc.Pos()
+		}
+
+		tests = append(tests, groupedTest{
+			name:      fn.Name.Name,
+			startLine: source.position(start).Line,
+			endLine:   source.position(fn.End()).Line,
+			position:  source.position(fn.Pos()),
+			calls:     goTestCalls(fn, packages),
+		})
+	}
+
+	return tests, helpers
+}
+
+// goTestCalls returns the distinct callees of a test that can be steps it
+// shares with others: functions as name or package.name, and methods as
+// .name, since tests name their receivers freely. Calls on *testing.T
+// values, local function values, builtins, and the formatting, comparison,
+// and assertion packages every test uses tell tests apart by nothing.
+func goTestCalls(fn *ast.FuncDecl, packages map[string]bool) []string {
+	scope := goTestScope{
+		packages:   packages,
+		locals:     make(map[string]bool),
+		testValues: make(map[string]bool),
+	}
+	ast.Inspect(fn, scope.declare)
+
+	calls := make(map[string]bool)
+
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		// A generic call names its function before the type arguments.
+		fun := ast.Unparen(call.Fun)
+		if index, ok := fun.(*ast.IndexExpr); ok {
+			fun = index.X
+		} else if index, ok := fun.(*ast.IndexListExpr); ok {
+			fun = index.X
+		}
+
+		if name := scope.callee(fun); name != "" {
+			calls[name] = true
+		}
+
+		return true
+	})
+
+	return slices.Sorted(maps.Keys(calls))
+}
+
+// goTestScope holds the names a test binds: locals shadow functions, and
+// testValues are its *testing.T values.
+type goTestScope struct {
+	packages   map[string]bool
+	locals     map[string]bool
+	testValues map[string]bool
+}
+
+func (scope goTestScope) declare(node ast.Node) bool {
+	var names []*ast.Ident
+
+	switch node := node.(type) {
+	case *ast.FuncType:
+		for _, field := range node.Params.List {
+			for _, name := range field.Names {
+				scope.testValues[name.Name] = types.ExprString(field.Type) == "*testing.T"
+			}
+
+			names = append(names, field.Names...)
+		}
+	case *ast.AssignStmt:
+		if node.Tok == token.DEFINE {
+			for _, lhs := range node.Lhs {
+				if ident, ok := lhs.(*ast.Ident); ok {
+					names = append(names, ident)
+				}
+			}
+		}
+	case *ast.ValueSpec:
+		names = node.Names
+	}
+
+	for _, name := range names {
+		scope.locals[name.Name] = true
+	}
+
+	return true
+}
+
+func (scope goTestScope) callee(fun ast.Expr) string {
+	switch fun := fun.(type) {
+	case *ast.Ident:
+		if types.Universe.Lookup(fun.Name) != nil || scope.locals[fun.Name] {
+			return ""
+		}
+
+		return fun.Name
+	case *ast.SelectorExpr:
+		ident, _ := fun.X.(*ast.Ident)
+		if ident == nil || !scope.packages[ident.Name] && !scope.testValues[ident.Name] {
+			return "." + fun.Sel.Name
+		}
+
+		if scope.testValues[ident.Name] || goNoiseCallPackages[ident.Name] {
+			return ""
+		}
+
+		return ident.Name + "." + fun.Sel.Name
+	default:
+		return ""
+	}
+}
+
+// goImportName approximates the name an import binds without loading it:
+// the alias, or the last path element that is not a major version.
+func goImportName(spec *ast.ImportSpec) string {
+	if spec.Name != nil {
+		return spec.Name.Name
+	}
+
+	parts := strings.Split(strings.Trim(spec.Path.Value, `"`), "/")
+	name := parts[len(parts)-1]
+
+	if len(parts) > 1 && len(name) > 1 && name[0] == 'v' &&
+		strings.Trim(name[1:], "0123456789") == "" {
+		name = parts[len(parts)-2]
+	}
+
+	return name
+}
+
+var goNoiseCallPackages = map[string]bool{
+	"fmt": true, "errors": true, "strings": true, "bytes": true, "reflect": true,
+	"slices": true, "maps": true, "sort": true, "strconv": true, "math": true,
+	"cmp": true, "assert": true, "require": true,
 }
 
 type codeReviewSource struct {

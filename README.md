@@ -186,6 +186,16 @@ sent to the configured Codex service.** Items:
   each with its suite or class header lines and setup hooks.
 - The `//slopelint:serial <reason>` marker of such a test, judged alone: the
   reason must name shared state the test races on.
+- Test groups: in a file with at least 3 such tests, tests that share 40%
+  of the callees of either (at least 2, or all of a smaller set) form
+  groups, cut in file order at 8 tests and 400 lines. A group that could not
+  save 15 lines even by dropping all its tests but one is skipped. Each group
+  is sent with the one-line signatures of file-local helpers its tests call,
+  and judged `test_repeated_steps` when two or more of its tests repeat one
+  block of setup, call, or assertion steps that a table or shared fixture
+  would replace, saving at least 15 lines. The finding is at the first of
+  those tests and names the others. It is dropped when a `semantic_duplicate`
+  or `repeated_test_fixture` finding lies in one of them.
 
 The model returns one verdict and one sentence of advice per item. The finding
 message is that advice: `comment_noise` (restates code), `comment_excuse`
@@ -209,7 +219,7 @@ missing, the run warns and writes a stamp without review, which CI rejects unles
 `SLOPELINT_CODEX_DESCRIPTIONS=off`.
 
 Verdicts are cached per declaration, keyed by prompt version, model, effort,
-source, and items; each language and rule family has its own prompt version; unchanged declarations cause no model calls. Records accepted
+source, and items; each language and rule family has its own prompt version; unchanged declarations cause no model calls. A test group's source holds only its tests and helper signatures, so edits elsewhere in the file keep its record. Records accepted
 before a failure or SIGINT stay cached.
 
 ### Embedding server
@@ -257,7 +267,7 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Redundant collection guards, loops, and aliases | `append_ceremony`, `range_ceremony`, `temp_alias` |
 | Loop performance traps | `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` |
 | Wrappers, repeated normalization, and comments that restate names | `trivial_wrapper`, `normalization_ceremony`, `serialization_ceremony`, `comment_noise` |
-| Codex [code review](#code-review) of comments, dropped errors, and tests | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error`, `test_trivial`, `test_mock_only`, `test_wasteful`, `test_serial_excuse` |
+| Codex [code review](#code-review) of comments, dropped errors, and tests | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error`, `test_trivial`, `test_mock_only`, `test_wasteful`, `test_serial_excuse`, `test_repeated_steps` |
 | Repeated function or block behavior | `behavior_clone`, `semantic_duplicate` |
 | Overbuilt APIs and signatures | `abstraction_overkill`, `api_overkill`, `result_wrapper`, `generic_naming`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple` |
 | Error panics and sentinel breaks | `prod_must_panic`, `sentinel_error_break` |

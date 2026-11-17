@@ -28,6 +28,9 @@ const (
 	codeReviewErrorItem   = "dropped_error"
 	codeReviewTestItem    = "test"
 	codeReviewSerialItem  = "serial"
+	// codeReviewTestGroupItem spans a comparison unit of tests from one file;
+	// its request holds no other item.
+	codeReviewTestGroupItem = "test_group"
 
 	codeReviewAdviceMaxChars = 240
 	codeReviewAdviceMinWords = 4
@@ -47,12 +50,17 @@ type codeReviewPolicy struct {
 	// suppression rules. Each request keeps only its own language's version,
 	// so Go keys stay as they were and one language's change keeps the
 	// others' records.
-	TypeScriptSchema  int    `json:"typescript_schema,omitempty"`
-	PythonSchema      int    `json:"python_schema,omitempty"`
-	ScriptErrorSchema int    `json:"script_error_schema,omitempty"`
-	ScriptTestSchema  int    `json:"script_test_schema,omitempty"`
-	Model             string `json:"model"`
-	Effort            string `json:"effort"`
+	TypeScriptSchema  int `json:"typescript_schema,omitempty"`
+	PythonSchema      int `json:"python_schema,omitempty"`
+	ScriptErrorSchema int `json:"script_error_schema,omitempty"`
+	ScriptTestSchema  int `json:"script_test_schema,omitempty"`
+	// TestGroupSchema and ScriptTestGroupSchema version the repeated-steps
+	// rules; only test group requests carry them, and those carry no other
+	// version.
+	TestGroupSchema       int    `json:"test_group_schema,omitempty"`
+	ScriptTestGroupSchema int    `json:"script_test_group_schema,omitempty"`
+	Model                 string `json:"model"`
+	Effort                string `json:"effort"`
 }
 
 // codeReviewPolicyVersion must be bumped for any change to the comment,
@@ -83,15 +91,25 @@ const codeReviewScriptErrorPolicyVersion = 3
 // gives it.
 const codeReviewScriptTestPolicyVersion = 3
 
+// codeReviewTestGroupPolicyVersions must be bumped for any change to the
+// repeated-steps prompt of that language or to how tests are grouped into
+// units.
+const (
+	codeReviewTestGroupPolicyVersion       = 1
+	codeReviewScriptTestGroupPolicyVersion = 1
+)
+
 var codeReviewCurrentPolicy = codeReviewPolicy{
-	Schema:            codeReviewPolicyVersion,
-	TestSchema:        codeReviewTestPolicyVersion,
-	TypeScriptSchema:  codeReviewTypeScriptPolicyVersion,
-	PythonSchema:      codeReviewPythonPolicyVersion,
-	ScriptErrorSchema: codeReviewScriptErrorPolicyVersion,
-	ScriptTestSchema:  codeReviewScriptTestPolicyVersion,
-	Model:             "gpt-6.1-terra",
-	Effort:            "low",
+	Schema:                codeReviewPolicyVersion,
+	TestSchema:            codeReviewTestPolicyVersion,
+	TypeScriptSchema:      codeReviewTypeScriptPolicyVersion,
+	PythonSchema:          codeReviewPythonPolicyVersion,
+	ScriptErrorSchema:     codeReviewScriptErrorPolicyVersion,
+	ScriptTestSchema:      codeReviewScriptTestPolicyVersion,
+	TestGroupSchema:       codeReviewTestGroupPolicyVersion,
+	ScriptTestGroupSchema: codeReviewScriptTestGroupPolicyVersion,
+	Model:                 "gpt-6.1-terra",
+	Effort:                "low",
 }
 
 const (
@@ -110,7 +128,12 @@ const (
 
 	codeReviewSerialOK     = "serial_ok"
 	codeReviewSerialExcuse = "serial_excuse"
+
+	codeReviewDistinct = "distinct"
+	codeReviewRepeated = "repeated"
 )
+
+var codeReviewTestGroupFixes = []string{"table", "shared_fixture"}
 
 // codeReviewFindingKinds maps each verdict to its finding kind. Verdicts
 // without a kind accept the item.
@@ -127,6 +150,8 @@ var codeReviewFindingKinds = map[string]string{
 	codeReviewWasteful:     "test_wasteful",
 	codeReviewSerialOK:     "",
 	codeReviewSerialExcuse: "test_serial_excuse",
+	codeReviewDistinct:     "",
+	codeReviewRepeated:     "test_repeated_steps",
 }
 
 var codeReviewVerdicts = map[string][]string{
@@ -138,7 +163,8 @@ var codeReviewVerdicts = map[string][]string{
 		codeReviewMockOnly,
 		codeReviewWasteful,
 	},
-	codeReviewSerialItem: {codeReviewSerialOK, codeReviewSerialExcuse},
+	codeReviewSerialItem:    {codeReviewSerialOK, codeReviewSerialExcuse},
+	codeReviewTestGroupItem: {codeReviewDistinct, codeReviewRepeated},
 }
 
 // codeReviewer returns only records validated against their requests.
@@ -146,14 +172,16 @@ type codeReviewer interface {
 	review(context.Context, []codeReviewRequest, func([]codeReviewRecord) error) error
 }
 
-// codeReviewItem is one judged comment group, dropped-error check, or test
-// function. Lines are relative to the declaration, so moving it in its file
-// keeps its cache key.
+// codeReviewItem is one judged comment group, dropped-error check, test
+// function, or test group. Lines are relative to the declaration, so moving
+// it in its file keeps its cache key. Tests names a test group's tests in
+// file order.
 type codeReviewItem struct {
-	ID    string `json:"id"`
-	Kind  string `json:"kind"`
-	Lines string `json:"lines"`
-	Error string `json:"error,omitempty"`
+	ID    string   `json:"id"`
+	Kind  string   `json:"kind"`
+	Lines string   `json:"lines"`
+	Error string   `json:"error,omitempty"`
+	Tests []string `json:"tests,omitempty"`
 }
 
 // codeReviewRequest is one top-level declaration with numbered source lines.
@@ -169,10 +197,16 @@ type codeReviewRequest struct {
 	Items    []codeReviewItem
 }
 
+// codeReviewVerdict is one item's answer. Tests and Fix belong to a
+// repeated test group: the tests to merge and how. SavedLines is the
+// model's estimate of the lines the merge removes.
 type codeReviewVerdict struct {
-	ID      string `json:"id"`
-	Verdict string `json:"verdict"`
-	Advice  string `json:"advice"`
+	ID         string   `json:"id"`
+	Verdict    string   `json:"verdict"`
+	Advice     string   `json:"advice"`
+	Tests      []string `json:"tests,omitempty"`
+	SavedLines int      `json:"saved_lines,omitempty"`
+	Fix        string   `json:"fix,omitempty"`
 }
 
 // codeReviewRecord is one validated model answer for a declaration, as cached.
@@ -183,10 +217,12 @@ type codeReviewRecord struct {
 }
 
 // codeReviewDeclaration is one occurrence of a request; positions follow
-// request.Items. Identical declarations in several files share one request.
+// request.Items, and tests follow the Tests of a test group item.
+// Identical declarations in several files share one request.
 type codeReviewDeclaration struct {
 	request   codeReviewRequest
 	positions []token.Position
+	tests     []groupedTest
 }
 
 type codeReview struct {
@@ -200,10 +236,10 @@ func (review codeReview) run(
 	ctx context.Context,
 	files []string,
 	candidates []Issue,
-) ([]Issue, error) {
+) ([]Issue, []testGroupFinding, error) {
 	declarations, err := collectCodeReviewDeclarations(files, candidates, review.policy)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	byKey := make(map[string][]codeReviewDeclaration)
@@ -241,11 +277,13 @@ func (review codeReview) run(
 
 	if len(missing) > 0 {
 		if err := review.generate(ctx, missing, &collector); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return codeReviewIssues(keys, byKey, collector.records), nil
+	issues, groups := codeReviewIssues(keys, byKey, collector.records)
+
+	return issues, groups, nil
 }
 
 func (review codeReview) generate(
@@ -253,9 +291,9 @@ func (review codeReview) generate(
 	missing []codeReviewRequest,
 	collector *codeReviewCollector,
 ) error {
-	counts := make(map[outline.Language]int)
+	counts := make(map[string]int)
 	for _, request := range missing {
-		counts[request.Language]++
+		counts[codeReviewFamily(request)]++
 	}
 
 	var languages []string
@@ -370,20 +408,20 @@ func (record codeReviewRecord) validated(request codeReviewRequest) (codeReviewR
 		)
 	}
 
-	kinds := make(map[string]string, len(request.Items))
+	requested := make(map[string]codeReviewItem, len(request.Items))
 	for _, item := range request.Items {
-		kinds[item.ID] = item.Kind
+		requested[item.ID] = item
 	}
 
 	items := make([]codeReviewVerdict, len(record.Items))
 
 	for index, verdict := range record.Items {
-		kind, ok := kinds[verdict.ID]
+		item, ok := requested[verdict.ID]
 		if !ok {
 			return codeReviewRecord{}, fmt.Errorf("unknown or duplicate item id %q", verdict.ID)
 		}
 
-		delete(kinds, verdict.ID)
+		delete(requested, verdict.ID)
 
 		if strings.ContainsFunc(verdict.Advice, unicode.IsControl) {
 			return codeReviewRecord{}, fmt.Errorf(
@@ -392,13 +430,20 @@ func (record codeReviewRecord) validated(request codeReviewRequest) (codeReviewR
 			)
 		}
 
-		if !slices.Contains(codeReviewVerdicts[kind], verdict.Verdict) {
+		if !slices.Contains(codeReviewVerdicts[item.Kind], verdict.Verdict) {
 			return codeReviewRecord{}, fmt.Errorf(
 				"item %s: verdict %q is invalid for %s",
 				verdict.ID,
 				verdict.Verdict,
-				kind,
+				item.Kind,
 			)
+		}
+
+		var err error
+		if item.Kind == codeReviewTestGroupItem {
+			if verdict, err = testGroupVerdict(verdict, item); err != nil {
+				return codeReviewRecord{}, err
+			}
 		}
 
 		verdict.Advice = strings.Join(strings.Fields(verdict.Advice), " ")
@@ -433,12 +478,18 @@ func validateCodeReviewAdvice(verdict codeReviewVerdict) error {
 	)
 }
 
+// codeReviewIssues returns the findings of records, with test group
+// findings apart so that findings of other checks on their tests can drop
+// them.
 func codeReviewIssues(
 	keys []string,
 	byKey map[string][]codeReviewDeclaration,
 	records map[string]codeReviewRecord,
-) []Issue {
-	var issues []Issue
+) ([]Issue, []testGroupFinding) {
+	var (
+		issues []Issue
+		groups []testGroupFinding
+	)
 
 	for _, key := range keys {
 		verdicts := make(map[string]codeReviewVerdict, len(records[key].Items))
@@ -449,7 +500,13 @@ func codeReviewIssues(
 		for _, declaration := range byKey[key] {
 			for index, item := range declaration.request.Items {
 				verdict := verdicts[item.ID]
-				if kind := codeReviewFindingKinds[verdict.Verdict]; kind != "" {
+				kind := codeReviewFindingKinds[verdict.Verdict]
+
+				switch {
+				case kind == "":
+				case item.Kind == codeReviewTestGroupItem:
+					groups = append(groups, newTestGroupFinding(kind, verdict, declaration.tests))
+				default:
 					issues = append(issues, Issue{
 						Kind:     kind,
 						Message:  verdict.Advice,
@@ -460,11 +517,13 @@ func codeReviewIssues(
 		}
 	}
 
-	return issues
+	return issues, groups
 }
 
 // splitCodeReviewCandidates separates dropped-error candidates from findings.
-// Candidates are deduplicated because test package variants repeat files.
+// Repeated-fixture findings stay findings and are also candidates: a test
+// group finding over the same tests would repeat them. Candidates are
+// deduplicated because test package variants repeat files.
 func splitCodeReviewCandidates(issues []Issue) ([]Issue, []Issue) {
 	findings := make([]Issue, 0, len(issues))
 	seen := make(map[string]struct{})
@@ -474,7 +533,9 @@ func splitCodeReviewCandidates(issues []Issue) ([]Issue, []Issue) {
 	for _, issue := range issues {
 		if issue.Kind != smellcheck.DroppedErrorCandidate {
 			findings = append(findings, issue)
-			continue
+			if issue.Kind != smellcheck.RepeatedTestFixture {
+				continue
+			}
 		}
 
 		// Review matches candidates against the file itself, so it needs
@@ -653,39 +714,51 @@ func numberedCodeReviewSource(lines []string) string {
 
 // codeReviewKey hashes everything the verdicts depend on, so a prompt,
 // schema, or model change selects new records instead of deleting old ones.
-// forRequest returns the policy parts that decide this request's verdicts.
+// forRequest returns the policy parts that decide this request's verdicts:
+// each version stays only for requests of its languages that hold one of
+// its item kinds.
 func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewPolicy {
-	has := func(kind string) bool {
-		return slices.ContainsFunc(request.Items, func(item codeReviewItem) bool {
-			return item.Kind == kind
-		})
-	}
+	goOnly := []outline.Language{outline.Go}
+	scripts := []outline.Language{outline.TypeScript, outline.Python}
+	group := []string{codeReviewTestGroupItem}
+	test := []string{codeReviewTestItem}
+	comment := []string{codeReviewCommentItem}
 
-	if request.Language != outline.Go || !has(codeReviewTestItem) {
-		policy.TestSchema = 0
-	}
-
-	if request.Language != outline.Go {
-		policy.Schema = 0
-	}
-
-	if request.Language == outline.Go || !has(codeReviewErrorItem) {
-		policy.ScriptErrorSchema = 0
-	}
-
-	if request.Language == outline.Go || !has(codeReviewTestItem) {
-		policy.ScriptTestSchema = 0
-	}
-
-	if request.Language != outline.TypeScript || !has(codeReviewCommentItem) {
-		policy.TypeScriptSchema = 0
-	}
-
-	if request.Language != outline.Python || !has(codeReviewCommentItem) {
-		policy.PythonSchema = 0
+	for _, scope := range []struct {
+		version   *int
+		languages []outline.Language
+		kinds     []string
+	}{
+		{&policy.Schema, goOnly, []string{
+			codeReviewCommentItem, codeReviewErrorItem, codeReviewTestItem, codeReviewSerialItem,
+		}},
+		{&policy.TestSchema, goOnly, test},
+		{&policy.TestGroupSchema, goOnly, group},
+		{&policy.ScriptErrorSchema, scripts, []string{codeReviewErrorItem}},
+		{&policy.ScriptTestSchema, scripts, test},
+		{&policy.ScriptTestGroupSchema, scripts, group},
+		{&policy.TypeScriptSchema, []outline.Language{outline.TypeScript}, comment},
+		{&policy.PythonSchema, []outline.Language{outline.Python}, comment},
+	} {
+		if !slices.Contains(scope.languages, request.Language) ||
+			!slices.ContainsFunc(request.Items, func(item codeReviewItem) bool {
+				return slices.Contains(scope.kinds, item.Kind)
+			}) {
+			*scope.version = 0
+		}
 	}
 
 	return policy
+}
+
+// codeReviewFamily names the prompt a request needs: one per language, and
+// one per language for test groups.
+func codeReviewFamily(request codeReviewRequest) string {
+	if request.Items[0].Kind == codeReviewTestGroupItem {
+		return string(request.Language) + " test groups"
+	}
+
+	return string(request.Language)
 }
 
 func codeReviewKey(policy codeReviewPolicy, request codeReviewRequest) (string, error) {
@@ -708,6 +781,7 @@ func codeReviewKey(policy codeReviewPolicy, request codeReviewRequest) (string, 
 type codeReviewRun struct {
 	done   chan struct{}
 	issues []Issue
+	groups []testGroupFinding
 	err    error
 }
 
@@ -730,7 +804,7 @@ func startCodeReview(
 	go func() {
 		defer close(run.done)
 
-		run.issues, run.err = reviewModuleCode(ctx, files, reviewer, opts, candidates)
+		run.issues, run.groups, run.err = reviewModuleCode(ctx, files, reviewer, opts, candidates)
 		if run.err != nil {
 			cancel()
 		}
@@ -739,10 +813,12 @@ func startCodeReview(
 	return run
 }
 
-func (run *codeReviewRun) wait() ([]Issue, error) {
+// wait returns the review findings, with test group findings apart so that
+// semantic duplicates over their tests can drop them.
+func (run *codeReviewRun) wait() ([]Issue, []testGroupFinding, error) {
 	<-run.done
 
-	return run.issues, run.err
+	return run.issues, run.groups, run.err
 }
 
 func reviewModuleCode(
@@ -751,25 +827,36 @@ func reviewModuleCode(
 	reviewer codeReviewer,
 	opts SimilarityOptions,
 	candidates <-chan []Issue,
-) ([]Issue, error) {
+) ([]Issue, []testGroupFinding, error) {
 	var found []Issue
 
 	if candidates != nil {
 		select {
 		case received, ok := <-candidates:
 			if !ok {
-				return nil, errors.New("structural lint failed before code review")
+				return nil, nil, errors.New("structural lint failed before code review")
 			}
 
 			found = received
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
 	}
 
+	var fixtures []Issue
+
+	found = slices.DeleteFunc(found, func(issue Issue) bool {
+		if issue.Kind == smellcheck.RepeatedTestFixture {
+			fixtures = append(fixtures, issue)
+			return true
+		}
+
+		return false
+	})
+
 	cacheRoot, err := similarityVectorCacheRoot(opts.cacheDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	review := codeReview{
@@ -779,5 +866,7 @@ func reviewModuleCode(
 		cacheEnabled: opts.CacheEnabled,
 	}
 
-	return review.run(ctx, files, found)
+	issues, groups, err := review.run(ctx, files, found)
+
+	return issues, uncoveredTestGroups(groups, fixtures), err
 }

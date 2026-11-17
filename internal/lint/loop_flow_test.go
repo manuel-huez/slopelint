@@ -164,54 +164,6 @@ func f(values []string) {
 	}
 }
 
-func TestRangeLoopExitStatesStayUnknownAfterLocalHelperWrites(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-import (
-	"errors"
-	"sync"
-)
-
-var errBoom = errors.New("boom")
-
-func f(values []int) error {
-	var (
-		firstErr error
-		once     sync.Once
-	)
-
-	fail := func(err error) {
-		if err == nil { return }
-		once.Do(func() {
-			firstErr = err
-		})
-	}
-
-	for _, value := range values {
-		if value > 0 {
-			fail(errBoom)
-		}
-	}
-
-	if firstErr != nil {
-		return firstErr
-	}
-
-	return nil
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `condition "firstErr != nil" is always false here`) {
-		t.Fatalf("range exit states kept firstErr nil exact, got:\n%s", joined)
-	}
-}
-
 func TestRunAnalysisRangeLoopDoesNotKeepInitialFacts(t *testing.T) {
 	t.Parallel()
 

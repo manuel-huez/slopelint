@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
@@ -302,7 +303,56 @@ func collectScriptCodeReviewDeclarations(
 		}
 	}
 
-	return declarations, nil
+	tests, helpers := scriptGroupedTests(filename, file, lines)
+	testGroups, err := testGroupDeclarations(filename, lines, tests, helpers, policy)
+
+	return append(declarations, testGroups...), err
+}
+
+// scriptGroupedTests returns the file's tests and the first lines of its
+// named functions, keyed as Test.Calls names their calls. Repeated test
+// titles get #2, #3, ... so each test has its own name.
+func scriptGroupedTests(
+	filename string,
+	file outline.File,
+	lines []string,
+) ([]groupedTest, map[string]string) {
+	helpers := make(map[string]string)
+
+	for _, fn := range file.Funcs {
+		if fn.Name == "" || fn.Literal {
+			continue
+		}
+
+		key := fn.Name
+		if fn.Receiver != "" {
+			key = "." + fn.Name
+		}
+
+		helpers[key] = strings.TrimSpace(lines[fn.StartLine-1])
+	}
+
+	tests := make([]groupedTest, len(file.Tests))
+	seen := make(map[string]int)
+
+	for index, test := range file.Tests {
+		name := test.Name
+
+		seen[name]++
+		if count := seen[name]; count > 1 {
+			name += " #" + strconv.Itoa(count)
+		}
+
+		tests[index] = groupedTest{
+			name:      name,
+			startLine: test.StartLine,
+			endLine:   test.EndLine,
+			position:  scriptPosition(filename, test.Pos),
+			calls:     test.Calls,
+		}
+	}
+
+	return tests, helpers
 }
 
 // scriptErrorUnits groups caught errors by enclosing function: each unit

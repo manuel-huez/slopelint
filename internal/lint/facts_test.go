@@ -89,11 +89,15 @@ func f(r *Req) {
 	}
 }
 
-func TestSyncOnceClosureWriteInvalidatesLocalFact(t *testing.T) {
+func TestClosureWritesInvalidateFacts(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	for _, test := range []struct {
+		name, source, want, failure string
+	}{
+		{
+			name: "SyncOnceClosureWriteInvalidatesLocalFact",
+			source: `package sample
 
 import "sync"
 
@@ -105,21 +109,13 @@ func f() {
 	})
 	if sendStop { println("ok") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `condition "sendStop" is always false here`) {
-		t.Fatalf("sync.Once closure write should invalidate local bool fact, got:\n%s", joined)
-	}
-}
-
-func TestGoFuncClosureWriteInvalidatesOuterFact(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    `condition "sendStop" is always false here`,
+			failure: "sync.Once closure write should invalidate local bool fact, got:\n%s",
+		},
+		{
+			name: "GoFuncClosureWriteInvalidatesOuterFact",
+			source: `package sample
 
 import "sync"
 
@@ -136,21 +132,13 @@ func f() {
 	<-done
 	if ready { println("ok") }
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `condition "ready" is always false here`) {
-		t.Fatalf("goroutine closure write should invalidate outer bool fact, got:\n%s", joined)
-	}
-}
-
-func TestLocalFuncCallbackArgInvalidatesOuterFact(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    `condition "ready" is always false here`,
+			failure: "goroutine closure write should invalidate outer bool fact, got:\n%s",
+		},
+		{
+			name: "LocalFuncCallbackArgInvalidatesOuterFact",
+			source: `package sample
 
 func f(writeRows func(func([]int) error) error) error {
 	wroteRows := false
@@ -169,13 +157,24 @@ func f(writeRows func(func([]int) error) error) error {
 
 	return nil
 }
-`)
+`,
+			want:    `condition "!wroteRows" is always true here`,
+			failure: "callback arg closure write should invalidate outer bool fact, got:\n%s",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
 
-	if strings.Contains(joined, `condition "!wroteRows" is always true here`) {
-		t.Fatalf("callback arg closure write should invalidate outer bool fact, got:\n%s", joined)
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, test.want) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
 	}
 }
 

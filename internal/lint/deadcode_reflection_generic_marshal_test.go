@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+const jsonFakePackageDir = "jsonfake"
+
+const codecPackageDir = "codec"
+
 func TestRepoDeadCodeKeepsExternalGenericMarshalWrapperFieldsWithTrimpath(t *testing.T) {
 	// -trimpath rewrites export-data positions to module paths; the
 	// dependency's generic wrapper body must still resolve from disk.
@@ -375,144 +379,160 @@ func Save() ([]byte, error) {
 	}
 }
 
-func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeFromBareCodecPackage(t *testing.T) {
+type repoDeadCodeDoesNotKeepExternalGenericEncodeCase struct {
+	name, goMod, moduleDir, moduleMod, packageDir, packageFile, packageSource, libSource, failure string
+}
+
+func runRepoDeadCodeDoesNotKeepExternalGenericEncode(
+	t *testing.T,
+	cases []repoDeadCodeDoesNotKeepExternalGenericEncodeCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := t.TempDir()
+			writeFile(t, filepath.Join(tmp, "go.mod"), test.goMod)
+			writeFile(t, filepath.Join(tmp, test.moduleDir, "go.mod"), test.moduleMod)
+			writeFile(t, filepath.Join(tmp, test.packageDir, test.packageFile), test.packageSource)
+			writeTestMain(t, tmp, `	_, _ = lib.Save()`)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.libSource)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if !strings.Contains(
+				joined,
+				wantRemoveFieldPayloadName,
+			) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeFrom(t *testing.T) {
 	t.Parallel()
 
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+	runRepoDeadCodeDoesNotKeepExternalGenericEncode(
+		t,
+		[]repoDeadCodeDoesNotKeepExternalGenericEncodeCase{
+			{
+				name: "RepoDeadCodeDoesNotKeepExternalGenericEncodeFromBareCodecPackage",
+				goMod: `module example.com/sample
 
 go 1.22
 
 require example.com/codec v0.0.0
 
 replace example.com/codec => ./codec
-`)
-	writeFile(t, filepath.Join(tmp, "codec", "go.mod"), "module example.com/codec\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec
+`,
+				moduleDir:   codecPackageDir,
+				moduleMod:   "module example.com/codec\n\ngo 1.22\n",
+				packageDir:  codecPackageDir,
+				packageFile: "codec.go",
+				packageSource: `package codec
 
 func Encode[T any](value T) ([]byte, error) {
 	return nil, nil
 }
-`)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+				libSource: `package lib
 
 import "example.com/codec"
 
 type Payload struct {
-	Name string `+"`json:\"name\"`"+`
+	Name string ` + "`json:\"name\"`" + `
 }
 
 func Save() ([]byte, error) {
 	return codec.Encode(Payload{})
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		wantRemoveFieldPayloadName,
-	) {
-		t.Fatalf("expected bare codec external encode to leave field dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeFromJSONNamedNonCodec(t *testing.T) {
-	t.Parallel()
-
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+`,
+				failure: "expected bare codec external encode to leave field dead, got:\n%s",
+			},
+			{
+				name: "RepoDeadCodeDoesNotKeepExternalGenericEncodeFromJSONNamedNonCodec",
+				goMod: `module example.com/sample
 
 go 1.22
 
 require example.com/jsonfake v0.0.0
 
 replace example.com/jsonfake => ./jsonfake
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "jsonfake", "go.mod"),
-		"module example.com/jsonfake\n\ngo 1.22\n",
-	)
-	writeFile(t, filepath.Join(tmp, "jsonfake", "fake.go"), `package jsonfake
+`,
+				moduleDir:   jsonFakePackageDir,
+				moduleMod:   "module example.com/jsonfake\n\ngo 1.22\n",
+				packageDir:  jsonFakePackageDir,
+				packageFile: "fake.go",
+				packageSource: `package jsonfake
 
 func Encode[T any](value T) ([]byte, error) {
 	return nil, nil
 }
-`)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+				libSource: `package lib
 
 import "example.com/jsonfake"
 
 type Payload struct {
-	Name string `+"`json:\"name\"`"+`
+	Name string ` + "`json:\"name\"`" + `
 }
 
 func Save() ([]byte, error) {
 	return jsonfake.Encode(Payload{})
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		wantRemoveFieldPayloadName,
-	) {
-		t.Fatalf("expected jsonfake external encode to leave field dead, got:\n%s", joined)
-	}
+`,
+				failure: "expected jsonfake external encode to leave field dead, got:\n%s",
+			},
+		},
+	)
 }
 
 func TestRepoDeadCodeDoesNotKeepExternalGenericEncodeJSONFromJSONNamedNonCodec(t *testing.T) {
 	t.Parallel()
 
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+	runRepoDeadCodeDoesNotKeepExternalGenericEncode(
+		t,
+		[]repoDeadCodeDoesNotKeepExternalGenericEncodeCase{
+			{
+				name: "RepoDeadCodeDoesNotKeepExternalGenericEncodeJSONFromJSONNamedNonCodec",
+				goMod: `module example.com/sample
 
 go 1.22
 
 require example.com/jsonfake v0.0.0
 
 replace example.com/jsonfake => ./jsonfake
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "jsonfake", "go.mod"),
-		"module example.com/jsonfake\n\ngo 1.22\n",
-	)
-	writeFile(t, filepath.Join(tmp, "jsonfake", "fake.go"), `package jsonfake
+`,
+				moduleDir:   jsonFakePackageDir,
+				moduleMod:   "module example.com/jsonfake\n\ngo 1.22\n",
+				packageDir:  jsonFakePackageDir,
+				packageFile: "fake.go",
+				packageSource: `package jsonfake
 
 func EncodeJSON[T any](value T) ([]byte, error) {
 	return nil, nil
 }
-`)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+				libSource: `package lib
 
 import "example.com/jsonfake"
 
 type Payload struct {
-	Name string `+"`json:\"name\"`"+`
+	Name string ` + "`json:\"name\"`" + `
 }
 
 func Save() ([]byte, error) {
 	return jsonfake.EncodeJSON(Payload{})
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		wantRemoveFieldPayloadName,
-	) {
-		t.Fatalf("expected jsonfake EncodeJSON to leave field dead, got:\n%s", joined)
-	}
+`,
+				failure: "expected jsonfake EncodeJSON to leave field dead, got:\n%s",
+			},
+		},
+	)
 }
 
 func TestRepoDeadCodeDoesNotKeepGenericMarshalFromDeadFuncLiteral(t *testing.T) {

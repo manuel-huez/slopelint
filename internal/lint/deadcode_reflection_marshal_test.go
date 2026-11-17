@@ -121,28 +121,12 @@ func Save() ([]byte, error) {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
+	requireDeadCode(t, tmp, []string{
 		wantFieldPayloadName,
 		`field "Wrapper.Value"`,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"YAML value container field reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
-
-	if !strings.Contains(
-		joined,
+	}, []string{
 		`method "MarshalYAML" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected unused YAML pointer marshal hook finding, got:\n%s", joined)
-	}
+	})
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalAliasReturnFields(t *testing.T) {
@@ -176,22 +160,11 @@ func Save() ([]byte, error) {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
+	requireDeadCode(t, tmp, []string{
 		wantFieldPayloadName,
 		wantMethodMarshalYAML,
 		`function "marshalPayload"`,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"YAML alias return dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
+	}, nil)
 }
 
 func TestRepoDeadCodeKeepsYAMLMarshalAliasMapReturnFields(t *testing.T) {
@@ -302,21 +275,10 @@ func Save() ([]byte, error) {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
+	requireDeadCode(t, tmp, []string{
 		wantFieldPayloadName,
 		wantMethodMarshalYAML,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"YAML named result alias dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
+	}, nil)
 }
 
 func TestRepoDeadCodeDoesNotKeepYAMLMarshalStaleNamedResultAliasFields(t *testing.T) {
@@ -400,18 +362,47 @@ func Save() ([]byte, error) {
 	}
 }
 
-func TestRepoDeadCodeKeepsYAMLMarshalExplicitNamedResultAliasFields(t *testing.T) {
+type repoDeadCodeKeepsYAMLMarshalAliasFieldsCase struct {
+	name, source, failure string
+}
+
+func runRepoDeadCodeKeepsYAMLMarshalAliasFields(
+	t *testing.T,
+	cases []repoDeadCodeKeepsYAMLMarshalAliasFieldsCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newYAMLTestModule(t)
+			writeYAMLMarshalStub(t, tmp)
+			writeTestMain(t, tmp, `	_, _ = lib.Save()`)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, wantFieldPayloadName) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
+	}
+}
+
+func TestRepoDeadCodeKeepsYAMLMarshalLocalAliasFields(t *testing.T) {
 	t.Parallel()
 
-	tmp := newYAMLTestModule(t)
-	writeYAMLMarshalStub(t, tmp)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeKeepsYAMLMarshalAliasFields(t, []repoDeadCodeKeepsYAMLMarshalAliasFieldsCase{
+		{
+			name: "RepoDeadCodeKeepsYAMLMarshalExplicitNamedResultAliasFields",
+			source: `package lib
 
 import "gopkg.in/yaml.v3"
 
 type Payload struct {
-	Name string `+"`yaml:\"name\"`"+`
+	Name string ` + "`yaml:\"name\"`" + `
 }
 
 func (payload Payload) MarshalYAML() (out any, err error) {
@@ -425,28 +416,17 @@ func (payload Payload) MarshalYAML() (out any, err error) {
 func Save() ([]byte, error) {
 	return yaml.Marshal(Payload{})
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, wantFieldPayloadName) {
-		t.Fatalf("YAML explicit named result alias field reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsYAMLMarshalLocalAliasReturnFields(t *testing.T) {
-	t.Parallel()
-
-	tmp := newYAMLTestModule(t)
-	writeYAMLMarshalStub(t, tmp)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+			failure: "YAML explicit named result alias field reported dead, got:\n%s",
+		},
+		{
+			name: "RepoDeadCodeKeepsYAMLMarshalLocalAliasReturnFields",
+			source: `package lib
 
 import "gopkg.in/yaml.v3"
 
 type Payload struct {
-	Name string `+"`yaml:\"name\"`"+`
+	Name string ` + "`yaml:\"name\"`" + `
 }
 
 func (payload Payload) MarshalYAML() (any, error) {
@@ -460,28 +440,17 @@ func (payload Payload) MarshalYAML() (any, error) {
 func Save() ([]byte, error) {
 	return yaml.Marshal(Payload{})
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, wantFieldPayloadName) {
-		t.Fatalf("YAML local alias return field reported dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsYAMLMarshalAliasAcrossSwitch(t *testing.T) {
-	t.Parallel()
-
-	tmp := newYAMLTestModule(t)
-	writeYAMLMarshalStub(t, tmp)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+			failure: "YAML local alias return field reported dead, got:\n%s",
+		},
+		{
+			name: "RepoDeadCodeKeepsYAMLMarshalAliasAcrossSwitch",
+			source: `package lib
 
 import "gopkg.in/yaml.v3"
 
 type Payload struct {
-	Name string `+"`yaml:\"name\"`"+`
+	Name string ` + "`yaml:\"name\"`" + `
 }
 
 func (payload Payload) MarshalYAML() (out any, err error) {
@@ -498,14 +467,46 @@ func (payload Payload) MarshalYAML() (out any, err error) {
 func Save() ([]byte, error) {
 	return yaml.Marshal(Payload{})
 }
-`)
+`,
+			failure: "YAML switch alias return field reported dead, got:\n%s",
+		},
+	})
+}
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+func TestRepoDeadCodeKeepsYAMLMarshalAliasAcrossAppendedRange(t *testing.T) {
+	t.Parallel()
 
-	if strings.Contains(joined, wantFieldPayloadName) {
-		t.Fatalf("YAML switch alias return field reported dead, got:\n%s", joined)
+	runRepoDeadCodeKeepsYAMLMarshalAliasFields(t, []repoDeadCodeKeepsYAMLMarshalAliasFieldsCase{
+		{
+			name: "RepoDeadCodeKeepsYAMLMarshalAliasAcrossAppendedRange",
+			source: `package lib
+
+import "gopkg.in/yaml.v3"
+
+type Payload struct {
+	Name string ` + "`yaml:\"name\"`" + `
+}
+
+func (payload Payload) MarshalYAML() (out any, err error) {
+	type raw Payload
+
+	values := []any{}
+	values = append(values, raw(payload))
+
+	for _, value := range values {
+		out = value
 	}
+
+	return out, nil
+}
+
+func Save() ([]byte, error) {
+	return yaml.Marshal(Payload{})
+}
+`,
+			failure: "YAML range alias return field reported dead, got:\n%s",
+		},
+	})
 }
 
 func TestRepoDeadCodeDoesNotKeepYAMLMarshalDefaultSwitchOverwriteFields(t *testing.T) {
@@ -547,45 +548,5 @@ func Save() ([]byte, error) {
 		wantRemoveFieldPayloadName,
 	) {
 		t.Fatalf("expected YAML default switch overwrite to leave field dead, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsYAMLMarshalAliasAcrossAppendedRange(t *testing.T) {
-	t.Parallel()
-
-	tmp := newYAMLTestModule(t)
-	writeYAMLMarshalStub(t, tmp)
-	writeTestMain(t, tmp, `	_, _ = lib.Save()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
-
-import "gopkg.in/yaml.v3"
-
-type Payload struct {
-	Name string `+"`yaml:\"name\"`"+`
-}
-
-func (payload Payload) MarshalYAML() (out any, err error) {
-	type raw Payload
-
-	values := []any{}
-	values = append(values, raw(payload))
-
-	for _, value := range values {
-		out = value
-	}
-
-	return out, nil
-}
-
-func Save() ([]byte, error) {
-	return yaml.Marshal(Payload{})
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, wantFieldPayloadName) {
-		t.Fatalf("YAML range alias return field reported dead, got:\n%s", joined)
 	}
 }

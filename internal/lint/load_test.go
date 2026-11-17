@@ -16,23 +16,21 @@ import (
 func TestPackageRepoFilesExcludeCompilerGeneratedCGoFiles(t *testing.T) {
 	t.Parallel()
 
-	const testSourceFilename = "sample.go"
-
 	dir := t.TempDir()
 	generated := filepath.Join(t.TempDir(), "_cgo_gotypes.go")
 
 	files, err := packageRepoFiles(&packageMeta{
 		Dir:             dir,
 		ImportPath:      "example.com/sample",
-		GoFiles:         []string{testSourceFilename},
+		GoFiles:         []string{similarityTestFilename},
 		CgoFiles:        []string{"native.go"},
-		CompiledGoFiles: []string{testSourceFilename, generated},
+		CompiledGoFiles: []string{similarityTestFilename, generated},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{filepath.Join(dir, testSourceFilename), filepath.Join(dir, "native.go")}
+	want := []string{filepath.Join(dir, similarityTestFilename), filepath.Join(dir, "native.go")}
 	if len(files) != len(want) || files[0] != want[0] || files[1] != want[1] {
 		t.Fatalf("source files = %#v, want %#v", files, want)
 	}

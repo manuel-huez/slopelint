@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const wantRemoveFieldPayloadIgnored = `exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`
+
 func TestRepoDeadCodeKeepsFieldsSetByJSONDecoder(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +65,7 @@ func Load(reader io.Reader) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadIgnored,
 	) {
 		t.Fatalf("expected ignored JSON field finding, got:\n%s", joined)
 	}
@@ -90,19 +92,11 @@ func Load(body []byte) error {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.Keep"`) {
-		t.Fatalf("XML-decoded field with json ignore tag reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
+	requireDeadCode(t, tmp, []string{
+		`field "Payload.Keep"`,
+	}, []string{
 		`exported field "Payload.Skip" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected XML-ignored field finding, got:\n%s", joined)
-	}
+	})
 }
 
 func TestRepoDeadCodeUsesYAMLIgnoreTagsForYAMLDecoder(t *testing.T) {
@@ -130,19 +124,11 @@ func Load(body []byte) error {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.Keep"`) {
-		t.Fatalf("YAML-decoded field with json ignore tag reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
+	requireDeadCode(t, tmp, []string{
+		`field "Payload.Keep"`,
+	}, []string{
 		`exported field "Payload.Skip" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected YAML-ignored field finding, got:\n%s", joined)
-	}
+	})
 }
 
 func TestRepoDeadCodeReportsFieldsPassedToLocalDecode(t *testing.T) {
@@ -168,19 +154,11 @@ func Run() {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.Live"`) {
-		t.Fatalf("read local-decode field reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
+	requireDeadCode(t, tmp, []string{
+		`field "Payload.Live"`,
+	}, []string{
 		`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected field passed only to local Decode finding, got:\n%s", joined)
-	}
+	})
 }
 
 func TestRepoDeadCodeKeepsFieldsSetByGenericJSONDecoder(t *testing.T) {
@@ -220,19 +198,11 @@ func Live(body []byte) error {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Result.HeadlineMetrics"`) {
-		t.Fatalf("generic JSON-decoded field reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
+	requireDeadCode(t, tmp, []string{
+		`field "Result.HeadlineMetrics"`,
+	}, []string{
 		`exported field "Result.Ignored" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected ignored generic JSON field finding, got:\n%s", joined)
-	}
+	})
 }
 
 func TestRepoDeadCodeKeepsFieldsSetByGenericReceiverJSONDecoder(t *testing.T) {
@@ -269,19 +239,11 @@ func Live(body []byte) error {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.FromJSON"`) {
-		t.Fatalf("generic receiver JSON-decoded field reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected ignored generic receiver JSON field finding, got:\n%s", joined)
-	}
+	requireDeadCode(t, tmp, []string{
+		`field "Payload.FromJSON"`,
+	}, []string{
+		wantRemoveFieldPayloadIgnored,
+	})
 }
 
 func TestRepoDeadCodeInspectsGenericDecoderCalledFromRootPackage(t *testing.T) {
@@ -317,19 +279,11 @@ func Each[T any](body []byte, emit func(T) error) error {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.FromJSON"`) {
-		t.Fatalf("root generic JSON-decoded field reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected ignored root generic JSON field finding, got:\n%s", joined)
-	}
+	requireDeadCode(t, tmp, []string{
+		`field "Payload.FromJSON"`,
+	}, []string{
+		wantRemoveFieldPayloadIgnored,
+	})
 }
 
 func TestRepoDeadCodeReportsFieldsPassedAsNonPointerGenericDecodeTarget(t *testing.T) {
@@ -362,46 +316,82 @@ func Live(body []byte) error {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.Live"`) {
-		t.Fatalf("read field reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
+	requireDeadCode(t, tmp, []string{
+		`field "Payload.Live"`,
+	}, []string{
 		`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected non-pointer generic decode target finding, got:\n%s", joined)
+	})
+}
+
+type repoDeadCodeReportsExternalGenericDecodeFieldsCase struct {
+	name, goMod, moduleDir, moduleMod, packageDir, packageFile, packageSource, libSource, failure, failure2 string
+}
+
+func runRepoDeadCodeReportsExternalGenericDecodeFields(
+	t *testing.T,
+	cases []repoDeadCodeReportsExternalGenericDecodeFieldsCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := t.TempDir()
+			writeFile(t, filepath.Join(tmp, "go.mod"), test.goMod)
+			writeFile(
+				t,
+				filepath.Join(tmp, test.moduleDir, "go.mod"),
+				test.moduleMod,
+			)
+			writeFile(t, filepath.Join(tmp, test.packageDir, test.packageFile), test.packageSource)
+			writeTestMain(t, tmp, `	lib.Live()`)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.libSource)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, `field "Payload.Live"`) {
+				t.Fatalf(test.failure, joined)
+			}
+
+			if !strings.Contains(
+				joined,
+				`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
+			) {
+				t.Fatalf(test.failure2, joined)
+			}
+		})
 	}
 }
 
-func TestRepoDeadCodeReportsFieldsPassedToExternalGenericJSONNonDecoder(t *testing.T) {
+func TestRepoDeadCodeReportsExternalGenericDecodeFields(t *testing.T) {
 	t.Parallel()
 
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+	runRepoDeadCodeReportsExternalGenericDecodeFields(
+		t,
+		[]repoDeadCodeReportsExternalGenericDecodeFieldsCase{
+			{
+				name: "RepoDeadCodeReportsFieldsPassedToExternalGenericJSONNonDecoder",
+				goMod: `module example.com/sample
 
 go 1.22
 
 require example.com/jsonutil v0.0.0
 
 replace example.com/jsonutil => ./jsonutil
-`)
-	writeFile(
-		t,
-		filepath.Join(tmp, "jsonutil", "go.mod"),
-		"module example.com/jsonutil\n\ngo 1.22\n",
-	)
-	writeFile(t, filepath.Join(tmp, "jsonutil", "jsonutil.go"), `package jsonutil
+`,
+				moduleDir:   "jsonutil",
+				moduleMod:   "module example.com/jsonutil\n\ngo 1.22\n",
+				packageDir:  "jsonutil",
+				packageFile: "jsonutil.go",
+				packageSource: `package jsonutil
 
 func JSONIdentity[T any](value T) T {
 	return value
 }
-`)
-	writeTestMain(t, tmp, `	lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+				libSource: `package lib
 
 import "example.com/jsonutil"
 
@@ -415,46 +405,33 @@ func Live() {
 	payload = jsonutil.JSONIdentity(payload)
 	_ = payload.Live
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.Live"`) {
-		t.Fatalf("read external generic non-decoder field reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected external generic non-decoder field finding, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeReportsFieldsReturnedByExternalGenericDecodeID(t *testing.T) {
-	t.Parallel()
-
-	tmp := t.TempDir()
-	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+`,
+				failure:  "read external generic non-decoder field reported dead, got:\n%s",
+				failure2: "expected external generic non-decoder field finding, got:\n%s",
+			},
+			{
+				name: "RepoDeadCodeReportsFieldsReturnedByExternalGenericDecodeID",
+				goMod: `module example.com/sample
 
 go 1.22
 
 require example.com/codec v0.0.0
 
 replace example.com/codec => ./codec
-`)
-	writeFile(t, filepath.Join(tmp, "codec", "go.mod"), "module example.com/codec\n\ngo 1.22\n")
-	writeFile(t, filepath.Join(tmp, "codec", "codec.go"), `package codec
+`,
+				moduleDir:   codecPackageDir,
+				moduleMod:   "module example.com/codec\n\ngo 1.22\n",
+				packageDir:  codecPackageDir,
+				packageFile: "codec.go",
+				packageSource: `package codec
 
 func DecodeID[T any](id string) T {
 	var zero T
 
 	return zero
 }
-`)
-	writeTestMain(t, tmp, `	lib.Live()`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+				libSource: `package lib
 
 import "example.com/codec"
 
@@ -467,21 +444,12 @@ func Live() {
 	payload := codec.DecodeID[Payload]("id")
 	_ = payload.Live
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `field "Payload.Live"`) {
-		t.Fatalf("read external generic DecodeID field reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected external generic DecodeID field finding, got:\n%s", joined)
-	}
+`,
+				failure:  "read external generic DecodeID field reported dead, got:\n%s",
+				failure2: "expected external generic DecodeID field finding, got:\n%s",
+			},
+		},
+	)
 }
 
 func TestRepoDeadCodeKeepsFieldsReturnedByExternalGenericDecodeJSON(t *testing.T) {
@@ -547,7 +515,7 @@ func Live(body []byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadIgnored,
 	) {
 		t.Fatalf("expected ignored external generic DecodeJSON field finding, got:\n%s", joined)
 	}
@@ -664,7 +632,7 @@ func parseCustom(context.Context, []byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		wantRemoveFieldPayloadIgnored,
 	) {
 		t.Fatalf(
 			"expected ignored external goccy JSON generic decode field finding, got:\n%s",
@@ -732,22 +700,65 @@ func Live(body []byte) error {
 	}
 }
 
-func TestRepoDeadCodeStopsAtCustomJSONUnmarshalHook(t *testing.T) {
+type repoDeadCodeHandlesCustomJSONUnmarshalCase struct {
+	name, source, failure, want, failure2 string
+	unexpecteds                           []string
+}
+
+func runRepoDeadCodeHandlesCustomJSONUnmarshal(
+	t *testing.T,
+	cases []repoDeadCodeHandlesCustomJSONUnmarshalCase,
+) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
+			writeFile(t, filepath.Join(tmp, "lib", "lib.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			for _, unexpected := range test.unexpecteds {
+				if strings.Contains(joined, unexpected) {
+					t.Fatalf(
+						test.failure,
+						unexpected,
+						joined,
+					)
+				}
+			}
+
+			if !strings.Contains(
+				joined,
+				test.want,
+			) {
+				t.Fatalf(test.failure2, joined)
+			}
+		})
+	}
+}
+
+func TestRepoDeadCodeHandlesCustomJSONUnmarshal(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+	runRepoDeadCodeHandlesCustomJSONUnmarshal(t, []repoDeadCodeHandlesCustomJSONUnmarshalCase{
+		{
+			name: "RepoDeadCodeStopsAtCustomJSONUnmarshalHook",
+			source: `package lib
 
 import "encoding/json"
 
 type Payload struct {
-	Inner Inner `+"`json:\"inner\"`"+`
+	Inner Inner ` + "`json:\"inner\"`" + `
 }
 
 type Inner struct {
-	Used   string `+"`json:\"used\"`"+`
-	Hidden string `+"`json:\"hidden\"`"+`
+	Used   string ` + "`json:\"used\"`" + `
+	Hidden string ` + "`json:\"hidden\"`" + `
 }
 
 func (inner *Inner) UnmarshalJSON([]byte) error {
@@ -761,45 +772,25 @@ func Load(body []byte) error {
 
 	return json.Unmarshal(body, &payload)
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		`field "Payload.Inner"`,
-		`field "Inner.Used"`,
-		wantMethodUnmarshalJSON,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"custom JSON unmarshal dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
-
-	if !strings.Contains(
-		joined,
-		`exported field "Inner.Hidden" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected custom JSON unmarshal hidden field finding, got:\n%s", joined)
-	}
-}
-
-func TestRepoDeadCodeKeepsFieldsDecodedThroughCustomJSONUnmarshalAlias(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeTestMain(t, tmp, `	_ = lib.Load(nil)`)
-	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+`,
+			unexpecteds: []string{
+				`field "Payload.Inner"`,
+				`field "Inner.Used"`,
+				wantMethodUnmarshalJSON,
+			},
+			failure:  "custom JSON unmarshal dependency reported dead for %q, got:\n%s",
+			want:     `exported field "Inner.Hidden" is unreachable from repo entrypoints; remove it`,
+			failure2: "expected custom JSON unmarshal hidden field finding, got:\n%s",
+		},
+		{
+			name: "RepoDeadCodeKeepsFieldsDecodedThroughCustomJSONUnmarshalAlias",
+			source: `package lib
 
 import "encoding/json"
 
 type Payload struct {
-	Name    string `+"`json:\"name\"`"+`
-	Ignored string `+"`json:\"-\"`"+`
+	Name    string ` + "`json:\"name\"`" + `
+	Ignored string ` + "`json:\"-\"`" + `
 }
 
 func (payload *Payload) UnmarshalJSON(body []byte) error {
@@ -820,30 +811,16 @@ func Load(body []byte) error {
 
 	return json.Unmarshal(body, &payload)
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	for _, unexpected := range []string{
-		wantFieldPayloadName,
-		wantMethodUnmarshalJSON,
-	} {
-		if strings.Contains(joined, unexpected) {
-			t.Fatalf(
-				"custom JSON alias dependency reported dead for %q, got:\n%s",
-				unexpected,
-				joined,
-			)
-		}
-	}
-
-	if !strings.Contains(
-		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
-	) {
-		t.Fatalf("expected ignored custom JSON alias field finding, got:\n%s", joined)
-	}
+`,
+			unexpecteds: []string{
+				wantFieldPayloadName,
+				wantMethodUnmarshalJSON,
+			},
+			failure:  "custom JSON alias dependency reported dead for %q, got:\n%s",
+			want:     wantRemoveFieldPayloadIgnored,
+			failure2: "expected ignored custom JSON alias field finding, got:\n%s",
+		},
+	})
 }
 
 func TestRepoDeadCodeReportsOriginalFieldsWhenWireAliasIsDecoded(t *testing.T) {

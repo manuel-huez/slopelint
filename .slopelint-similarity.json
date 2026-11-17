@@ -1,13 +1,13 @@
 {
   "schema": 13,
-  "source_digest": "8da4f112eb1029093140a9df072521001d65f11e29f192c0c7639b49e2dda84e",
-  "repository_digest": "1cfac0281585ab966226841ce822e601c3a0e54cad3f5094828213c3ea5a2f34",
+  "source_digest": "9de88c25341a839f42c55840b436e08316fe3e8ec53fd83b621a17cd37971bf1",
+  "repository_digest": "40c4e9e2edd2320a6a89507da4b5884c1f491056be79be09efcafa80bcd48ab4",
   "model": "jina-embeddings-v2-base-code",
   "model_digest": "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986",
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "0c3258b1a66613fb4bad6f2aafe1041eadd87229c6db2431d7cf1d4e977cdca8",
+  "description_digest": "ae972707f3075259b143af254ed37987c17469c27978b738926a14e5af6f743e",
   "review": {
     "schema": 8,
     "test_schema": 2,
@@ -15,10 +15,12 @@
     "python_schema": 4,
     "script_error_schema": 3,
     "script_test_schema": 3,
+    "test_group_schema": 1,
+    "script_test_group_schema": 1,
     "model": "gpt-6.1-terra",
     "effort": "low"
   },
-  "checked_blocks": 1960,
+  "checked_blocks": 1927,
   "accepted": [
     {
       "id": "sim-033a373bab1f0612",

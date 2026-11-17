@@ -345,11 +345,44 @@ func run() int {
 	}
 }
 
-func TestDetectsLargeUngroupedConstChunk(t *testing.T) {
+type detectsUngroupedDeclsCase struct {
+	name, source, want, failure, kind, failure2 string
+}
+
+func runDetectsUngroupedDecls(t *testing.T, cases []detectsUngroupedDeclsCase) {
+	t.Helper()
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if !strings.Contains(
+				joined,
+				test.want,
+			) {
+				t.Fatalf(test.failure, joined)
+			}
+
+			if !hasIssueKind(issues, test.kind) {
+				t.Fatalf(test.failure2, issues)
+			}
+		})
+	}
+}
+
+func TestDetectsUngroupedConstAndVarDecls(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	runDetectsUngroupedDecls(t, []detectsUngroupedDeclsCase{
+		{
+			name: "DetectsLargeUngroupedConstChunk",
+			source: `package sample
 
 type state string
 
@@ -369,21 +402,92 @@ const (
 )
 
 func use(state) {}
-`)
+`,
+			want:     `const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
+			failure:  "expected const-grouping finding, got:\n%s",
+			kind:     "const_grouping",
+			failure2: "expected const_grouping kind, got %#v",
+		},
+		{
+			name: "DetectsAdjacentUngroupedConstDecls",
+			source: `package sample
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+type state string
 
-	if !strings.Contains(
-		joined,
-		`const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
-	) {
-		t.Fatalf("expected const-grouping finding, got:\n%s", joined)
-	}
+const stateUnknown state = ""
+const statePending state = "pending"
+const stateRunning state = "running"
+const stateStopped state = "stopped"
+const stateFailed state = "failed"
+const stateSkipped state = "skipped"
+const stateQueued state = "queued"
+const stateBlocked state = "blocked"
+const stateReady state = "ready"
+const stateDone state = "done"
+const stateArchived state = "archived"
+const statePaused state = "paused"
 
-	if !hasIssueKind(issues, "const_grouping") {
-		t.Fatalf("expected const_grouping kind, got %#v", issues)
-	}
+func use(state) {}
+`,
+			want:     `const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
+			failure:  "expected const-grouping finding, got:\n%s",
+			kind:     "const_grouping",
+			failure2: "expected const_grouping kind, got %#v",
+		},
+		{
+			name: "DetectsLargeUngroupedVarChunk",
+			source: `package sample
+
+var (
+	cacheA = 1
+	cacheB = 2
+	cacheC = 3
+	cacheD = 4
+	cacheE = 5
+	cacheF = 6
+	cacheG = 7
+	cacheH = 8
+	cacheI = 9
+	cacheJ = 10
+	cacheK = 11
+	cacheL = 12
+)
+`,
+			want:     `var chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller var blocks`,
+			failure:  "expected var-grouping finding, got:\n%s",
+			kind:     "var_grouping",
+			failure2: "expected var_grouping kind, got %#v",
+		},
+	})
+}
+
+func TestDetectsAdjacentUngroupedTypeDecls(t *testing.T) {
+	t.Parallel()
+
+	runDetectsUngroupedDecls(t, []detectsUngroupedDeclsCase{
+		{
+			name: "DetectsAdjacentUngroupedTypeDecls",
+			source: `package sample
+
+type reqA struct{}
+type reqB struct{}
+type reqC struct{}
+type reqD struct{}
+type reqE struct{}
+type reqF struct{}
+type reqG struct{}
+type reqH struct{}
+type reqI struct{}
+type reqJ struct{}
+type reqK struct{}
+type reqL struct{}
+`,
+			want:     `type chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller type blocks`,
+			failure:  "expected type-grouping finding, got:\n%s",
+			kind:     "type_grouping",
+			failure2: "expected type_grouping kind, got %#v",
+		},
+	})
 }
 
 func TestSkipsLargeConstBlockWithGroupBreaks(t *testing.T) {
@@ -460,117 +564,6 @@ const (
 	}
 }
 
-func TestDetectsAdjacentUngroupedConstDecls(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type state string
-
-const stateUnknown state = ""
-const statePending state = "pending"
-const stateRunning state = "running"
-const stateStopped state = "stopped"
-const stateFailed state = "failed"
-const stateSkipped state = "skipped"
-const stateQueued state = "queued"
-const stateBlocked state = "blocked"
-const stateReady state = "ready"
-const stateDone state = "done"
-const stateArchived state = "archived"
-const statePaused state = "paused"
-
-func use(state) {}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
-	) {
-		t.Fatalf("expected const-grouping finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "const_grouping") {
-		t.Fatalf("expected const_grouping kind, got %#v", issues)
-	}
-}
-
-func TestDetectsLargeUngroupedVarChunk(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-var (
-	cacheA = 1
-	cacheB = 2
-	cacheC = 3
-	cacheD = 4
-	cacheE = 5
-	cacheF = 6
-	cacheG = 7
-	cacheH = 8
-	cacheI = 9
-	cacheJ = 10
-	cacheK = 11
-	cacheL = 12
-)
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`var chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller var blocks`,
-	) {
-		t.Fatalf("expected var-grouping finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "var_grouping") {
-		t.Fatalf("expected var_grouping kind, got %#v", issues)
-	}
-}
-
-func TestDetectsAdjacentUngroupedTypeDecls(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type reqA struct{}
-type reqB struct{}
-type reqC struct{}
-type reqD struct{}
-type reqE struct{}
-type reqF struct{}
-type reqG struct{}
-type reqH struct{}
-type reqI struct{}
-type reqJ struct{}
-type reqK struct{}
-type reqL struct{}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`type chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller type blocks`,
-	) {
-		t.Fatalf("expected type-grouping finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "type_grouping") {
-		t.Fatalf("expected type_grouping kind, got %#v", issues)
-	}
-}
-
 func TestDetectsMixedConstPrefixes(t *testing.T) {
 	t.Parallel()
 
@@ -602,11 +595,16 @@ const (
 	}
 }
 
-func TestSkipsMixedConstPrefixesWithGroupBreaks(t *testing.T) {
+func TestSkipsGroupedOrNamedDecls(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	for _, test := range []struct {
+		name, path, source, want, failure string
+	}{
+		{
+			name: "SkipsMixedConstPrefixesWithGroupBreaks",
+			path: similarityTestFilename,
+			source: `package sample
 
 const (
 	statusReady = "ready"
@@ -618,13 +616,81 @@ const (
 	modeFast = "fast"
 	modeSlow = "slow"
 )
-`)
+`,
+			want:    `const chunk mixes`,
+			failure: "unexpected mixed-const-prefix finding, got:\n%s",
+		},
+		{
+			name: "SkipsNamedLargeTableTest",
+			path: "sample_test.go",
+			source: `package sample
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+import "testing"
 
-	if strings.Contains(joined, `const chunk mixes`) {
-		t.Fatalf("unexpected mixed-const-prefix finding, got:\n%s", joined)
+func TestParse(t *testing.T) {
+	cases := []struct {
+		name string
+		input string
+		want string
+	}{
+		{name: "a", input: "a", want: "a"},
+		{name: "b", input: "b", want: "b"},
+		{name: "c", input: "c", want: "c"},
+		{name: "d", input: "d", want: "d"},
+		{name: "e", input: "e", want: "e"},
+		{name: "f", input: "f", want: "f"},
+		{name: "g", input: "g", want: "g"},
+		{name: "h", input: "h", want: "h"},
+		{name: "i", input: "i", want: "i"},
+		{name: "j", input: "j", want: "j"},
+		{name: "k", input: "k", want: "k"},
+	}
+	_ = cases
+}
+`,
+			want:    `table test has`,
+			failure: "unexpected table-test-grouping finding, got:\n%s",
+		},
+		{
+			name: "SkipsAdjacentConstDeclsWithGroupBreaks",
+			path: similarityTestFilename,
+			source: `package sample
+
+type state string
+
+const stateUnknown state = ""
+const statePending state = "pending"
+const stateRunning state = "running"
+const stateStopped state = "stopped"
+const stateFailed state = "failed"
+const stateSkipped state = "skipped"
+
+// terminal states
+const stateDone state = "done"
+const stateArchived state = "archived"
+const stateExpired state = "expired"
+const stateCancelled state = "cancelled"
+const stateFailedHard state = "failed_hard"
+
+func use(state) {}
+`,
+			want:    `const chunk has`,
+			failure: "unexpected const-grouping finding, got:\n%s",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, test.path), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if strings.Contains(joined, test.want) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
 	}
 }
 
@@ -669,77 +735,6 @@ func TestParse(t *testing.T) {
 
 	if !hasIssueKind(issues, "table_test_grouping") {
 		t.Fatalf("expected table_test_grouping kind, got %#v", issues)
-	}
-}
-
-func TestSkipsNamedLargeTableTest(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
-
-import "testing"
-
-func TestParse(t *testing.T) {
-	cases := []struct {
-		name string
-		input string
-		want string
-	}{
-		{name: "a", input: "a", want: "a"},
-		{name: "b", input: "b", want: "b"},
-		{name: "c", input: "c", want: "c"},
-		{name: "d", input: "d", want: "d"},
-		{name: "e", input: "e", want: "e"},
-		{name: "f", input: "f", want: "f"},
-		{name: "g", input: "g", want: "g"},
-		{name: "h", input: "h", want: "h"},
-		{name: "i", input: "i", want: "i"},
-		{name: "j", input: "j", want: "j"},
-		{name: "k", input: "k", want: "k"},
-	}
-	_ = cases
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `table test has`) {
-		t.Fatalf("unexpected table-test-grouping finding, got:\n%s", joined)
-	}
-}
-
-func TestSkipsAdjacentConstDeclsWithGroupBreaks(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type state string
-
-const stateUnknown state = ""
-const statePending state = "pending"
-const stateRunning state = "running"
-const stateStopped state = "stopped"
-const stateFailed state = "failed"
-const stateSkipped state = "skipped"
-
-// terminal states
-const stateDone state = "done"
-const stateArchived state = "archived"
-const stateExpired state = "expired"
-const stateCancelled state = "cancelled"
-const stateFailedHard state = "failed_hard"
-
-func use(state) {}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `const chunk has`) {
-		t.Fatalf("unexpected const-grouping finding, got:\n%s", joined)
 	}
 }
 

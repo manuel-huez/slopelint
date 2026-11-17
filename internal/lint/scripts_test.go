@@ -124,7 +124,8 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 // TestCodeReviewKeysKeepPerLanguagePolicy pins Go keys to their format from
 // before script languages, and script comment keys to theirs from before
 // script errors and tests, so tuned verdicts stay cached. Each key follows
-// only the versions of its own language and item families.
+// only the versions of its own language and item families; test groups
+// follow only their own.
 func TestCodeReviewKeysKeepPerLanguagePolicy(t *testing.T) {
 	t.Parallel()
 
@@ -199,14 +200,24 @@ func TestCodeReviewKeysKeepPerLanguagePolicy(t *testing.T) {
 	goTest := scriptTest
 	goTest.Language, goTest.File = outline.Go, ""
 
+	group := []codeReviewItem{
+		{ID: "i1", Kind: codeReviewTestGroupItem, Lines: "1-2", Tests: []string{"a", "b"}},
+	}
+	goGroup := goTest
+	goGroup.Items = group
+	scriptGroup := scriptTest
+	scriptGroup.Items = group
+
 	const goTestRequest = "Go test"
 
 	requests := map[string]codeReviewRequest{
-		"Go comment":         request,
-		goTestRequest:        goTest,
-		"TypeScript comment": script,
-		"TypeScript error":   scriptError,
-		"TypeScript test":    scriptTest,
+		"Go comment":            request,
+		goTestRequest:           goTest,
+		"Go test group":         goGroup,
+		"TypeScript comment":    script,
+		"TypeScript error":      scriptError,
+		"TypeScript test":       scriptTest,
+		"TypeScript test group": scriptGroup,
 	}
 
 	// Each version change selects new records only for its own requests; Go
@@ -221,6 +232,11 @@ func TestCodeReviewKeysKeepPerLanguagePolicy(t *testing.T) {
 		{func(policy *codeReviewPolicy) { policy.TypeScriptSchema++ }, []string{"TypeScript comment"}},
 		{func(policy *codeReviewPolicy) { policy.ScriptErrorSchema++ }, []string{"TypeScript error"}},
 		{func(policy *codeReviewPolicy) { policy.ScriptTestSchema++ }, []string{"TypeScript test"}},
+		{func(policy *codeReviewPolicy) { policy.TestGroupSchema++ }, []string{"Go test group"}},
+		{
+			func(policy *codeReviewPolicy) { policy.ScriptTestGroupSchema++ },
+			[]string{"TypeScript test group"},
+		},
 	} {
 		policy := codeReviewCurrentPolicy
 		test.change(&policy)

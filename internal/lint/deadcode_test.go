@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const wantUnusedPrivateMethod = `private method "unusedPrivate" is never used by production code; remove it`
+
 func TestDetectsDeadPrivateDecls(t *testing.T) {
 	t.Parallel()
 
@@ -410,7 +412,7 @@ func (Service) unusedPrivate() {}
 
 	for _, want := range []string{
 		`exported method "UnusedExported" is unreachable from repo entrypoints; remove it`,
-		`private method "unusedPrivate" is never used by production code; remove it`,
+		wantUnusedPrivateMethod,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected method dead-code finding %q, got:\n%s", want, joined)
@@ -444,19 +446,11 @@ func Facts() []Fact {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "AFact"`) {
-		t.Fatalf("interface method reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
-	) {
-		t.Fatalf("expected unused private method finding, got:\n%s", joined)
-	}
+	requireDeadCode(t, tmp, []string{
+		`method "AFact"`,
+	}, []string{
+		wantUnusedPrivateMethod,
+	})
 }
 
 func TestRepoDeadCodeKeepsStructFieldInterfaceMethods(t *testing.T) {
@@ -496,7 +490,7 @@ func Response() *http.Response {
 
 	if !strings.Contains(
 		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
+		wantUnusedPrivateMethod,
 	) {
 		t.Fatalf("expected unused private method finding, got:\n%s", joined)
 	}
@@ -525,19 +519,11 @@ func Live() {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "markRow"`) {
-		t.Fatalf("generic constraint method reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
-	) {
-		t.Fatalf("expected unused private method finding, got:\n%s", joined)
-	}
+	requireDeadCode(t, tmp, []string{
+		`method "markRow"`,
+	}, []string{
+		wantUnusedPrivateMethod,
+	})
 }
 
 func TestRepoDeadCodeKeepsCrossPackageGenericConstraintMethods(t *testing.T) {
@@ -574,19 +560,11 @@ func Live() {
 }
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "processRow"`) {
-		t.Fatalf("cross-package generic constraint method reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
-	) {
-		t.Fatalf("expected unused private method finding, got:\n%s", joined)
-	}
+	requireDeadCode(t, tmp, []string{
+		`method "processRow"`,
+	}, []string{
+		wantUnusedPrivateMethod,
+	})
 }
 
 func TestDeadCodeKeepsPrivateMarkerMethodsWithoutLocalUse(t *testing.T) {
@@ -605,19 +583,11 @@ func (DailyBar) processRow() {}
 func (DailyBar) unusedPrivate() {}
 `)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `method "processRow"`) {
-		t.Fatalf("marker method reported dead, got:\n%s", joined)
-	}
-
-	if !strings.Contains(
-		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
-	) {
-		t.Fatalf("expected unused private method finding, got:\n%s", joined)
-	}
+	requireDeadCode(t, tmp, []string{
+		`method "processRow"`,
+	}, []string{
+		wantUnusedPrivateMethod,
+	})
 }
 
 func TestDeadCodeKeepsPrivateMarkerMethodsOnSealedInterfaces(t *testing.T) {
@@ -653,7 +623,7 @@ func (DailyBar) unusedPrivate() {}
 
 	if !strings.Contains(
 		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
+		wantUnusedPrivateMethod,
 	) {
 		t.Fatalf("expected unused private method finding, got:\n%s", joined)
 	}
@@ -716,7 +686,7 @@ func Live() {
 
 	if !strings.Contains(
 		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
+		wantUnusedPrivateMethod,
 	) {
 		t.Fatalf("expected unused private method finding, got:\n%s", joined)
 	}

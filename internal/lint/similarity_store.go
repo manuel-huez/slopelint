@@ -115,8 +115,19 @@ func findGoModuleRoot(start string) (string, error) {
 	}
 }
 
-func similaritySourceDigest(pkgs []*LoadedPackage, root string) (string, error) {
+// similaritySourceDigest hashes the packages' Go files and the script files.
+// Script files have no package, so Go-only digests keep their value.
+func similaritySourceDigest(pkgs []*LoadedPackage, scripts []string, root string) (string, error) {
 	filesByPath := make(map[string]similaritySourceFile)
+
+	for _, filename := range scripts {
+		key, sourceFile, err := similaritySourceFileForPath("", filename, root)
+		if err != nil {
+			return "", err
+		}
+
+		filesByPath[key] = sourceFile
+	}
 
 	for _, pkg := range pkgs {
 		if pkg == nil {
@@ -352,13 +363,32 @@ func refreshSimilarityStamp(root string, stamp similarityStamp) error {
 	return nil
 }
 
+// similarityRepositoryDigest hashes the module's Go inputs and, when it has
+// any, its script files, so Go-only digests keep their value.
 func similarityRepositoryDigest(root string) (string, error) {
 	location, err := repositoryCacheLocationForDir(root)
 	if err != nil || !location.git {
 		return "", errAnalysisCacheDisabled
 	}
 
-	return repoAnalysisWalkDigest(root, similarityRepositoryPathspecs)
+	digest, err := repoAnalysisWalkDigest(root, similarityRepositoryPathspecs)
+	if err != nil {
+		return "", err
+	}
+
+	scripts, err := moduleScriptFiles(root)
+	if err != nil || len(scripts) == 0 {
+		return digest, err
+	}
+
+	scriptDigest, err := similaritySourceDigest(nil, scripts, root)
+	if err != nil {
+		return "", err
+	}
+
+	sum := sha256.Sum256([]byte(digest + "\x00" + scriptDigest))
+
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func similarityVectorCacheRoot(dir string) (string, error) {

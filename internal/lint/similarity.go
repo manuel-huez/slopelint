@@ -138,12 +138,13 @@ const (
 )
 
 // checkSemanticCode checks or attests semantic duplicates and code review for
-// loaded packages. Local runs update the stamp only when both are clean; CI
-// runs only validate it. candidates delivers dropped-error candidates from
-// structural lint; nil means none.
+// loaded packages, and code review for the script files. Local runs update
+// the stamp only when both are clean; CI runs only validate it. candidates
+// delivers dropped-error candidates from structural lint; nil means none.
 func checkSemanticCode(
 	ctx context.Context,
 	pkgs []*LoadedPackage,
+	scripts []string,
 	opts SimilarityOptions,
 	candidates <-chan []Issue,
 ) ([]Issue, error) {
@@ -151,7 +152,7 @@ func checkSemanticCode(
 		return nil, nil
 	}
 
-	check, err := loadSimilarityCheck(pkgs)
+	check, err := loadSimilarityCheck(pkgs, scripts)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +179,7 @@ func checkSemanticCode(
 	review := startCodeReview(
 		ctx,
 		cancel,
-		similarityRepoFiles(pkgs),
+		append(similarityRepoFiles(pkgs), scripts...),
 		runtime.reviewer,
 		opts,
 		candidates,
@@ -361,13 +362,13 @@ type similarityCheck struct {
 	stamp        similarityStamp
 }
 
-func loadSimilarityCheck(pkgs []*LoadedPackage) (similarityCheck, error) {
+func loadSimilarityCheck(pkgs []*LoadedPackage, scripts []string) (similarityCheck, error) {
 	root, err := similarityModuleRoot(pkgs)
 	if err != nil {
 		return similarityCheck{}, err
 	}
 
-	sourceDigest, err := similaritySourceDigest(pkgs, root)
+	sourceDigest, err := similaritySourceDigest(pkgs, scripts, root)
 	if err != nil {
 		return similarityCheck{}, err
 	}

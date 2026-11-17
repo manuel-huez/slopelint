@@ -26,7 +26,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 
 	pkgs := loadPackagesForTest(t, tmp)
 
-	issues, err := checkSemanticCode(t.Context(), pkgs, SimilarityOptions{
+	issues, err := checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
 		embedder:     embedder,
@@ -50,7 +50,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 
 	pkgs = loadPackagesForTest(t, tmp)
 
-	issues, err = checkSemanticCode(t.Context(), pkgs, SimilarityOptions{}, nil)
+	issues, err = checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{}, nil)
 	if err != nil {
 		t.Fatalf("stamped local check: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 		t.Fatalf("stamped local issues: %v", issues)
 	}
 
-	issues, err = checkSemanticCode(t.Context(), pkgs, SimilarityOptions{CI: true}, nil)
+	issues, err = checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{CI: true}, nil)
 	if err != nil {
 		t.Fatalf("CI check: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestSimilarityLocalWritesStampAndCIUsesItWithoutServer(t *testing.T) {
 	)
 	pkgs = loadPackagesForTest(t, tmp)
 
-	_, err = checkSemanticCode(t.Context(), pkgs, SimilarityOptions{CI: true}, nil)
+	_, err = checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{CI: true}, nil)
 	if err == nil || !strings.Contains(err.Error(), "is stale") {
 		t.Fatalf("stale CI check error = %v", err)
 	}
@@ -89,7 +89,7 @@ func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) 
 	initTestGitRepository(t, tmp)
 	pkgs := loadPackagesForTest(t, tmp)
 
-	sourceDigest, err := similaritySourceDigest(pkgs, tmp)
+	sourceDigest, err := similaritySourceDigest(pkgs, nil, tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +107,7 @@ func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) 
 	if _, err := checkSemanticCode(
 		t.Context(),
 		pkgs,
+		nil,
 		SimilarityOptions{}, nil); err != nil {
 		t.Fatalf("refresh stamp: %v", err)
 	}

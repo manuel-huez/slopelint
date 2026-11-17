@@ -14,11 +14,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"golang.org/x/mod/modfile"
 )
 
@@ -333,11 +335,12 @@ func repoAnalysisSourceDigest(
 			return "", err
 		}
 
+		// Only Git lists the tracked script files that slopelint lints.
 		return repoAnalysisGitDigest(
 			location.sourceRoot,
 			moduleRoot,
 			location.objectFormat,
-			repoAnalysisSourcePathspecs,
+			append(slices.Clone(repoAnalysisSourcePathspecs), scriptPathspecs...),
 		)
 	}
 
@@ -606,13 +609,21 @@ func repoAnalysisApplyWorktree(
 }
 
 func repoAnalysisExcludedWorktreePath(root, name string) (bool, error) {
-	// Go excludes hidden, underscore, and testdata directory trees.
+	// Go excludes hidden, underscore, and testdata directory trees. Script
+	// files keep underscore directories such as __tests__ but skip hidden,
+	// testdata, and installed or vendored dependency trees. A nested go.mod
+	// does not bound them: repositories add one to hide script trees from Go.
+	script := outline.LanguageFor(name) != ""
 	components := strings.Split(filepath.ToSlash(name), "/")
+
 	for _, component := range components[:len(components)-1] {
-		if strings.HasPrefix(component, ".") ||
-			strings.HasPrefix(component, "_") || component == "testdata" {
+		if repoAnalysisIgnoredComponent(component, script) {
 			return true, nil
 		}
+	}
+
+	if script {
+		return false, nil
 	}
 
 	// Go also excludes nested modules. Git can list an ignored directory
@@ -634,6 +645,18 @@ func repoAnalysisExcludedWorktreePath(root, name string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func repoAnalysisIgnoredComponent(component string, script bool) bool {
+	if strings.HasPrefix(component, ".") || component == "testdata" {
+		return true
+	}
+
+	if script {
+		return component == "node_modules" || component == "vendor"
+	}
+
+	return strings.HasPrefix(component, "_")
 }
 
 func repoAnalysisBlobID(root, name, objectFormat string) (string, error) {

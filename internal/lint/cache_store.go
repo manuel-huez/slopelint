@@ -28,6 +28,15 @@ func (cache *repoAnalysisCache) load() (*analysisCacheEntry, bool) {
 	return loadAnalysisCacheEntry(cache.path)
 }
 
+func (cache *repoAnalysisCache) replay(hit func(string)) ([]Issue, bool) {
+	entry, ok := cache.load()
+	if !ok {
+		return nil, false
+	}
+
+	return replayRepoAnalysisCache(entry, hit, cache.sourceRoot)
+}
+
 func loadAnalysisCacheEntry(path string) (*analysisCacheEntry, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {

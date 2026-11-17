@@ -1,6 +1,7 @@
 # slopelint
 
-Go analyzer for redundant checks, repeated behavior, dead code, and overbuilt APIs.
+Go analyzer for redundant checks, repeated behavior, dead code, and overbuilt APIs,
+with size and comment checks for TypeScript and Python.
 Built on `go/analysis`, with optional Codex descriptions for semantic similarity
 and Codex review of comments and dropped errors.
 Early-stage: expect breaking changes and conservative misses.
@@ -28,6 +29,23 @@ go build -o ./bin/slopelint ./cmd/slopelint
 ./bin/slopelint ./...
 go vet -vettool="$(pwd)/bin/slopelint" ./...
 ```
+
+### Languages
+
+Standalone scans also lint tracked TypeScript (`.ts`, `.tsx`) and Python files
+of the module's Git repository, parsed with pure-Go tree-sitter. A directory
+pattern covers them: `./...` its tree, `./web` one directory; import-path
+patterns cover none. Skipped: hidden, `node_modules`, `vendor`, and `testdata`
+directories, `.d.ts`, `.gen.ts`, `.min.` files, and files with `@generated`,
+`DO NOT EDIT`, or `Code generated` in the first 5 lines. A nested `go.mod`
+does not stop them. A syntax error fails the run, as a Go parse error does.
+These files get the size rules and [code review](#code-review) of comments
+and suppressions only. Test files (`*.test.ts`, `*.spec.ts`, `__tests__/`,
+`test_*.py`, `*_test.py`, `tests/`, `conftest.py`) get only the file limit, as
+Go test files do. Named functions include methods, `def`, and function values
+bound to a name, also through a curried wrapper such as
+`Effect.fn("f")(function* () {})`; other function values and lambdas are
+literals. Classes own methods for `god_receiver`.
 
 Standalone scans compare loaded packages. Vettool mode analyzes one package at a
 time and does not run semantic similarity, code review, or repo-wide dead-code
@@ -88,9 +106,10 @@ stamp.
 
 ### Code review
 
-Local standalone scans send each top-level declaration of handwritten Go files
-(production and test) that has a judged item to `gpt-6.1-terra` (low reasoning)
-through the Codex CLI. **Uncached declarations, with numbered source lines, are
+Local standalone scans send each top-level declaration of handwritten Go,
+TypeScript, and Python files (production and test) that has a judged item to
+`gpt-6.1-terra` (low reasoning) through the Codex CLI. Adjacent TypeScript and
+Python statements form one declaration. **Uncached declarations, with numbered source lines, are
 sent to the configured Codex service.** Items:
 
 - Comment groups in or attached to the declaration. Suppressions
@@ -99,6 +118,14 @@ sent to the configured Codex service.** Items:
   constraint. A comment that ends on the line above a suppression is judged with
   it as its reason. Other directives (`//go:build`, `//go:generate`, `//go:embed`,
   `//slopelint:ensures`), cgo preambles, and file-level comments are skipped.
+- TypeScript and Python comments, including JSDoc and docstrings, and the
+  suppressions `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`,
+  `eslint-disable*`, `oxlint-disable*`, `biome-ignore`, `# noqa`,
+  `# type: ignore`, `# pylint: disable`, `# pyright: ignore`, and
+  `# pragma: no cover`. A suppression outside every declaration is judged
+  alone. Module docstrings, triple-slash and source-map directives, and type
+  comments are skipped. Public API means `export` in TypeScript and names
+  without a leading underscore in Python.
 - Production `if err != nil` checks that drop an error which is not read again
   before being overwritten. Errors carried across loop iterations, captured by a
   closure, or address-taken are not judged.
@@ -125,7 +152,7 @@ missing, the run warns and writes a stamp without review, which CI rejects unles
 `SLOPELINT_CODEX_DESCRIPTIONS=off`.
 
 Verdicts are cached per declaration, keyed by prompt version, model, effort,
-source, and items; unchanged declarations cause no model calls. Records accepted
+source, and items; each language has its own prompt version; unchanged declarations cause no model calls. Records accepted
 before a failure or SIGINT stay cached.
 
 ### Embedding server
@@ -179,7 +206,7 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Error panics and sentinel breaks | `prod_must_panic`, `sentinel_error_break` |
 | Unreachable declarations | `dead_code` |
 | Declaration grouping | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` |
-| Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results; types over 40 methods | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list`, `god_receiver` |
+| Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results (Go only); types or classes over 40 methods; also for [TypeScript and Python](#languages) | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list`, `god_receiver` |
 | Test structure and support code | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_no_assertion`, `test_sleep`, `test_support_filename` |
 | Invalid contracts and stale suppressions | `invalid_contract`, `stale_complexity_suppression` |
 

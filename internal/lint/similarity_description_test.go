@@ -319,7 +319,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		embedder:        embedder,
 	}
 
-	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
+	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "description calls", describer.calls, 2)
@@ -344,7 +344,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	}
 
 	options.AcceptedPairIDs = nil
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "hot description calls", describer.calls, 2)
@@ -354,7 +354,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	// and descriptions, preserving reviewed content-bound acceptances.
 	cacheRoot := storeSimilarityCacheWithOlderPolicy(t, cacheDir, tmp, stamp)
 
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
 	requireNoSimilarityIssues(t, issues, err)
 	requireSimilarityCount(t, "policy change description calls", describer.calls, 2)
 	requireSimilarityCount(t, "policy change embedding batches", embedder.calls, 2)
@@ -372,7 +372,13 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	withoutCodex.describer = nil
 
 	t.Setenv(codexEnv, offText)
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), withoutCodex, nil)
+	issues, err = checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		withoutCodex,
+		nil,
+	)
 	requireNoSimilarityIssues(t, issues, err)
 	t.Setenv(codexEnv, "auto")
 
@@ -385,11 +391,12 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	if _, err := checkSemanticCode(
 		t.Context(),
 		loadPackagesForTest(t, tmp),
+		nil,
 		SimilarityOptions{CI: true}, nil); err == nil {
 		t.Fatal("CI accepted stale source attestation after rename")
 	}
 
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), options, nil)
+	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
 	requireSingleSimilarityIssue(t, issues, err)
 	requireSimilarityCount(t, "description requests after rename", describer.requests, 4)
 	requireSimilarityCount(t, "source embedding batches after rename", embedder.calls, 3)
@@ -434,13 +441,19 @@ func third(values []int) int {
 		}
 	}}
 
-	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
-		CacheEnabled:    true,
-		cacheDir:        cacheDir,
-		AcceptedPairIDs: []string{similarityAcceptAllID},
-		describer:       describer,
-		embedder:        embedder,
-	}, nil)
+	issues, err := checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		SimilarityOptions{
+			CacheEnabled:    true,
+			cacheDir:        cacheDir,
+			AcceptedPairIDs: []string{similarityAcceptAllID},
+			describer:       describer,
+			embedder:        embedder,
+		},
+		nil,
+	)
 
 	requireNoSimilarityIssues(t, issues, err)
 
@@ -466,21 +479,33 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 
 		return []float32{float32(sourceScore), float32(math.Sqrt(1 - sourceScore*sourceScore))}
 	}}
-	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
-		CacheEnabled: true,
-		cacheDir:     cacheDir,
-		embedder:     embedder,
-	}, nil)
+	issues, err := checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		SimilarityOptions{
+			CacheEnabled: true,
+			cacheDir:     cacheDir,
+			embedder:     embedder,
+		},
+		nil,
+	)
 
 	requireNoSimilarityIssues(t, issues, err)
 	t.Setenv(codexEnv, "auto")
 
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), SimilarityOptions{
-		CacheEnabled: true,
-		cacheDir:     cacheDir,
-		describer:    new(similarityTestDescriber),
-		embedder:     embedder,
-	}, nil)
+	issues, err = checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		SimilarityOptions{
+			CacheEnabled: true,
+			cacheDir:     cacheDir,
+			describer:    new(similarityTestDescriber),
+			embedder:     embedder,
+		},
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

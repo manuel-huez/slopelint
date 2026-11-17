@@ -27,20 +27,17 @@ func LintRepository(
 		return nil, err
 	}
 
-	cache, cacheErr := newRepoAnalysisCache(patterns, dir, opts, similarity)
-	if cacheErr == nil {
-		if entry, ok := cache.load(); ok {
-			if issues, valid := replayRepoAnalysisCache(
-				entry,
-				opts.CacheHitHook,
-				cache.sourceRoot,
-			); valid {
-				return issues, nil
-			}
-		}
+	cache, _ := newRepoAnalysisCache(patterns, dir, opts, similarity)
+	if issues, ok := cache.replay(opts.CacheHitHook); ok {
+		return issues, nil
 	}
 
 	targets, byImportPath, err := resolvePackageMetadata(patterns, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	scriptRoot, scripts, err := patternScriptFiles(patterns, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -65,12 +62,20 @@ func LintRepository(
 		candidates = make(chan []Issue, 1)
 
 		similarityRun.Go(func() {
-			issues, similarityErr = checkSemanticCode(ctx, similarityPkgs, *similarity, candidates)
+			issues, similarityErr = checkSemanticCode(
+				ctx,
+				similarityPkgs,
+				scripts,
+				*similarity,
+				candidates,
+			)
 		})
 	}
 
 	packageIssues, err := lintPackageTargets(targets, byImportPath, opts)
-	packageIssues, found := splitCodeReviewCandidates(packageIssues)
+	scriptIssues, scriptErr := lintScriptFiles(scripts, scriptRoot, opts)
+	err = errors.Join(err, scriptErr)
+	packageIssues, found := splitCodeReviewCandidates(append(packageIssues, scriptIssues...))
 
 	if candidates != nil {
 		if err == nil {

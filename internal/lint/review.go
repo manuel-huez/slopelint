@@ -8,10 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
 	"go/token"
-	"go/types"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +19,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
 
@@ -42,9 +41,14 @@ type codeReviewPolicy struct {
 	// TestSchema versions the test-function rules. Requests without a test
 	// item omit it, so changing those rules keeps comment and dropped-error
 	// records.
-	TestSchema int    `json:"test_schema,omitempty"`
-	Model      string `json:"model"`
-	Effort     string `json:"effort"`
+	TestSchema int `json:"test_schema,omitempty"`
+	// TypeScriptSchema and PythonSchema version those languages' prompts.
+	// Each request keeps only its own language's version, so Go keys stay
+	// as they were and one language's change keeps the others' records.
+	TypeScriptSchema int    `json:"typescript_schema,omitempty"`
+	PythonSchema     int    `json:"python_schema,omitempty"`
+	Model            string `json:"model"`
+	Effort           string `json:"effort"`
 }
 
 // codeReviewPolicyVersion must be bumped for any change to the comment,
@@ -57,11 +61,21 @@ const codeReviewPolicyVersion = 8
 // in the prompt or to which test functions are judged.
 const codeReviewTestPolicyVersion = 1
 
+// codeReviewScriptPolicyVersions must be bumped for any change to that
+// language's prompt text, or to which comments and declaration lines the
+// outline gives it.
+const (
+	codeReviewTypeScriptPolicyVersion = 4
+	codeReviewPythonPolicyVersion     = 4
+)
+
 var codeReviewCurrentPolicy = codeReviewPolicy{
-	Schema:     codeReviewPolicyVersion,
-	TestSchema: codeReviewTestPolicyVersion,
-	Model:      "gpt-6.1-terra",
-	Effort:     "low",
+	Schema:           codeReviewPolicyVersion,
+	TestSchema:       codeReviewTestPolicyVersion,
+	TypeScriptSchema: codeReviewTypeScriptPolicyVersion,
+	PythonSchema:     codeReviewPythonPolicyVersion,
+	Model:            "gpt-6.1-terra",
+	Effort:           "low",
 }
 
 const (
@@ -119,10 +133,13 @@ type codeReviewItem struct {
 }
 
 // codeReviewRequest is one top-level declaration with numbered source lines.
-// ID is the cache key.
+// ID is the cache key. File is the base name of a TypeScript or Python file,
+// which can decide a verdict, as for re-exports in __init__.py.
 type codeReviewRequest struct {
 	ID       string
 	Location string
+	Language outline.Language
+	File     string
 	Test     bool
 	Source   string
 	Items    []codeReviewItem
@@ -212,10 +229,21 @@ func (review codeReview) generate(
 	missing []codeReviewRequest,
 	collector *codeReviewCollector,
 ) error {
+	counts := make(map[outline.Language]int)
+	for _, request := range missing {
+		counts[request.Language]++
+	}
+
+	var languages []string
+	for _, language := range slices.Sorted(maps.Keys(counts)) {
+		languages = append(languages, fmt.Sprintf("%s %d", language, counts[language]))
+	}
+
 	_, _ = fmt.Fprintf(
 		os.Stderr,
-		"slopelint: reviewing %d declarations with %s (%s reasoning)\n",
+		"slopelint: reviewing %d declarations (%s) with %s (%s reasoning)\n",
 		len(missing),
+		strings.Join(languages, ", "),
 		review.policy.Model,
 		review.policy.Effort,
 	)
@@ -500,65 +528,11 @@ func collectFileCodeReviewDeclarations(
 		return nil, err
 	}
 
-	fset := token.NewFileSet()
-
-	file, err := parser.ParseFile(fset, filename, content, parser.ParseComments)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", filename, err)
+	if !strings.HasSuffix(filename, ".go") {
+		return collectScriptCodeReviewDeclarations(filename, content, policy)
 	}
 
-	if ast.IsGenerated(file) {
-		return nil, nil
-	}
-
-	source := codeReviewSource{
-		fset:       fset,
-		file:       file,
-		lines:      strings.Split(string(content), "\n"),
-		test:       strings.HasSuffix(filename, "_test.go"),
-		candidates: candidates,
-		ifs:        make(map[int]*ast.IfStmt),
-		policy:     policy,
-	}
-
-	ast.Inspect(file, func(node ast.Node) bool {
-		if stmt, ok := node.(*ast.IfStmt); ok {
-			source.ifs[fset.PositionFor(stmt.Pos(), false).Offset] = stmt
-		}
-
-		return true
-	})
-
-	for _, candidate := range candidates {
-		if source.ifs[candidate.position.Offset] == nil {
-			return nil, fmt.Errorf("%s changed during the scan; run slopelint again", filename)
-		}
-	}
-
-	var declarations []codeReviewDeclaration
-
-	for _, decl := range file.Decls {
-		declaration, err := source.declaration(decl)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(declaration.request.Items) > 0 {
-			declarations = append(declarations, declaration)
-		}
-	}
-
-	return declarations, nil
-}
-
-type codeReviewSource struct {
-	fset       *token.FileSet
-	file       *ast.File
-	lines      []string
-	test       bool
-	candidates []Issue
-	ifs        map[int]*ast.IfStmt
-	policy     codeReviewPolicy
+	return collectGoCodeReviewDeclarations(filename, content, candidates, policy)
 }
 
 type codeReviewPositionedItem struct {
@@ -566,55 +540,16 @@ type codeReviewPositionedItem struct {
 	position token.Position
 }
 
-// position ignores //line directives: review reads the file's own lines.
-func (source codeReviewSource) position(pos token.Pos) token.Position {
-	return source.fset.PositionFor(pos, false)
-}
-
-func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration, error) {
-	start, doc := decl.Pos(), declDoc(decl)
-	if doc != nil {
-		start = doc.Pos()
-	}
-
-	startLine := source.position(start).Line
-	endLine := source.position(decl.End()).Line
-
-	var items []codeReviewPositionedItem
-
-	// A cgo preamble is C source, not a Go comment.
-	if !importsC(decl) {
-		items = source.commentItems(startLine, endLine)
-	}
-
-	items = append(items, source.droppedErrorItems(decl, startLine)...)
-
-	if source.test && runnableGoTest(decl) {
-		position := source.position(decl.Pos())
-		items = append(items, codeReviewPositionedItem{
-			item: codeReviewItem{
-				Kind:  codeReviewTestItem,
-				Lines: codeReviewLines(position.Line-startLine+1, endLine-startLine+1),
-			},
-			position: position,
-		})
-	}
-
-	if len(items) == 0 {
-		return codeReviewDeclaration{}, nil
-	}
-
+func newCodeReviewDeclaration(
+	request codeReviewRequest,
+	items []codeReviewPositionedItem,
+	policy codeReviewPolicy,
+) (codeReviewDeclaration, error) {
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].position.Offset < items[j].position.Offset
 	})
 
-	declaration := codeReviewDeclaration{
-		request: codeReviewRequest{
-			Location: fmt.Sprintf("%s:%d", source.position(start).Filename, startLine),
-			Test:     source.test,
-			Source:   numberedCodeReviewSource(source.lines[startLine-1 : endLine]),
-		},
-	}
+	declaration := codeReviewDeclaration{request: request}
 
 	for index, positioned := range items {
 		positioned.item.ID = "i" + strconv.Itoa(index+1)
@@ -624,31 +559,40 @@ func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration
 
 	var err error
 
-	declaration.request.ID, err = codeReviewKey(source.policy, declaration.request)
+	declaration.request.ID, err = codeReviewKey(policy, declaration.request)
 
 	return declaration, err
 }
 
-// commentItems returns one item per judged comment group. A suppression that
-// starts on the line after a judged group joins it: the reason above belongs
-// to the suppression, so both are judged as one item reported at the
-// suppression.
-func (source codeReviewSource) commentItems(startLine, endLine int) []codeReviewPositionedItem {
+type codeReviewCommentGroup struct {
+	position    token.Position
+	lastLine    int
+	suppression bool
+}
+
+// codeReviewCommentItems returns one item per judged comment group starting
+// in the declaration lines. A suppression that starts on the line after a
+// judged group joins it: the reason above belongs to the suppression, so
+// both are judged as one item reported at the suppression.
+func codeReviewCommentItems(
+	groups []codeReviewCommentGroup,
+	startLine, endLine int,
+) []codeReviewPositionedItem {
 	var (
 		items       []codeReviewPositionedItem
 		first, last int
 	)
 
-	for _, group := range source.file.Comments {
-		position := source.position(group.Pos())
-		if position.Line < startLine || position.Line > endLine || !codeReviewHasItem(group) {
+	for _, group := range groups {
+		position := group.position
+		if position.Line < startLine || position.Line > endLine {
 			continue
 		}
 
 		groupFirst := position.Line - startLine + 1
-		groupLast := source.position(group.End()).Line - startLine + 1
+		groupLast := group.lastLine - startLine + 1
 
-		if len(items) > 0 && groupFirst == last+1 && codeReviewSuppression(group.List[0].Text) {
+		if len(items) > 0 && groupFirst == last+1 && group.suppression {
 			items = items[:len(items)-1]
 			groupFirst = first
 		}
@@ -664,83 +608,6 @@ func (source codeReviewSource) commentItems(startLine, endLine int) []codeReview
 	}
 
 	return items
-}
-
-func (source codeReviewSource) droppedErrorItems(
-	decl ast.Decl,
-	startLine int,
-) []codeReviewPositionedItem {
-	startOffset := source.position(decl.Pos()).Offset
-	endOffset := source.position(decl.End()).Offset
-
-	var items []codeReviewPositionedItem
-
-	for _, candidate := range source.candidates {
-		offset := candidate.position.Offset
-		if offset < startOffset || offset > endOffset {
-			continue
-		}
-
-		ifStmt := source.ifs[offset]
-		items = append(items, codeReviewPositionedItem{
-			item: codeReviewItem{
-				Kind: codeReviewErrorItem,
-				Lines: codeReviewLines(
-					source.position(ifStmt.Pos()).Line-startLine+1,
-					source.position(ifStmt.End()).Line-startLine+1,
-				),
-				Error: candidate.Message,
-			},
-			position: candidate.position,
-		})
-	}
-
-	return items
-}
-
-// runnableGoTest matches func TestXxx(t *testing.T) as go test names tests.
-// It is syntactic, so a renamed testing import is not matched.
-func runnableGoTest(decl ast.Decl) bool {
-	fn, ok := decl.(*ast.FuncDecl)
-	if !ok || fn.Recv != nil {
-		return false
-	}
-
-	rest, ok := strings.CutPrefix(fn.Name.Name, "Test")
-	if !ok || rest != "" && unicode.IsLower([]rune(rest)[0]) {
-		return false
-	}
-
-	params := fn.Type.Params.List
-
-	return len(params) == 1 && len(params[0].Names) <= 1 &&
-		types.ExprString(params[0].Type) == "*testing.T"
-}
-
-func declDoc(decl ast.Decl) *ast.CommentGroup {
-	switch decl := decl.(type) {
-	case *ast.FuncDecl:
-		return decl.Doc
-	case *ast.GenDecl:
-		return decl.Doc
-	default:
-		return nil
-	}
-}
-
-func importsC(decl ast.Decl) bool {
-	gen, ok := decl.(*ast.GenDecl)
-	if !ok || gen.Tok != token.IMPORT {
-		return false
-	}
-
-	for _, spec := range gen.Specs {
-		if spec, ok := spec.(*ast.ImportSpec); ok && spec.Path.Value == `"C"` {
-			return true
-		}
-	}
-
-	return false
 }
 
 func codeReviewLines(first, last int) string {
@@ -770,16 +637,29 @@ func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewP
 		policy.TestSchema = 0
 	}
 
+	if request.Language == outline.TypeScript || request.Language == outline.Python {
+		policy.Schema = 0
+	}
+
+	if request.Language != outline.TypeScript {
+		policy.TypeScriptSchema = 0
+	}
+
+	if request.Language != outline.Python {
+		policy.PythonSchema = 0
+	}
+
 	return policy
 }
 
 func codeReviewKey(policy codeReviewPolicy, request codeReviewRequest) (string, error) {
 	data, err := json.Marshal(struct {
 		Policy codeReviewPolicy `json:"policy"`
+		File   string           `json:"file,omitempty"`
 		Test   bool             `json:"test"`
 		Source string           `json:"source"`
 		Items  []codeReviewItem `json:"items"`
-	}{policy.forRequest(request), request.Test, request.Source, request.Items})
+	}{policy.forRequest(request), request.File, request.Test, request.Source, request.Items})
 	if err != nil {
 		return "", err
 	}
@@ -787,69 +667,6 @@ func codeReviewKey(policy codeReviewPolicy, request codeReviewRequest) (string, 
 	sum := sha256.Sum256(data)
 
 	return hex.EncodeToString(sum[:]), nil
-}
-
-// codeReviewSuppressions are directives that silence a check. They are always
-// judged, with or without a reason, so a bare suppression is no way around
-// review.
-var codeReviewSuppressions = []string{
-	"nolint",
-	"exhaustive:ignore",
-	"slopelint:ignore",
-	"lint:ignore",
-	"lint:file-ignore",
-}
-
-func codeReviewHasItem(group *ast.CommentGroup) bool {
-	return slices.ContainsFunc(group.List, func(comment *ast.Comment) bool {
-		return codeReviewJudged(comment.Text)
-	})
-}
-
-func codeReviewJudged(text string) bool {
-	if body, ok := strings.CutPrefix(text, "/*"); ok {
-		return strings.TrimSpace(strings.TrimSuffix(body, "*/")) != ""
-	}
-
-	if codeReviewSuppression(text) {
-		return true
-	}
-
-	body := strings.TrimPrefix(text, "//")
-
-	return strings.TrimSpace(body) != "" && !strings.HasPrefix(body, " +build") &&
-		!commentDirective(body)
-}
-
-func codeReviewSuppression(text string) bool {
-	body := strings.TrimPrefix(text, "//")
-
-	return slices.ContainsFunc(codeReviewSuppressions, func(prefix string) bool {
-		return strings.HasPrefix(body, prefix)
-	})
-}
-
-// commentDirective matches Go's directive form: `//name:arg` with no space,
-// plus the `//line` and `//export`-style forms.
-func commentDirective(body string) bool {
-	for _, prefix := range []string{"line ", "export ", "extern "} {
-		if strings.HasPrefix(body, prefix) {
-			return true
-		}
-	}
-
-	name, _, ok := strings.Cut(body, ":")
-	if !ok || name == "" {
-		return false
-	}
-
-	for _, r := range name {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
-			return false
-		}
-	}
-
-	return true
 }
 
 type codeReviewRun struct {

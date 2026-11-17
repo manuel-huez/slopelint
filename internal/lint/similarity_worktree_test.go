@@ -21,7 +21,7 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		return []float32{1, 0}
 	}}
 	firstPackages := loadPackagesForTest(t, primary)
-	first, err := checkSemanticCode(t.Context(), firstPackages, SimilarityOptions{
+	first, err := checkSemanticCode(t.Context(), firstPackages, nil, SimilarityOptions{
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
 		embedder:     firstEmbedder,
@@ -39,7 +39,7 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		return nil
 	}}
 	linkedPackages := loadPackagesForTest(t, linked)
-	second, err := checkSemanticCode(t.Context(), linkedPackages, SimilarityOptions{
+	second, err := checkSemanticCode(t.Context(), linkedPackages, nil, SimilarityOptions{
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
 		embedder:     linkedEmbedder,

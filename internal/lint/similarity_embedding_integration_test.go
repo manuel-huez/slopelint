@@ -59,6 +59,7 @@ func TestLlamaServerSimilarityIntegration(t *testing.T) {
 	issues, err := checkSemanticCode(
 		t.Context(),
 		loadPackagesForTest(t, module),
+		nil,
 		SimilarityOptions{
 			CacheEnabled: true,
 			cacheDir:     t.TempDir(),

@@ -2,6 +2,7 @@ package smells
 
 import (
 	"fmt"
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -185,7 +186,7 @@ func boolModeParamNameEligible(name string) bool {
 		return true
 	}
 
-	words := splitIdentifierWords(name)
+	words := outline.Words(name)
 	if len(words) == 0 {
 		return true
 	}

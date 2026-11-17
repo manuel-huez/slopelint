@@ -2,6 +2,7 @@ package smells
 
 import (
 	"fmt"
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 	"go/token"
 	"sort"
@@ -213,7 +214,7 @@ func mixedConstPrefixes(counts map[string]int) []string {
 }
 
 func constNamePrefix(name string) string {
-	words := splitIdentifierWords(name)
+	words := outline.Words(name)
 	if len(words) < constNamePrefixMinimumWords {
 		return ""
 	}

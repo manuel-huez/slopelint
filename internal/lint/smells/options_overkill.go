@@ -2,6 +2,7 @@ package smells
 
 import (
 	"fmt"
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 	"go/types"
 )
@@ -62,7 +63,7 @@ func privateFuncWithFunctionalOptions(
 }
 
 func privateConstructorName(name string) bool {
-	words := splitIdentifierWords(name)
+	words := outline.Words(name)
 	if len(words) == 0 {
 		return false
 	}

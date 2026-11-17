@@ -53,15 +53,15 @@ func (s syntax) callChain(callee *ts.Node) []string {
 	}
 
 	switch callee.Type(s.grammar) {
-	case "identifier", "this":
+	case identifierNode, tsThisNode:
 		return []string{s.text(callee)}
-	case "member_expression":
+	case tsMemberNode:
 		return append(s.callChain(s.field(callee, "object")), s.text(s.field(callee, "property")))
-	case "attribute":
+	case pyAttributeNode:
 		return append(s.callChain(s.field(callee, "object")), s.text(s.field(callee, "attribute")))
 	case tsCallNode, pyCallNode:
 		return s.callChain(s.field(callee, "function"))
-	case tsAwaitNode, "parenthesized_expression", "non_null_expression":
+	case tsAwaitNode, tsParenNode, "non_null_expression":
 		return s.callChain(callee.NamedChild(0))
 	default:
 		return nil
@@ -165,7 +165,7 @@ func (w *walker) tsTestContext(call *ts.Node) []Decl {
 				line := w.pos(parent).Line
 				context = append(context, Decl{StartLine: line, EndLine: line})
 			}
-		case "statement_block", "program":
+		case tsBlockNode, "program":
 			for index := range parent.NamedChildCount() {
 				statement := parent.NamedChild(index)
 				if statement.Type(w.grammar) != statementNode ||
@@ -219,10 +219,10 @@ func (w *walker) pythonTestFunction(fn *ts.Node, name string) {
 	var context []Decl
 
 	switch owner := definition.Parent(); owner.Type(w.grammar) {
-	case "module":
+	case pyModuleNode:
 	case pyBlockNode:
 		class := owner.Parent()
-		if class.Type(w.grammar) != "class_definition" || !w.testClass(class) {
+		if class.Type(w.grammar) != pyClassNode || !w.testClass(class) {
 			return
 		}
 

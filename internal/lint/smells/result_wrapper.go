@@ -2,6 +2,7 @@ package smells
 
 import (
 	"fmt"
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 	"go/types"
 	"slices"
@@ -188,5 +189,5 @@ func receiverTypeName(expr ast.Expr) (string, bool) {
 }
 
 func identifierHasWord(name, want string) bool {
-	return slices.Contains(splitIdentifierWords(name), want)
+	return slices.Contains(outline.Words(name), want)
 }

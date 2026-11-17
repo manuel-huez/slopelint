@@ -65,6 +65,7 @@ func Parse(name string, src []byte) (File, error) {
 	w.finish(root)
 	w.finishTests()
 	w.finishBlocks()
+	w.finishSmells(root)
 
 	return file, nil
 }
@@ -87,17 +88,76 @@ func firstSyntaxError(node *ts.Node) *ts.Node {
 	return node
 }
 
+// Node types both grammars share.
 const (
-	commentNode     = "comment"
-	tsCallNode      = "call_expression"
-	tsFieldNode     = "public_field_definition"
+	commentNode    = "comment"
+	statementNode  = "expression_statement"
+	identifierNode = "identifier"
+	ifNode         = "if_statement"
+	returnNode     = "return_statement"
+	elseNode       = "else_clause"
+	stringNode     = "string"
+	withNode       = "with_statement"
+	trueNode       = "true"
+	falseNode      = "false"
+)
+
+// TypeScript declaration node types.
+const (
+	tsFieldNode      = "public_field_definition"
+	tsLexicalNode    = "lexical_declaration"
+	tsVarNode        = "variable_declaration"
+	tsDeclaratorNode = "variable_declarator"
+	tsFuncDeclNode   = "function_declaration"
+	tsGeneratorNode  = "generator_function_declaration"
+	tsClassNode      = "class_declaration"
+	tsMethodNode     = "method_definition"
+	tsArrowNode      = "arrow_function"
+	tsFuncExprNode   = "function_expression"
+)
+
+// TypeScript statement and expression node types.
+const (
+	tsBlockNode  = "statement_block"
+	tsCatchNode  = "catch_clause"
+	tsCallNode   = "call_expression"
+	tsAwaitNode  = "await_expression"
+	tsMemberNode = "member_expression"
+	tsAssignNode = "assignment_expression"
+	tsBinaryNode = "binary_expression"
+	tsUnaryNode  = "unary_expression"
+	tsParenNode  = "parenthesized_expression"
+	tsYieldNode  = "yield_expression"
+)
+
+// TypeScript value and switch node types.
+const (
+	tsThisNode    = "this"
+	tsNumberNode  = "number"
+	tsCaseNode    = "switch_case"
+	tsDefaultNode = "switch_default"
+)
+
+const (
+	pyModuleNode    = "module"
+	pyBlockNode     = "block"
 	pyDecoratedNode = "decorated_definition"
 	pyFunctionNode  = "function_definition"
-	pyBlockNode     = "block"
-	pyCallNode      = "call"
-	tsAwaitNode     = "await_expression"
-	statementNode   = "expression_statement"
+	pyClassNode     = "class_definition"
+	pyLambdaNode    = "lambda"
+	pyElifNode      = "elif_clause"
+	pyExceptNode    = "except_clause"
 	pyImportNode    = "import_from_statement"
+	pyAssignNode    = "assignment"
+)
+
+// Python expression node types.
+const (
+	pyCallNode      = "call"
+	pyAttributeNode = "attribute"
+	pyNotNode       = "not_operator"
+	pyBoolNode      = "boolean_operator"
+	pyCompareNode   = "comparison_operator"
 )
 
 type rawComment struct {
@@ -164,7 +224,7 @@ func (w *walker) walkChildren(node *ts.Node, receiver string) {
 
 func (w *walker) walkTypeScript(node *ts.Node, kind, receiver string) {
 	switch kind {
-	case "class_declaration", "abstract_class_declaration", "class":
+	case tsClassNode, "abstract_class_declaration", "class":
 		name := w.field(node, nameField)
 		if name != nil {
 			w.file.Types = append(w.file.Types, Type{Name: w.text(name), Pos: w.pos(name)})
@@ -180,13 +240,13 @@ func (w *walker) walkTypeScript(node *ts.Node, kind, receiver string) {
 		}
 
 		return
-	case "function_declaration", "generator_function_declaration", "method_definition":
+	case tsFuncDeclNode, tsGeneratorNode, tsMethodNode:
 		name := w.field(node, nameField)
 		w.function(node, w.text(name), name, receiver)
-	case "arrow_function", "function_expression", "generator_function":
+	case tsArrowNode, tsFuncExprNode, "generator_function":
 		name, anchor, owner := w.boundName(node)
 		w.function(node, name, anchor, owner)
-	case tsCallNode, tsAwaitNode, "catch_clause":
+	case tsCallNode, tsAwaitNode, tsCatchNode:
 		w.tsEvent(node, kind)
 	}
 
@@ -194,10 +254,10 @@ func (w *walker) walkTypeScript(node *ts.Node, kind, receiver string) {
 }
 
 var bindingFields = map[string][2]string{
-	"variable_declarator":   {valueField, nameField},
-	"pair":                  {valueField, "key"},
-	"assignment_expression": {"right", "left"},
-	tsFieldNode:             {valueField, nameField},
+	tsDeclaratorNode: {valueField, nameField},
+	"pair":           {valueField, "key"},
+	tsAssignNode:     {"right", "left"},
+	tsFieldNode:      {valueField, nameField},
 }
 
 const (
@@ -272,7 +332,7 @@ func (w *walker) pythonEvent(node *ts.Node, kind string) {
 
 func (w *walker) walkPython(node *ts.Node, kind, receiver string) {
 	switch kind {
-	case "class_definition":
+	case pyClassNode:
 		name := w.field(node, nameField)
 		w.file.Types = append(w.file.Types, Type{Name: w.text(name), Pos: w.pos(name)})
 		body := w.field(node, "body")
@@ -299,11 +359,11 @@ func (w *walker) walkPython(node *ts.Node, kind, receiver string) {
 		if w.file.Test {
 			w.pythonTestFunction(node, w.text(name))
 		}
-	case pyCallNode, pyImportNode, "except_clause", "except_group_clause", "with_statement":
+	case pyCallNode, pyImportNode, pyExceptNode, "except_group_clause", withNode:
 		w.pythonEvent(node, kind)
-	case "lambda":
+	case pyLambdaNode:
 		w.function(node, "", nil, "")
-	case "module":
+	case pyModuleNode:
 		w.moduleDoc = w.docstring(node)
 	}
 
@@ -370,8 +430,8 @@ func (w *walker) receiverOrSeparator(param *ts.Node, first bool) bool {
 		return true
 	case "required_parameter", "optional_parameter":
 		pattern := w.field(param, "pattern")
-		return pattern != nil && pattern.Type(w.grammar) == "this"
-	case "identifier":
+		return pattern != nil && pattern.Type(w.grammar) == tsThisNode
+	case identifierNode:
 		return first && w.language == Python && (w.text(param) == "self" || w.text(param) == "cls")
 	default:
 		return false
@@ -390,10 +450,10 @@ func (w *walker) docstring(body *ts.Node) *ts.Node {
 		case commentNode:
 			continue
 		case statementNode:
-			if child.NamedChildCount() != 1 || child.NamedChild(0).Type(w.grammar) != "string" {
+			if child.NamedChildCount() != 1 || child.NamedChild(0).Type(w.grammar) != stringNode {
 				return nil
 			}
-		case "string":
+		case stringNode:
 		default:
 			return nil
 		}

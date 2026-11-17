@@ -27,16 +27,16 @@ func (w *walker) handler(node *ts.Node, kind string) {
 	anchor, body := node, (*ts.Node)(nil)
 
 	switch kind {
-	case "catch_clause":
+	case tsCatchNode:
 		body = w.field(node, "body")
-	case "except_clause", "except_group_clause":
+	case pyExceptNode, "except_group_clause":
 		body = w.lastNamedChild(node, pyBlockNode)
 	case tsCallNode:
 		var ok bool
 		if anchor, body, ok = w.promiseCatch(node); !ok {
 			return
 		}
-	case "with_statement":
+	case withNode:
 		if !w.suppressBlock(node) {
 			return
 		}
@@ -73,23 +73,23 @@ func (s syntax) promiseCatch(call *ts.Node) (*ts.Node, *ts.Node, bool) {
 }
 
 var tsFunctionKinds = map[string]bool{
-	"function_declaration":           true,
-	"generator_function_declaration": true,
-	"method_definition":              true,
-	"arrow_function":                 true,
-	"function_expression":            true,
-	"generator_function":             true,
+	tsFuncDeclNode:       true,
+	tsGeneratorNode:      true,
+	tsMethodNode:         true,
+	tsArrowNode:          true,
+	tsFuncExprNode:       true,
+	"generator_function": true,
 }
 
 // unitWrappers are statements that only bind or export the function they
 // hold, so its unit grows to include them.
 var unitWrappers = map[string]bool{
-	"variable_declarator":  true,
-	"lexical_declaration":  true,
-	"variable_declaration": true,
-	"export_statement":     true,
-	tsFieldNode:            true,
-	pyDecoratedNode:        true,
+	tsDeclaratorNode:   true,
+	tsLexicalNode:      true,
+	tsVarNode:          true,
+	"export_statement": true,
+	tsFieldNode:        true,
+	pyDecoratedNode:    true,
 }
 
 // unit returns the lines of the outermost function around node, or of its
@@ -166,13 +166,13 @@ func (s syntax) raises(statement *ts.Node) bool {
 	switch statement.Type(s.grammar) {
 	case "throw_statement", "raise_statement":
 		return true
-	case "statement_block", pyBlockNode:
+	case tsBlockNode, pyBlockNode:
 		return s.alwaysRaises(statement)
 	case statementNode:
 		return statement.NamedChildCount() == 1 && s.raises(statement.NamedChild(0))
 	case pyCallNode, tsCallNode:
 		return s.exitCall(statement)
-	case "if_statement":
+	case ifNode:
 		return s.ifRaises(statement)
 	default:
 		return false
@@ -191,7 +191,7 @@ func (s syntax) ifRaises(statement *ts.Node) bool {
 		branch := statement.NamedChild(index)
 
 		switch branch.Type(s.grammar) {
-		case "else_clause":
+		case elseNode:
 			hasElse = true
 
 			body := s.field(branch, "body")
@@ -202,7 +202,7 @@ func (s syntax) ifRaises(statement *ts.Node) bool {
 			if !s.raises(body) {
 				return false
 			}
-		case "elif_clause":
+		case pyElifNode:
 			if !s.raises(s.field(branch, "consequence")) {
 				return false
 			}
@@ -229,10 +229,10 @@ func (s syntax) exitCall(call *ts.Node) bool {
 func (s syntax) jumpsOutsideNestedFunctions(statement *ts.Node) bool {
 	return s.contains(statement, func(node *ts.Node) bool {
 		kind := node.Type(s.grammar)
-		return tsFunctionKinds[kind] || kind == pyFunctionNode || kind == "lambda"
+		return tsFunctionKinds[kind] || kind == pyFunctionNode || kind == pyLambdaNode
 	}, func(node *ts.Node) bool {
 		switch node.Type(s.grammar) {
-		case "return_statement", "break_statement", "continue_statement":
+		case returnNode, "break_statement", "continue_statement":
 			return true
 		default:
 			return false

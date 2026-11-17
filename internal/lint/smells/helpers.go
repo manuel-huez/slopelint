@@ -2,11 +2,12 @@ package smells
 
 import (
 	"fmt"
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 )
 
 func reportGenericNameForHelper(sink *findingSink, fn *ast.FuncDecl, reason string) {
-	if !genericPrivateName(fn.Name.Name) {
+	if !outline.GenericName(fn.Name.Name) {
 		return
 	}
 
@@ -19,19 +20,6 @@ func reportGenericNameForHelper(sink *findingSink, fn *ast.FuncDecl, reason stri
 			reason,
 		),
 	)
-}
-
-func genericPrivateName(name string) bool {
-	for _, word := range splitIdentifierWords(name) {
-		switch word {
-		case "helper", "manager", "processor", "util", "utils", "base", "impl", "wrapper":
-			return true
-		default:
-			continue
-		}
-	}
-
-	return false
 }
 
 const initFuncName = "init"

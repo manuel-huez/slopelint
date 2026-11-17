@@ -42,7 +42,7 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 		"def total(values):\n    result = 0\n"+strings.Repeat(
 			"    result += values[0] * 2 + 1\n",
 			8,
-		)+"    return result\n",
+		)+"    return result\n\n\ndef enabled(flag):\n    if flag is None:\n        return False\n    return True\n",
 	)
 	writeFile(t, filepath.Join(dir, "node_modules", "dep", "index.ts"), longBody)
 	writeFile(t, filepath.Join(dir, ".stx", "model.py"), "import os  # noqa: F401 excuse\n")
@@ -90,6 +90,7 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 		"web/app.ts:1 long_function",
 		"web/app.ts:107 comment_noise",
 		"web/app.ts:114 swallowed_error",
+		"web/total.py:15 boolean_ceremony",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf(

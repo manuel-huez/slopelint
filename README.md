@@ -1,7 +1,7 @@
 # slopelint
 
 Go analyzer for redundant checks, repeated behavior, dead code, and overbuilt APIs,
-with size, test, review, and similarity checks for TypeScript and Python.
+with size, structure, test, review, and similarity checks for TypeScript and Python.
 Built on `go/analysis`, with optional Codex descriptions for semantic similarity
 and Codex review of comments and dropped errors.
 Early-stage: expect breaking changes and conservative misses.
@@ -39,8 +39,9 @@ patterns cover none. Skipped: hidden, `node_modules`, `vendor`, and `testdata`
 directories, `.d.ts`, `.gen.ts`, `.min.` files, and files with `@generated`,
 `DO NOT EDIT`, or `Code generated` in the first 5 lines. A nested `go.mod`
 does not stop them. A syntax error fails the run, as a Go parse error does.
-These files get the size rules, [code review](#code-review), and
-[semantic similarity](#semantic-similarity). Test files (`*.test.ts`,
+These files get the size rules, [code review](#code-review),
+[semantic similarity](#semantic-similarity), and the Go structure rules
+below, narrowed to what one file's syntax proves. Test files (`*.test.ts`,
 `*.spec.ts`, `__tests__/`, `test_*.py`, `*_test.py`, `tests/`, `conftest.py`)
 get the file limit, as Go test files do, and two test rules:
 
@@ -53,6 +54,34 @@ get the file limit, as Go test files do, and two test rules:
   not count: they fake the clock, not sleep.
 - `test_focused` (TypeScript only): `.only` on `describe`/`it`/`test`/`suite`,
   `fit`, or `fdescribe`.
+
+Structure rules for TypeScript and Python, in all files:
+
+- `control_flow_merge`: identical if and else bodies; adjacent `else if` or
+  `elif` arms with identical bodies (join the conditions); adjacent `case`s
+  with identical bodies that end in a jump; and guard runs that return what
+  the next `return` returns. A guard counts only when its condition reads
+  names and literals: `!`/`not`, `&&`/`||`/`and`/`or`, `===`, `==` against
+  `null`, ordering against a number, Python `is` and comparison against a
+  literal. Member reads and calls can run getters, so they never count.
+- `boolean_ceremony`: an if that returns or assigns `true`/`false`. The
+  suggested expression is wrapped in `Boolean()` or `bool()` unless it always
+  yields a boolean. A comment above the final `return` blocks it.
+- `control_flow_pyramid`: nested ifs ending a function that returns and
+  yields no value.
+- `temp_alias`: the name appears only in its declaration and its one use in
+  the next statement. The use runs exactly once whenever that statement runs:
+  not in a nested function, loop body, branch, or after `&&`, `||`, `??`, or
+  an optional chain, since a getter or tracking proxy can observe a moved
+  read. The statement must not await, yield, assign, or call through the
+  source's root.
+- TypeScript only: `trivial_wrapper`, `abstraction_overkill`, and
+  `generic_naming` for top-level functions that are not exported, async, or
+  generic, and that the file mentions only in direct calls, even in strings
+  and comments. Type predicates and assertion functions are skipped. A
+  conditional expression (`?:`, `??`, `?.`) is control flow, as Go needs an
+  `if` for it. Python has no file-local functions: other modules import, and
+  tests patch, underscore names.
 
 `test_no_assertion` is Go only: in TypeScript and Python an exception fails a
 test, and real tests without an assertion construct were deliberate
@@ -224,8 +253,8 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Checks | Diagnostic IDs |
 | --- | --- |
 | Repeated guards and unreachable branches | `redundant_condition`, `redundant_subexpression`, `unreachable_case` |
-| Simplifiable control flow | `boolean_ceremony`, `control_flow_merge`, `redundant_default`, `complexity_simplification`, `guard_complexity` |
-| Redundant collection guards, loops, and aliases | `append_ceremony`, `loop_ceremony`, `temp_alias` |
+| Simplifiable control flow | `boolean_ceremony`, `control_flow_merge`, `control_flow_pyramid`, `redundant_default`, `complexity_simplification`, `guard_complexity` |
+| Redundant collection guards, loops, and aliases | `append_ceremony`, `range_ceremony`, `temp_alias` |
 | Loop performance traps | `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` |
 | Wrappers, repeated normalization, and comments that restate names | `trivial_wrapper`, `normalization_ceremony`, `serialization_ceremony`, `comment_noise` |
 | Codex [code review](#code-review) of comments, dropped errors, and tests | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error`, `test_trivial`, `test_mock_only`, `test_wasteful`, `test_serial_excuse` |

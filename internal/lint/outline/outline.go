@@ -1,6 +1,7 @@
 // Package outline describes source files in a language-neutral shape: their
 // functions, types, comment groups, and top-level declarations. Go fills it
-// from go/ast; TypeScript and Python fill it from tree-sitter syntax trees.
+// from go/ast; TypeScript and Python fill it from tree-sitter syntax trees,
+// which also yield the structural smells their syntax alone proves.
 package outline
 
 import (
@@ -45,6 +46,7 @@ type File struct {
 	Focused []Pos
 	Sleeps  []Pos
 	Blocks  []Block
+	Smells  []Smell
 }
 
 // Func is one function, method, or function literal.

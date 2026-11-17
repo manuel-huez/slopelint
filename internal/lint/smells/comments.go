@@ -2,6 +2,7 @@ package smells
 
 import (
 	"fmt"
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -173,7 +174,7 @@ func commentRestatesIdentifier(text, name string) bool {
 		return false
 	}
 
-	identifierWords := splitIdentifierWords(name)
+	identifierWords := outline.Words(name)
 	if len(identifierWords) == 0 || len(commentWords) < len(identifierWords) {
 		return false
 	}

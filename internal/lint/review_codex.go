@@ -28,6 +28,14 @@ Dropped-error items mark an if statement that checks the named error and drops i
 
 Skipping one invalid element with continue while building a filtered collection is handled when the function's name or doc says it filters, selects, or keeps only valid entries, or when the skip is recorded elsewhere, such as a counter, log, or diagnostics list. It is swallowed when the function claims to return all records and nothing records the skip.
 
+Test items span one Go test function. You see only that function, not the production code it calls, so judge only what the test body shows. When a verdict would depend on production code you cannot see, choose sound. Treat a call as a plain getter, setter, default, or field-copying constructor only when its name and use make that evident, such as SetName followed by Name. Test items take one verdict:
+- sound: the test runs production code and checks a result, error, output, or state that production logic decides. Table tests with many cases, large fixtures the checked behavior needs, and fake servers, files, or fakes whose data production code parses, filters, or transforms are sound.
+- trivial: the body itself shows the test can fail only if someone edits a constant, struct literal, default value, plain field getter or setter, or the test's own setup, such as asserting a field it just set or a value it just built.
+- mock_only: every assertion checks only that fakes or mocks were called, how often, or with which arguments, or that they return what the test programmed them to return, and no production logic between the fake and the assertion decides the result.
+- wasteful: the test spends work the checked behavior does not need: it sleeps and then checks for a background effect or an expiry, where a signal, channel, or fake clock would do, or its real waits, such as sleeps, backoff, or timeouts that must elapse, add up to about a second or more; it repeats the same full workflow many times where once proves the same; or it builds state far larger or stranger than the behavior needs, such as reflection, hand-built internals, or mutated globals. Short waits are sound when they are a failure deadline, a poll interval, a bounded wait that shows something does not happen, or a deliberate delay the timing behavior under test needs, such as pacing, rate limits, idle timeouts, or a slow reader.
+
+Test advice: empty for sound. Otherwise one concrete sentence of 6-30 words naming identifiers, in this order: delete the test when it protects no production behavior; else merge its check into the test or table that already exercises the same production function, naming that function; else say what to change, such as the fake clock or signal to use. Do not cite line numbers.
+
 advice: empty for keep and handled. Otherwise one concrete sentence of 6-30 words saying what to change in the code, naming identifiers: rename, restructure, delete, or return or wrap the error. Never suggest rewording a comment, except naming the constraint behind a bare suppression. Do not cite line numbers.`
 
 const codeReviewSchema = `{
@@ -52,7 +60,7 @@ const codeReviewSchema = `{
               "required": ["id", "verdict", "advice"],
               "properties": {
                 "id": {"type": "string", "minLength": 1, "maxLength": 16},
-                "verdict": {"type": "string", "enum": ["keep", "restates", "excuse", "crutch", "handled", "swallowed"]},
+                "verdict": {"type": "string", "enum": ["keep", "restates", "excuse", "crutch", "handled", "swallowed", "sound", "trivial", "mock_only", "wasteful"]},
                 "advice": {"type": "string", "maxLength": 240}
               }
             }

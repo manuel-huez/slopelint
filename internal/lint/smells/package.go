@@ -56,6 +56,7 @@ func RunDefault(pkg *Package) []Finding {
 	tableTestCheck{env}.checkRepeatedFixtures()
 	constValueTestCheck{env}.check()
 	testSupportCheck{env}.checkFilenames()
+	testSupportCheck{env}.checkSleeps()
 
 	return env.findings
 }

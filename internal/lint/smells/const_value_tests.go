@@ -45,7 +45,25 @@ func (l constValueTestCheck) check() {
 	for _, file := range l.pkg.TestFiles {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || !isRunnableTest(l.pkg.TypesInfo, fn) {
+			if !ok {
+				continue
+			}
+
+			testingPkg := runnableTestPackage(l.pkg.TypesInfo, fn)
+			if testingPkg == nil {
+				continue
+			}
+
+			if testLacksFailurePath(l.pkg.TypesInfo, testingPkg, fn.Body) {
+				l.report(
+					fn.Name.Pos(),
+					"test_no_assertion",
+					fmt.Sprintf(
+						`test %q has no failing path; assert on the result or remove the test`,
+						fn.Name.Name,
+					),
+				)
+
 				continue
 			}
 
@@ -244,30 +262,35 @@ func (scan *constValueTestScan) collectStaticReturns() {
 	}
 }
 
-func isRunnableTest(info *types.Info, fn *ast.FuncDecl) bool {
+// runnableTestPackage returns the testing package when go test runs fn as a
+// test, or nil.
+func runnableTestPackage(info *types.Info, fn *ast.FuncDecl) *types.Package {
 	if fn.Body == nil || fn.Recv != nil || !goTestName(fn.Name.Name) {
-		return false
+		return nil
 	}
 
 	obj, ok := info.Defs[fn.Name].(*types.Func)
 	if !ok {
-		return false
+		return nil
 	}
 
 	sig, ok := obj.Type().(*types.Signature)
 	if !ok || sig.Params().Len() != 1 || sig.Results().Len() != 0 {
-		return false
+		return nil
 	}
 
 	ptr, ok := sig.Params().At(0).Type().(*types.Pointer)
 	if !ok {
-		return false
+		return nil
 	}
 
+	// Only universe types lack a package, and none of them is named T.
 	named, ok := ptr.Elem().(*types.Named)
+	if !ok || named.Obj().Name() != "T" || named.Obj().Pkg().Path() != testingImportPath {
+		return nil
+	}
 
-	return ok && named.Obj().Name() == "T" && named.Obj().Pkg() != nil &&
-		named.Obj().Pkg().Path() == testingImportPath
+	return named.Obj().Pkg()
 }
 
 func goTestName(name string) bool {

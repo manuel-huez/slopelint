@@ -224,7 +224,6 @@ func containsBranch(node ast.Node) bool {
 	return found
 }
 
-// nonNilErrorCheck returns the error variable of an exact `err != nil` condition.
 func nonNilErrorCheck(info *types.Info, cond ast.Expr) types.Object {
 	binary, ok := ast.Unparen(cond).(*ast.BinaryExpr)
 	if !ok || binary.Op != token.NEQ || !info.Types[binary.Y].IsNil() {

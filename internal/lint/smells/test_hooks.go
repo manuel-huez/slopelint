@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -15,7 +16,8 @@ type functionVarDecl struct {
 }
 
 // testSupportCheck reports test code that stubs package function variables,
-// panics after a fatal call, or shares helpers without a test_support filename.
+// panics after a fatal call, sleeps, or shares helpers without a test_support
+// filename.
 type testSupportCheck struct {
 	ruleEnv
 }
@@ -122,7 +124,8 @@ func (l testSupportCheck) checkFatalPanics() {
 			}
 
 			for index := 1; index < len(block.List); index++ {
-				if !isTestingFatalStmt(l.pkg.TypesInfo, block.List[index-1]) {
+				fatal := testingMethodStmt(l.pkg.TypesInfo, block.List[index-1])
+				if fatal != "Fatal" && fatal != "Fatalf" {
 					continue
 				}
 
@@ -143,16 +146,18 @@ func (l testSupportCheck) checkFatalPanics() {
 	}
 }
 
-func isTestingFatalStmt(info *types.Info, stmt ast.Stmt) bool {
+func testingMethodStmt(info *types.Info, stmt ast.Stmt) string {
 	call, ok := exprStmtCall(stmt)
 	if !ok {
-		return false
+		return ""
 	}
 
 	fn, _, ok := calledFunc(info, call)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != testingImportPath {
+		return ""
+	}
 
-	return ok && fn.Pkg() != nil && fn.Pkg().Path() == testingImportPath &&
-		(fn.Name() == "Fatal" || fn.Name() == "Fatalf")
+	return fn.Name()
 }
 
 func exprStmtCall(stmt ast.Stmt) (*ast.CallExpr, bool) {
@@ -164,6 +169,31 @@ func exprStmtCall(stmt ast.Stmt) (*ast.CallExpr, bool) {
 	call, ok := ast.Unparen(exprStmt.X).(*ast.CallExpr)
 
 	return call, ok
+}
+
+func (l testSupportCheck) checkSleeps() {
+	for _, file := range l.pkg.TestFiles {
+		// Inside a synctest bubble time.Sleep advances the fake clock, also in
+		// helpers the bubble calls, so files that use synctest are not judged.
+		if slices.ContainsFunc(file.Imports, func(spec *ast.ImportSpec) bool {
+			return spec.Path.Value == `"testing/synctest"`
+		}) {
+			continue
+		}
+
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if ok && isPackageFuncCall(l.pkg.TypesInfo, call, "time", "Sleep") {
+				l.report(
+					call.Pos(),
+					"test_sleep",
+					`time.Sleep in test code; wait on a channel, condition, or fake clock instead`,
+				)
+			}
+
+			return true
+		})
+	}
 }
 
 func (l testSupportCheck) checkFilenames() {

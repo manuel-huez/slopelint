@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestConstValueTestLintRequiresBehavior(t *testing.T) {
+func TestRunnableTestLintsRequireBehavior(t *testing.T) {
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
 
@@ -25,7 +25,10 @@ func Equal(t *testing.T, expected, actual any) bool { return true }
 `)
 	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 const defaultLimit = 10
 const defaultTitle = "alpha"
@@ -55,6 +58,8 @@ func SetMutableBanner(value string) { mutableBanner = value }
 
 func MutatePolicy() { mutablePolicy.Enable() }
 
+func Pause() { time.Sleep(time.Millisecond) }
+
 func BannerFor(value string) string { return fmt.Sprintf("banner:%s", value) }
 
 func ClampLimit(value int) int {
@@ -68,11 +73,90 @@ func ClampLimit(value int) int {
 	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+type limitHarness struct {
+	t *testing.T
+}
+
+func checkLimit(t *testing.T, got int) {
+	if got != defaultLimit {
+		t.Fatalf("limit = %d, want %d", got, defaultLimit)
+	}
+}
+
+func checkSubtest(t *testing.T) {
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+
+func TestClampWithoutFailure(t *testing.T) {
+	ClampLimit(1)
+}
+
+func TestClampOnlyLogs(t *testing.T) {
+	t.Log(ClampLimit(1))
+	t.Run("sub", func(t *testing.T) {
+		t.Logf("limit %d", ClampLimit(2))
+	})
+}
+
+func TestClampHelper(t *testing.T) {
+	checkLimit(t, ClampLimit(defaultLimit))
+}
+
+func TestClampNamedSubtest(t *testing.T) {
+	t.Run("sub", checkSubtest)
+}
+
+func TestClampMethodValue(t *testing.T) {
+	fail := t.Errorf
+	if ClampLimit(1) != 1 {
+		fail("ClampLimit(1) changed")
+	}
+}
+
+func TestClampHarness(t *testing.T) {
+	harness := limitHarness{t: t}
+	_ = harness
+}
+
+func TestClampPanics(t *testing.T) {
+	if ClampLimit(1) != 1 {
+		panic("ClampLimit(1) changed")
+	}
+}
+
+func TestClampHelperProcess(t *testing.T) {
+	if os.Getenv("SAMPLE_HELPER") == "" {
+		return
+	}
+
+	ClampLimit(1)
+	os.Exit(0)
+}
+
+func TestClampSkipped(t *testing.T) {
+	t.Skip("covered elsewhere")
+	ClampLimit(1)
+}
+
+func BenchmarkClamp(b *testing.B) {
+	for b.Loop() {
+		ClampLimit(1)
+	}
+}
+
+func TestClampAfterSleep(t *testing.T) {
+	time.Sleep(time.Millisecond)
+	go func() { time.Sleep(time.Millisecond) }()
+	checkLimit(t, ClampLimit(defaultLimit))
+}
 
 func TestDefaultLimitConst(t *testing.T) {
 	if got, want := defaultLimit, 10; got != want {
@@ -183,47 +267,47 @@ func TestMutablePackagePolicy(t *testing.T) {
 `)
 
 	issues := lintInDir(t, tmp)
-	count := 0
-	joined := joinMessages(issues)
+	messages := make(map[string][]string)
 
 	for _, issue := range issues {
-		if issue.Kind != "const_value_test" {
-			continue
-		}
-
-		count++
+		messages[issue.Kind] = append(messages[issue.Kind], issue.Message)
 	}
 
-	if count != 8 ||
-		!strings.Contains(
-			joined,
+	// test_sleep must skip the production Pause helper.
+	want := map[string][]string{
+		"const_value_test": {
 			`test "TestDefaultLimitConst" only checks fixed package values`,
-		) ||
-		!strings.Contains(
-			joined,
 			`test "TestDefaultLimitAssertion" only checks fixed package values`,
-		) ||
-		!strings.Contains(
-			joined,
 			`test "TestLiteralArithmetic" only checks fixed package values`,
-		) ||
-		!strings.Contains(
-			joined,
 			`test "TestDefaultLimitAccessor" only checks fixed package values`,
-		) ||
-		!strings.Contains(
-			joined,
 			`test "TestDefaultPolicyConst" only checks fixed package values`,
-		) ||
-		!strings.Contains(
-			joined,
 			`test "TestDefaultTitleContainsFixedValue" only checks fixed package values`,
-		) ||
-		!strings.Contains(
-			joined,
 			`test "TestDefaultBannerContainsFixedValue" only checks fixed package values`,
-		) ||
-		!strings.Contains(joined, `test "TestRuntimeLimit" only checks fixed package values`) {
-		t.Fatalf("const_value_test findings = %d, want 8 findings; got:\n%s", count, joined)
+			`test "TestRuntimeLimit" only checks fixed package values`,
+		},
+		"test_no_assertion": {
+			`test "TestClampWithoutFailure" has no failing path`,
+			`test "TestClampOnlyLogs" has no failing path`,
+		},
+		"test_sleep": {"time.Sleep in test code", "time.Sleep in test code"},
+	}
+
+	for kind, fragments := range want {
+		got := strings.Join(messages[kind], "\n")
+		if len(messages[kind]) != len(fragments) {
+			t.Fatalf(
+				"%s findings = %d, want %d; got:\n%s",
+				kind,
+				len(messages[kind]),
+				len(fragments),
+				got,
+			)
+		}
+
+		for _, fragment := range fragments {
+			if !strings.Contains(got, fragment) {
+				t.Fatalf("%s findings miss %q; got:\n%s", kind, fragment, got)
+			}
+		}
 	}
 }

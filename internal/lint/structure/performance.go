@@ -563,7 +563,6 @@ func (s *loopScope) addCallMutatedObjects() {
 	})
 }
 
-// callArgsMayMutate is false for calls known to only read their arguments.
 func callArgsMayMutate(info *types.Info, call *ast.CallExpr) bool {
 	if pureBuiltinCall(info, call) {
 		return false

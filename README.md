@@ -102,11 +102,18 @@ sent to the configured Codex service.** Items:
 - Production `if err != nil` checks that drop an error which is not read again
   before being overwritten. Errors carried across loop iterations, captured by a
   closure, or address-taken are not judged.
+- Runnable test functions, `func TestXxx(t *testing.T)` in `_test.go` files, whole.
+  `TestMain`, benchmarks, fuzz tests, and examples are not judged.
 
 The model returns one verdict and one sentence of advice per item. The finding
 message is that advice: `comment_noise` (restates code), `comment_excuse`
 (excuses a shortcut, suppression, or compatibility code), `comment_crutch`
-(explains code a rename or restructure would clarify), and `swallowed_error`.
+(explains code a rename or restructure would clarify), `swallowed_error`,
+`test_trivial` (can fail only if a constant, literal, default, getter, or the
+test's own setup changes), `test_mock_only` (asserts only calls to or values
+from fakes), and `test_wasteful` (real waits, repeated runs, or oversized
+fixtures the checked behavior does not need). The model sees only the test, so it
+accepts a test when the verdict depends on production code it cannot see.
 A doc comment on an unexported declaration must add something the name,
 signature, and body do not show, such as a reason, constraint, ordering, or
 result contract. The prompt prefers accepting an item when unsure.
@@ -166,14 +173,14 @@ and [cache_gc.go](internal/lint/cache_gc.go).
 | Redundant collection guards, loops, and aliases | `append_ceremony`, `loop_ceremony`, `temp_alias` |
 | Loop performance traps | `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` |
 | Wrappers, repeated normalization, and comments that restate names | `trivial_wrapper`, `normalization_ceremony`, `serialization_ceremony`, `comment_noise` |
-| Codex [code review](#code-review) of comments and dropped errors | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error` |
+| Codex [code review](#code-review) of comments, dropped errors, and tests | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error`, `test_trivial`, `test_mock_only`, `test_wasteful` |
 | Repeated function or block behavior | `behavior_clone`, `semantic_duplicate` |
 | Overbuilt APIs and signatures | `abstraction_overkill`, `api_overkill`, `result_wrapper`, `generic_naming`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple` |
 | Error panics and sentinel breaks | `prod_must_panic`, `sentinel_error_break` |
 | Unreachable declarations | `dead_code` |
 | Declaration grouping | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` |
 | Files over 1,000 lines; functions over 100; literals over 40; over 6 params or 3 results; types over 40 methods | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list`, `god_receiver` |
-| Test structure and support code | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_support_filename` |
+| Test structure and support code | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_no_assertion`, `test_sleep`, `test_support_filename` |
 | Invalid contracts and stale suppressions | `invalid_contract`, `stale_complexity_suppression` |
 
 Path analysis tracks nil, string, length, boolean, enum, and no-argument `IsX()`

@@ -11,6 +11,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,6 +27,7 @@ import (
 const (
 	codeReviewCommentItem = "comment"
 	codeReviewErrorItem   = "dropped_error"
+	codeReviewTestItem    = "test"
 
 	codeReviewAdviceMaxChars = 240
 	codeReviewAdviceMinWords = 4
@@ -36,20 +38,30 @@ const (
 // Cache keys, records, and the stamp all carry it, so a change selects new
 // records and stales the stamp.
 type codeReviewPolicy struct {
-	Schema int    `json:"schema"`
-	Model  string `json:"model"`
-	Effort string `json:"effort"`
+	Schema int `json:"schema"`
+	// TestSchema versions the test-function rules. Requests without a test
+	// item omit it, so changing those rules keeps comment and dropped-error
+	// records.
+	TestSchema int    `json:"test_schema,omitempty"`
+	Model      string `json:"model"`
+	Effort     string `json:"effort"`
 }
 
-// codeReviewPolicyVersion must be bumped for any change to the prompt, the
-// output schema, or item selection: which comments are judged here and which
-// dropped errors the smells candidate pass reports.
+// codeReviewPolicyVersion must be bumped for any change to the comment,
+// suppression, or dropped-error rules: their prompt text, the output schema,
+// which comments are judged here, and which dropped errors the smells
+// candidate pass reports.
 const codeReviewPolicyVersion = 8
 
+// codeReviewTestPolicyVersion must be bumped for any change to the test rules
+// in the prompt or to which test functions are judged.
+const codeReviewTestPolicyVersion = 1
+
 var codeReviewCurrentPolicy = codeReviewPolicy{
-	Schema: codeReviewPolicyVersion,
-	Model:  "gpt-6.1-terra",
-	Effort: "low",
+	Schema:     codeReviewPolicyVersion,
+	TestSchema: codeReviewTestPolicyVersion,
+	Model:      "gpt-6.1-terra",
+	Effort:     "low",
 }
 
 const (
@@ -59,6 +71,10 @@ const (
 	codeReviewCrutch    = "crutch"
 	codeReviewHandled   = "handled"
 	codeReviewSwallowed = "swallowed"
+	codeReviewSound     = "sound"
+	codeReviewTrivial   = "trivial"
+	codeReviewMockOnly  = "mock_only"
+	codeReviewWasteful  = "wasteful"
 )
 
 // codeReviewFindingKinds maps each verdict to its finding kind. Verdicts
@@ -70,11 +86,21 @@ var codeReviewFindingKinds = map[string]string{
 	codeReviewCrutch:    "comment_crutch",
 	codeReviewHandled:   "",
 	codeReviewSwallowed: "swallowed_error",
+	codeReviewSound:     "",
+	codeReviewTrivial:   "test_trivial",
+	codeReviewMockOnly:  "test_mock_only",
+	codeReviewWasteful:  "test_wasteful",
 }
 
 var codeReviewVerdicts = map[string][]string{
 	codeReviewCommentItem: {codeReviewKeep, codeReviewRestates, codeReviewExcuse, codeReviewCrutch},
 	codeReviewErrorItem:   {codeReviewHandled, codeReviewSwallowed},
+	codeReviewTestItem: {
+		codeReviewSound,
+		codeReviewTrivial,
+		codeReviewMockOnly,
+		codeReviewWasteful,
+	},
 }
 
 // codeReviewer returns only records validated against their requests.
@@ -82,8 +108,9 @@ type codeReviewer interface {
 	review(context.Context, []codeReviewRequest, func([]codeReviewRecord) error) error
 }
 
-// codeReviewItem is one judged comment group or dropped-error check. Lines are
-// relative to the declaration, so moving it in its file keeps its cache key.
+// codeReviewItem is one judged comment group, dropped-error check, or test
+// function. Lines are relative to the declaration, so moving it in its file
+// keeps its cache key.
 type codeReviewItem struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
@@ -220,7 +247,7 @@ func (review codeReview) loadRecord(request codeReviewRequest) (codeReviewRecord
 	}
 
 	var record codeReviewRecord
-	if json.Unmarshal(data, &record) != nil || record.Policy != review.policy {
+	if json.Unmarshal(data, &record) != nil || record.Policy != review.policy.forRequest(request) {
 		return codeReviewRecord{}, false
 	}
 
@@ -253,7 +280,7 @@ func (collector *codeReviewCollector) accept(records []codeReviewRecord) error {
 	for _, record := range records {
 		key := record.ID
 		record.ID = ""
-		record.Policy = collector.policy
+		record.Policy = collector.policy.forRequest(collector.requested[key])
 		collector.records[key] = record
 
 		if !collector.cacheEnabled {
@@ -561,6 +588,18 @@ func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration
 	}
 
 	items = append(items, source.droppedErrorItems(decl, startLine)...)
+
+	if source.test && runnableGoTest(decl) {
+		position := source.position(decl.Pos())
+		items = append(items, codeReviewPositionedItem{
+			item: codeReviewItem{
+				Kind:  codeReviewTestItem,
+				Lines: codeReviewLines(position.Line-startLine+1, endLine-startLine+1),
+			},
+			position: position,
+		})
+	}
+
 	if len(items) == 0 {
 		return codeReviewDeclaration{}, nil
 	}
@@ -659,6 +698,25 @@ func (source codeReviewSource) droppedErrorItems(
 	return items
 }
 
+// runnableGoTest matches func TestXxx(t *testing.T) as go test names tests.
+// It is syntactic, so a renamed testing import is not matched.
+func runnableGoTest(decl ast.Decl) bool {
+	fn, ok := decl.(*ast.FuncDecl)
+	if !ok || fn.Recv != nil {
+		return false
+	}
+
+	rest, ok := strings.CutPrefix(fn.Name.Name, "Test")
+	if !ok || rest != "" && unicode.IsLower([]rune(rest)[0]) {
+		return false
+	}
+
+	params := fn.Type.Params.List
+
+	return len(params) == 1 && len(params[0].Names) <= 1 &&
+		types.ExprString(params[0].Type) == "*testing.T"
+}
+
 func declDoc(decl ast.Decl) *ast.CommentGroup {
 	switch decl := decl.(type) {
 	case *ast.FuncDecl:
@@ -704,13 +762,24 @@ func numberedCodeReviewSource(lines []string) string {
 
 // codeReviewKey hashes everything the verdicts depend on, so a prompt,
 // schema, or model change selects new records instead of deleting old ones.
+// forRequest returns the policy parts that decide this request's verdicts.
+func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewPolicy {
+	if !slices.ContainsFunc(request.Items, func(item codeReviewItem) bool {
+		return item.Kind == codeReviewTestItem
+	}) {
+		policy.TestSchema = 0
+	}
+
+	return policy
+}
+
 func codeReviewKey(policy codeReviewPolicy, request codeReviewRequest) (string, error) {
 	data, err := json.Marshal(struct {
 		Policy codeReviewPolicy `json:"policy"`
 		Test   bool             `json:"test"`
 		Source string           `json:"source"`
 		Items  []codeReviewItem `json:"items"`
-	}{policy, request.Test, request.Source, request.Items})
+	}{policy.forRequest(request), request.Test, request.Source, request.Items})
 	if err != nil {
 		return "", err
 	}

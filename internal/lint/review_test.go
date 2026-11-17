@@ -22,6 +22,7 @@ const (
 	reviewTestExcuseAdvice  = "Delete the compatibility branch and keep one implementation."
 	reviewTestCrutchAdvice  = "Rename total to runningSum so the comment becomes unnecessary."
 	reviewTestSwallowAdvice = "Return lostErr to callers instead of silently using zero."
+	reviewTestTrivialAdvice = "Delete TestCountTrivial because it only checks its own literal."
 )
 
 const reviewTestSource = `package sample
@@ -205,8 +206,32 @@ func kind(op string) int {
 }
 `
 
-// reviewTestModel answers from markers: comment text names its verdict, and
-// lostErr is the only swallowed error.
+const reviewTestTests = `package sample
+
+import "testing"
+
+func TestMain(m *testing.M) { m.Run() }
+
+func TestCount(t *testing.T) {
+	if got := Count([]int{1, 2}); got != 3 {
+		t.Fatalf("Count = %d", got)
+	}
+}
+
+func TestCountTrivial(t *testing.T) {
+	values := []int{1}
+	if len(values) != 1 {
+		t.Fatal(values)
+	}
+}
+
+func BenchmarkCount(b *testing.B) { Count(nil) }
+
+func Testcount(t *testing.T) { TestCount(t) }
+`
+
+// reviewTestModel answers from markers: comment text names its verdict,
+// lostErr is the only swallowed error, and only TestCountTrivial is trivial.
 type reviewTestModel struct {
 	sync.Mutex
 	requests []codeReviewRequest
@@ -248,6 +273,10 @@ func (model *reviewTestModel) requestCount() int {
 
 func reviewTestVerdict(item codeReviewItem, text string) codeReviewVerdict {
 	switch {
+	case item.Kind == codeReviewTestItem && strings.Contains(text, "TestCountTrivial"):
+		return codeReviewVerdict{Verdict: codeReviewTrivial, Advice: reviewTestTrivialAdvice}
+	case item.Kind == codeReviewTestItem:
+		return codeReviewVerdict{Verdict: codeReviewSound}
 	case item.Kind == codeReviewErrorItem && item.Error == "lostErr":
 		return codeReviewVerdict{Verdict: codeReviewSwallowed, Advice: reviewTestSwallowAdvice}
 	case item.Kind == codeReviewErrorItem:
@@ -282,6 +311,7 @@ func newReviewTestModule(t *testing.T) (string, string) {
 	dir := newTestModule(t)
 	sourcePath := filepath.Join(dir, "sample.go")
 	writeFile(t, sourcePath, reviewTestSource)
+	writeFile(t, filepath.Join(dir, "sample_test.go"), reviewTestTests)
 
 	return dir, sourcePath
 }
@@ -334,7 +364,8 @@ func reviewIssueSummary(issues []Issue) []string {
 		case "comment_noise",
 			"comment_excuse",
 			"comment_crutch",
-			codeReviewFindingKinds[codeReviewSwallowed]:
+			codeReviewFindingKinds[codeReviewSwallowed],
+			codeReviewFindingKinds[codeReviewTrivial]:
 			out = append(
 				out,
 				strconv.Itoa(issuePosition(issue).Line)+" "+issue.Kind+": "+issue.Message,
@@ -360,6 +391,7 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 		"14 comment_excuse: " + reviewTestExcuseAdvice,
 		"17 comment_crutch: " + reviewTestCrutchAdvice,
 		"34 swallowed_error: " + reviewTestSwallowAdvice,
+		"13 test_trivial: " + reviewTestTrivialAdvice,
 	}
 	if got := reviewIssueSummary(issues); !slices.Equal(got, want) {
 		t.Fatalf(
@@ -369,21 +401,32 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 		)
 	}
 
-	var comments, errs []string
+	items := make(map[string][]string)
 
 	for _, request := range model.requests {
 		for _, item := range request.Items {
-			if item.Kind == codeReviewErrorItem {
-				errs = append(errs, item.Error)
-			} else {
-				text := reviewTestItemText(request, item)
-				_, text, _ = strings.Cut(text, "| ")
-				comments = append(comments, strings.TrimSpace(text))
+			value := item.Error
+			if value == "" {
+				line, _, _ := strings.Cut(reviewTestItemText(request, item), "\n")
+				_, value, _ = strings.Cut(line, "| ")
 			}
+
+			items[item.Kind] = append(items[item.Kind], strings.TrimSpace(value))
 		}
 	}
 
+	errs, comments, tests := items[codeReviewErrorItem], items[codeReviewCommentItem], items[codeReviewTestItem]
 	slices.Sort(errs)
+	slices.Sort(tests)
+
+	// Every runnable test is sent, also one without comments; TestMain,
+	// benchmarks, and lower-case names are not tests.
+	if want := []string{
+		"func TestCount(t *testing.T) {",
+		"func TestCountTrivial(t *testing.T) {",
+	}; !slices.Equal(tests, want) {
+		t.Fatalf("test items = %q, want %q", tests, want)
+	}
 
 	// A plain overwrite ends the dropped value and a closure owns its own
 	// errors. Later reads, named results, outer variables, loop-carried errors,
@@ -394,11 +437,9 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 	}
 
 	// Machine directives are skipped; suppressions are judged even when bare.
-	for _, comment := range comments {
-		if strings.Contains(comment, "go:generate") ||
-			strings.Contains(comment, "slopelint:ensures") {
-			t.Fatalf("directive %q was sent for review", comment)
-		}
+	if sent := strings.Join(comments, "\n"); strings.Contains(sent, "go:generate") ||
+		strings.Contains(sent, "slopelint:ensures") {
+		t.Fatalf("directive was sent for review: %q", comments)
 	}
 
 	for _, suppression := range []string{
@@ -489,7 +530,6 @@ func TestCodeReviewCachesVerdictsPerDeclaration(t *testing.T) {
 		t.Fatalf("moved findings = %v, want swallowed_error at line 36", got)
 	}
 
-	// A new line inside Count changes only Count, which is asked again.
 	writeFile(t, sourcePath, strings.Replace(
 		reviewTestSource,
 		"// excuse: kept for compatibility with old callers.",
@@ -611,9 +651,20 @@ func TestCodeReviewRejectsInvalidModelOutput(t *testing.T) {
 					return codeReviewVerdict{Verdict: codeReviewRestates, Advice: reviewTestRestateAdvice}
 				}
 
-				return codeReviewVerdict{Verdict: codeReviewKeep}
+				return keepAllForTest(item, "")
 			},
 			want: `verdict "restates" is invalid for dropped_error`,
+		},
+		{
+			name: "comment verdict for a test",
+			verdict: func(item codeReviewItem, _ string) codeReviewVerdict {
+				if item.Kind == codeReviewTestItem {
+					return codeReviewVerdict{Verdict: codeReviewKeep}
+				}
+
+				return keepAllForTest(item, "")
+			},
+			want: `verdict "keep" is invalid for test`,
 		},
 		{
 			name: "terminal escape in advice",
@@ -842,8 +893,11 @@ func TestCodeReviewFindingsBlockStamp(t *testing.T) {
 }
 
 func keepAllForTest(item codeReviewItem, _ string) codeReviewVerdict {
-	if item.Kind == codeReviewErrorItem {
+	switch item.Kind {
+	case codeReviewErrorItem:
 		return codeReviewVerdict{Verdict: codeReviewHandled}
+	case codeReviewTestItem:
+		return codeReviewVerdict{Verdict: codeReviewSound}
 	}
 
 	return codeReviewVerdict{Verdict: codeReviewKeep}
@@ -923,10 +977,8 @@ func skip(path string) error {
 		}
 	}
 
-	// The reason above joins its suppression; separate notes and a suppression
-	// with its own reason stay separate items.
 	if want := []string{"3-4", "7", "8", "10"}; !slices.Equal(comments, want) {
-		t.Fatalf("comment items = %v, want %v", comments, want)
+		t.Fatalf("comment items = %v, want %v: a reason joins only its suppression", comments, want)
 	}
 
 	if got := reviewIssueSummary(

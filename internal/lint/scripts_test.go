@@ -34,6 +34,8 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 		"describe('app', () => {\n  test.only('TestCountTrivial', async () => {\n    await sleep(10)\n  })\n})\n",
 	)
 	writeFile(t, filepath.Join(dir, "web", "types.d.ts"), longBody)
+	// Valid TypeScript that tree-sitter cannot read: reported, never reviewed.
+	writeFile(t, filepath.Join(dir, "web", "raw.ts"), "// restates the path\nexport const path = String.raw`C:\\x`\n")
 	writeFile(
 		t,
 		filepath.Join(dir, "web", "total.py"),
@@ -88,6 +90,7 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 		"web/app.ts:1 long_function",
 		"web/app.ts:107 comment_noise",
 		"web/app.ts:114 swallowed_error",
+		"web/raw.ts:2 parse_error",
 		"web/total.py:15 boolean_ceremony",
 	}
 	if !slices.Equal(got, want) {

@@ -38,7 +38,8 @@ pattern covers them: `./...` its tree, `./web` one directory; import-path
 patterns cover none. Skipped: hidden, `node_modules`, `vendor`, and `testdata`
 directories, `.d.ts`, `.gen.ts`, `.min.` files, and files with `@generated`,
 `DO NOT EDIT`, or `Code generated` in the first 5 lines. A nested `go.mod`
-does not stop them. A syntax error fails the run, as a Go parse error does.
+does not stop them. A file the parser cannot read gets one `parse_error`
+finding and no other rules; the parser also rejects some valid TypeScript.
 These files get the size rules, [code review](#code-review),
 [semantic similarity](#semantic-similarity), and the Go structure rules
 below, narrowed to what one file's syntax proves. Test files (`*.test.ts`,

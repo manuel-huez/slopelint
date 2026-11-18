@@ -10,9 +10,19 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars/typescript"
 )
 
+// SyntaxError marks a file the parser cannot read. The tree-sitter parser
+// also rejects some valid TypeScript, so callers report the file and lint
+// the rest instead of failing the run.
+type SyntaxError struct {
+	Pos Pos
+}
+
+func (err *SyntaxError) Error() string {
+	return fmt.Sprintf("%d:%d: syntax error", err.Pos.Line, err.Pos.Column)
+}
+
 // Parse outlines one TypeScript or Python file. Generated files get only
-// their line count. A syntax error fails the file, as a Go parse error fails
-// its package.
+// their line count.
 func Parse(name string, src []byte) (File, error) {
 	language := LanguageFor(name)
 	file := File{
@@ -51,8 +61,7 @@ func Parse(name string, src []byte) (File, error) {
 	}
 
 	if bad := firstSyntaxError(root); bad != nil {
-		point := bad.StartPoint()
-		return File{}, fmt.Errorf("%d:%d: syntax error", point.Row+1, point.Column+1)
+		return File{}, &SyntaxError{Pos: syntax{}.pos(bad)}
 	}
 
 	w := walker{

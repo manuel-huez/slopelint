@@ -3,6 +3,7 @@ package lint
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"go/token"
 	"os"
@@ -179,12 +180,19 @@ func lintScriptFile(name, root string, opts Options) ([]Issue, error) {
 		}
 	}
 
+	var issues []Issue
+
 	file, err := outline.Parse(name, content)
-	if err != nil {
+	if syntaxErr, ok := errors.AsType[*outline.SyntaxError](err); ok {
+		issues = append(issues, Issue{
+			Kind: "parse_error",
+			Message: "parser cannot read this file, so other rules skip it; " +
+				"if the code is valid, it is a tree-sitter parser bug",
+			position: scriptPosition(name, syntaxErr.Pos),
+		})
+	} else if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
-
-	var issues []Issue
 
 	findings := smellcheck.CheckSizes([]outline.File{file})
 	for _, smell := range file.Smells {
@@ -223,7 +231,10 @@ func collectScriptCodeReviewDeclarations(
 	policy codeReviewPolicy,
 ) ([]codeReviewDeclaration, error) {
 	file, err := outline.Parse(filename, content)
-	if err != nil {
+	if _, ok := errors.AsType[*outline.SyntaxError](err); ok {
+		// lintScriptFile reports the file.
+		return nil, nil
+	} else if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", filename, err)
 	}
 

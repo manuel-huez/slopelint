@@ -194,8 +194,10 @@ sent to the configured Codex service.** Items:
   is sent with the one-line signatures of file-local helpers its tests call,
   and judged `test_repeated_steps` when two or more of its tests repeat one
   block of setup, call, or assertion steps that a table or shared fixture
-  would replace, saving at least 15 lines. The finding is at the first of
-  those tests and names the others. It is dropped when a `semantic_duplicate`
+  would replace, saving at least 15 lines. Each group is asked twice, in
+  separate calls; it is reported only when both answers find it, for the
+  tests both name. The finding is at the first of those tests and names the
+  others. It is dropped when a `semantic_duplicate`
   or `repeated_test_fixture` finding lies in one of them.
 
 The model returns one verdict and one sentence of advice per item. The finding

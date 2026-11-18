@@ -221,8 +221,8 @@ func TestCodeReviewReportsRepeatedTestsOnceAndKeepsUnitKeys(t *testing.T) {
 		}
 	}
 
-	if groups != 1 {
-		t.Fatalf("test group requests = %d, want 1", groups)
+	if groups != 2 {
+		t.Fatalf("test group requests = %d, want 2 votes", groups)
 	}
 
 	// A test outside the unit changes only its own requests, and the cached
@@ -243,6 +243,65 @@ func TestCodeReviewReportsRepeatedTestsOnceAndKeepsUnitKeys(t *testing.T) {
 		if request.Items[0].Kind == codeReviewTestGroupItem {
 			t.Fatalf("edit outside the unit asked its test group again:\n%s", request.Source)
 		}
+	}
+}
+
+// A group is reported only when both asks find it, for the tests both name.
+func TestCodeReviewKeepsTestGroupsBothVotesFind(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		second func(codeReviewVerdict) codeReviewVerdict
+		want   string
+	}{
+		{
+			name: "second vote distinct",
+			second: func(codeReviewVerdict) codeReviewVerdict {
+				return codeReviewVerdict{Verdict: codeReviewDistinct}
+			},
+		},
+		{
+			name: "second vote names fewer tests",
+			second: func(verdict codeReviewVerdict) codeReviewVerdict {
+				verdict.Tests, verdict.SavedLines = verdict.Tests[1:], testGroupMinSavedLines
+				return verdict
+			},
+			want: ":28:1 " + testGroupTestAdvice + " Tests: TestCountTwo, TestCountThree; fix: table.",
+		},
+		{
+			name: "votes share one test",
+			second: func(verdict codeReviewVerdict) codeReviewVerdict {
+				verdict.Tests = []string{"TestCountOne", "TestCountTwo"}
+				verdict.SavedLines = testGroupMinSavedLines - 1
+				return verdict
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir, testPath := newTestGroupModule(t, "a", "copy")
+			model := testGroupTestModel()
+			first, asks := model.verdict, 0
+			model.verdict = func(item codeReviewItem, text string) codeReviewVerdict {
+				verdict := first(item, text)
+				if item.Kind == codeReviewTestGroupItem {
+					if asks++; asks == 2 {
+						verdict = test.second(verdict)
+					}
+				}
+
+				return verdict
+			}
+
+			got := lintTestGroupsForTest(t, dir, t.TempDir(), model)
+
+			var want []string
+			if test.want != "" {
+				want = []string{"test_repeated_steps " + testPath + test.want}
+			}
+
+			if !slices.Equal(got, want) {
+				t.Fatalf("findings:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+		})
 	}
 }
 

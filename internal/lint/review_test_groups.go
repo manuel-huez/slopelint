@@ -271,6 +271,32 @@ func testGroupVerdict(verdict codeReviewVerdict, item codeReviewItem) (codeRevie
 	return verdict, nil
 }
 
+// combineTestGroupVotes keeps a repeated verdict only when both asks found
+// it, for the tests both named. Across repeated single asks, about a third
+// of the flagged groups change; most are borderline helper extractions.
+func combineTestGroupVotes(first, second codeReviewRecord) codeReviewRecord {
+	for index, verdict := range first.Items {
+		other := second.Items[index]
+		if verdict.Verdict != codeReviewRepeated || other.Verdict != codeReviewRepeated {
+			first.Items[index] = codeReviewVerdict{ID: verdict.ID, Verdict: codeReviewDistinct}
+			continue
+		}
+
+		verdict.Tests = slices.DeleteFunc(slices.Clone(verdict.Tests), func(name string) bool {
+			return !slices.Contains(other.Tests, name)
+		})
+		verdict.SavedLines = min(verdict.SavedLines, other.SavedLines)
+
+		if len(verdict.Tests) < 2 || verdict.SavedLines < testGroupMinSavedLines {
+			verdict = codeReviewVerdict{ID: verdict.ID, Verdict: codeReviewDistinct}
+		}
+
+		first.Items[index] = verdict
+	}
+
+	return first
+}
+
 type testGroupFinding struct {
 	issue Issue
 	tests []groupedTest

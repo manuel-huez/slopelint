@@ -58,8 +58,8 @@ var codeReviewCurrentPolicy = codeReviewPolicy{
 	Go:               1,
 	TypeScript:       1,
 	Python:           1,
-	GoTestGroups:     1,
-	ScriptTestGroups: 1,
+	GoTestGroups:     2,
+	ScriptTestGroups: 2,
 	Model:            "gpt-6.1-terra",
 	Effort:           "low",
 }
@@ -210,6 +210,7 @@ func (review codeReview) run(
 		policy:       review.policy,
 		requested:    make(map[string]codeReviewRequest),
 		records:      make(map[string]codeReviewRecord, len(keys)),
+		firstVotes:   make(map[string]codeReviewRecord),
 		cacheRoot:    review.cacheRoot,
 		cacheEnabled: review.cacheEnabled,
 	}
@@ -262,16 +263,27 @@ func (review codeReview) generate(
 		review.policy.Effort,
 	)
 
-	collector.total = len(missing)
-	if err := review.reviewer.review(ctx, missing, collector.accept); err != nil {
-		return err
+	// Test groups get a second, separate ask; see combineTestGroupVotes.
+	groups := slices.DeleteFunc(slices.Clone(missing), func(request codeReviewRequest) bool {
+		return request.Items[0].Kind != codeReviewTestGroupItem
+	})
+
+	collector.total = len(missing) + len(groups)
+	for _, asked := range [][]codeReviewRequest{missing, groups} {
+		if len(asked) == 0 {
+			continue
+		}
+
+		if err := review.reviewer.review(ctx, asked, collector.accept); err != nil {
+			return err
+		}
 	}
 
-	if collector.accepted != len(missing) {
+	if collector.accepted != collector.total {
 		return fmt.Errorf(
 			"codex returned %d reviews for %d declarations",
 			collector.accepted,
-			len(missing),
+			collector.total,
 		)
 	}
 
@@ -307,6 +319,7 @@ type codeReviewCollector struct {
 	policy       codeReviewPolicy
 	requested    map[string]codeReviewRequest
 	records      map[string]codeReviewRecord
+	firstVotes   map[string]codeReviewRecord
 	cacheRoot    string
 	cacheEnabled bool
 	accepted     int
@@ -321,8 +334,21 @@ func (collector *codeReviewCollector) accept(records []codeReviewRecord) error {
 
 	for _, record := range records {
 		key := record.ID
+		request := collector.requested[key]
+		collector.accepted++
+
+		if request.Items[0].Kind == codeReviewTestGroupItem {
+			first, voted := collector.firstVotes[key]
+			if !voted {
+				collector.firstVotes[key] = record
+				continue
+			}
+
+			record = combineTestGroupVotes(first, record)
+		}
+
 		record.ID = ""
-		record.Policy = collector.policy.forRequest(collector.requested[key])
+		record.Policy = collector.policy.forRequest(request)
 		collector.records[key] = record
 
 		if !collector.cacheEnabled {
@@ -336,11 +362,10 @@ func (collector *codeReviewCollector) accept(records []codeReviewRecord) error {
 
 		path := codeReviewRecordPath(collector.cacheRoot, key)
 		if err := writeFileAtomically(path, data); err != nil {
-			return fmt.Errorf("cache review for %s: %w", collector.requested[key].Location, err)
+			return fmt.Errorf("cache review for %s: %w", request.Location, err)
 		}
 	}
 
-	collector.accepted += len(records)
 	_, _ = fmt.Fprintf(
 		os.Stderr,
 		"slopelint: reviewed %d/%d declarations\n",

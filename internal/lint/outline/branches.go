@@ -47,7 +47,7 @@ func (w *walker) finishSmells(root *ts.Node) {
 		localRules{c}.functions(root)
 	}
 
-	w.file.Smells = c.smells
+	w.file.Smells = append(w.file.Smells, c.smells...)
 }
 
 func (c *checker) walk(node *ts.Node) {

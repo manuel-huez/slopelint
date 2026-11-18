@@ -577,7 +577,7 @@ func TestCodeReviewPolicyChangeSelectsNewRecords(t *testing.T) {
 
 	before := model.requestCount()
 	bumped := codeReviewCurrentPolicy
-	bumped.Schema++
+	bumped.Go++
 
 	review := codeReview{reviewer: model, policy: bumped, cacheRoot: cacheRoot, cacheEnabled: true}
 	if _, _, err := review.run(t.Context(), []string{sourcePath}, nil); err != nil {

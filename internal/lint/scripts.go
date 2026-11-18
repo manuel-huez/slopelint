@@ -186,9 +186,7 @@ func lintScriptFile(name, root string, opts Options) ([]Issue, error) {
 
 	var issues []Issue
 
-	findings := append(
-		smellcheck.CheckSizes([]outline.File{file}),
-		smellcheck.CheckScriptTests(file)...)
+	findings := smellcheck.CheckSizes([]outline.File{file})
 	for _, smell := range file.Smells {
 		findings = append(findings, smellcheck.OutlineFinding{
 			Pos:     smell.Pos,

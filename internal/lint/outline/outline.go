@@ -40,13 +40,10 @@ type File struct {
 	Comments  []Comment
 	Decls     []Decl
 	Handlers  []Handler
-	// Tests, Focused, and Sleeps describe test files: test cases, focused
-	// .only and fit calls, and real timer waits that no fake clock covers.
-	Tests   []Test
-	Focused []Pos
-	Sleeps  []Pos
-	Blocks  []Block
-	Smells  []Smell
+	// Tests are the test cases of a test file.
+	Tests  []Test
+	Blocks []Block
+	Smells []Smell
 }
 
 // Func is one function, method, or function literal.

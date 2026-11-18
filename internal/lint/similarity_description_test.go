@@ -563,7 +563,7 @@ func TestSimilarityDescriptionStampPolicyTracksEnrichment(t *testing.T) {
 		t.Fatalf("reviewed stamp = %#v", reviewed)
 	}
 
-	reviewed.Review = &codeReviewPolicy{Schema: codeReviewCurrentPolicy.Schema - 1}
+	reviewed.Review = &codeReviewPolicy{Go: codeReviewCurrentPolicy.Go - 1}
 	if reviewed.policyMatches() {
 		t.Fatal("obsolete review policy accepted")
 	}

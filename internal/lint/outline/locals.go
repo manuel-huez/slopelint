@@ -209,7 +209,7 @@ func (c localRules) tempAlias(list *ts.Node, stmts []*ts.Node, index int) {
 		return
 	}
 
-	nameWords, leafWords := aliasWords(c.text(name)), aliasWords(leaf)
+	nameWords, leafWords := AliasWords(c.text(name)), AliasWords(leaf)
 	if len(nameWords) == 0 || !slices.Equal(nameWords, leafWords) ||
 		len(c.mentions(scope, c.text(name))) != 2 {
 		return
@@ -233,7 +233,9 @@ func (c localRules) inlinable(next *ts.Node, name string, source *ts.Node) bool 
 		!c.mayWrite(next, source)
 }
 
-func aliasWords(name string) []string {
+// AliasWords returns Words without the filler words that temp aliases add,
+// such as `tmp` or `value`.
+func AliasWords(name string) []string {
 	return slices.DeleteFunc(Words(name), func(word string) bool {
 		switch word {
 		case "alias", "copy", "temp", "tmp", "val", "value":
@@ -394,18 +396,6 @@ type localFunc struct {
 	body *ts.Node
 }
 
-func (c localRules) localFuncs(root *ts.Node) []localFunc {
-	var out []localFunc
-
-	for index := range root.NamedChildCount() {
-		if fn, ok := c.localFunc(root.NamedChild(index)); ok {
-			out = append(out, fn)
-		}
-	}
-
-	return out
-}
-
 // localFunc matches a function declaration or a const bound to a function
 // value. Async and generic functions are skipped, as are type predicates
 // and assertions: they narrow types at their call, which inlining loses.
@@ -462,7 +452,14 @@ func (c localRules) boundFunction(stmt *ts.Node) (*ts.Node, *ts.Node) {
 // mentioned in a string or comment is skipped. A call from the function's
 // own body is no use.
 func (c localRules) functions(root *ts.Node) {
-	fns := c.localFuncs(root)
+	var fns []localFunc
+
+	for index := range root.NamedChildCount() {
+		if fn, ok := c.localFunc(root.NamedChild(index)); ok {
+			fns = append(fns, fn)
+		}
+	}
+
 	uses := c.funcUses(root, fns)
 
 	for _, fn := range fns {

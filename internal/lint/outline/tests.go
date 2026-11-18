@@ -99,7 +99,11 @@ func (w *walker) tsTestCall(call *ts.Node) {
 	root, modifiers := chain[0], chain[1:]
 	if tsFocusRoots[root] ||
 		slices.Contains(modifiers, "only") && (tsTestRoots[root] || tsSuiteRoots[root]) {
-		w.file.Focused = append(w.file.Focused, w.pos(call))
+		w.file.Smells = append(w.file.Smells, Smell{
+			Pos:     w.pos(call),
+			Kind:    "test_focused",
+			Message: "focused test skips every other test in its file; remove .only, fit, or fdescribe",
+		})
 	}
 
 	if !tsTestRoots[root] || w.suite(chain) ||
@@ -108,24 +112,16 @@ func (w *walker) tsTestCall(call *ts.Node) {
 		return
 	}
 
+	title := w.text(w.argument(call, 0))
 	w.file.Tests = append(w.file.Tests, Test{
-		Name:      strings.Trim(w.title(call), "'\"`"),
+		Name:      strings.Trim(title, "'\"`"),
 		Pos:       w.pos(call),
 		StartLine: w.pos(call).Line,
 		EndLine:   w.endLine(call),
 		Context:   w.tsTestContext(call),
 		Calls:     w.testCalls(w.lastFunctionArgument(call)),
 	})
-	w.block(root+" "+w.title(call), call, call)
-}
-
-func (s syntax) title(call *ts.Node) string {
-	args := s.field(call, "arguments")
-	if args == nil || args.NamedChildCount() == 0 {
-		return ""
-	}
-
-	return s.text(args.NamedChild(0))
+	w.block(root+" "+title, call, call)
 }
 
 func (s syntax) lastFunctionArgument(call *ts.Node) *ts.Node {
@@ -430,7 +426,11 @@ func (w *walker) finishTests() {
 			}
 		}
 
-		w.file.Sleeps = append(w.file.Sleeps, each.pos)
+		w.file.Smells = append(w.file.Smells, Smell{
+			Pos:     each.pos,
+			Kind:    "test_sleep",
+			Message: "real sleep in test code; wait on the event, promise, or condition, or use fake timers instead",
+		})
 	}
 }
 

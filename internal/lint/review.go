@@ -37,79 +37,31 @@ const (
 	codeReviewAdviceMaxWords = 40
 )
 
-// codeReviewPolicy names the prompt version and model behind review records.
+// codeReviewPolicy names the prompt versions and model behind review records.
 // Cache keys, records, and the stamp all carry it, so a change selects new
-// records and stales the stamp.
+// records and stales the stamp. Bump a family's version for any change to its
+// prompt text, its verdicts in the output schema, or which items it is given:
+// comments, dropped or caught errors, tests, serial markers, and how tests are
+// grouped into units.
 type codeReviewPolicy struct {
-	Schema int `json:"schema"`
-	// TestSchema versions the test-function rules. Requests without a test
-	// item omit it, so changing those rules keeps comment and dropped-error
-	// records.
-	TestSchema int `json:"test_schema,omitempty"`
-	// TypeScriptSchema and PythonSchema version those languages' comment and
-	// suppression rules. Each request keeps only its own language's version,
-	// so Go keys stay as they were and one language's change keeps the
-	// others' records.
-	TypeScriptSchema  int `json:"typescript_schema,omitempty"`
-	PythonSchema      int `json:"python_schema,omitempty"`
-	ScriptErrorSchema int `json:"script_error_schema,omitempty"`
-	ScriptTestSchema  int `json:"script_test_schema,omitempty"`
-	// TestGroupSchema and ScriptTestGroupSchema version the repeated-steps
-	// rules; only test group requests carry them, and those carry no other
-	// version.
-	TestGroupSchema       int    `json:"test_group_schema,omitempty"`
-	ScriptTestGroupSchema int    `json:"script_test_group_schema,omitempty"`
-	Model                 string `json:"model"`
-	Effort                string `json:"effort"`
+	Go         int `json:"go,omitempty"`
+	TypeScript int `json:"typescript,omitempty"`
+	Python     int `json:"python,omitempty"`
+	// GoTestGroups and ScriptTestGroups version the repeated-steps prompt.
+	GoTestGroups     int    `json:"go_test_groups,omitempty"`
+	ScriptTestGroups int    `json:"script_test_groups,omitempty"`
+	Model            string `json:"model"`
+	Effort           string `json:"effort"`
 }
 
-// codeReviewPolicyVersion must be bumped for any change to the comment,
-// suppression, or dropped-error rules: their prompt text, their verdicts in
-// the output schema, which comments are judged here, and which dropped errors
-// the smells candidate pass reports.
-const codeReviewPolicyVersion = 8
-
-// codeReviewTestPolicyVersion must be bumped for any change to the test and
-// serial-marker rules in the prompt or to which test functions are judged.
-const codeReviewTestPolicyVersion = 2
-
-// codeReviewScriptPolicyVersions must be bumped for any change to that
-// language's prompt text, or to which comments and declaration lines the
-// outline gives it.
-const (
-	codeReviewTypeScriptPolicyVersion = 4
-	codeReviewPythonPolicyVersion     = 4
-)
-
-// codeReviewScriptErrorPolicyVersion must be bumped for any change to the
-// caught-error rules in the script prompt or to which handlers the outline
-// reports.
-const codeReviewScriptErrorPolicyVersion = 3
-
-// codeReviewScriptTestPolicyVersion must be bumped for any change to the test
-// rules in the script prompt or to which tests and context lines the outline
-// gives it.
-const codeReviewScriptTestPolicyVersion = 3
-
-// codeReviewTestGroupPolicyVersions must be bumped for any change to the
-// repeated-steps prompt of that language or to how tests are grouped into
-// units.
-const (
-	codeReviewTestGroupPolicyVersion       = 1
-	codeReviewScriptTestGroupPolicyVersion = 1
-)
-
 var codeReviewCurrentPolicy = codeReviewPolicy{
-	Schema:                codeReviewPolicyVersion,
-	TestSchema:            codeReviewTestPolicyVersion,
-	TypeScriptSchema:      codeReviewTypeScriptPolicyVersion,
-	PythonSchema:          codeReviewPythonPolicyVersion,
-	ScriptErrorSchema:     codeReviewScriptErrorPolicyVersion,
-	ScriptTestSchema:      codeReviewScriptTestPolicyVersion,
-	TestGroupSchema:       codeReviewTestGroupPolicyVersion,
-	ScriptTestGroupSchema: codeReviewScriptTestGroupPolicyVersion,
-	Model:                 "gpt-6.1-terra",
-	Effort:                "low",
+	Go:               1,
+	TypeScript:       1,
+	Python:           1,
+	GoTestGroups:     1,
+	ScriptTestGroups: 1,
+	Model:            "gpt-6.1-terra",
+	Effort:           "low",
 }
 
 const (
@@ -714,41 +666,25 @@ func numberedCodeReviewSource(lines []string) string {
 
 // codeReviewKey hashes everything the verdicts depend on, so a prompt,
 // schema, or model change selects new records instead of deleting old ones.
-// forRequest returns the policy parts that decide this request's verdicts:
-// each version stays only for requests of its languages that hold one of
-// its item kinds.
+// forRequest keeps only the version of the request's prompt family, so one
+// family's change keeps the others' records.
 func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewPolicy {
-	goOnly := []outline.Language{outline.Go}
-	scripts := []outline.Language{outline.TypeScript, outline.Python}
-	group := []string{codeReviewTestGroupItem}
-	test := []string{codeReviewTestItem}
-	comment := []string{codeReviewCommentItem}
+	family := codeReviewPolicy{Model: policy.Model, Effort: policy.Effort}
 
-	for _, scope := range []struct {
-		version   *int
-		languages []outline.Language
-		kinds     []string
-	}{
-		{&policy.Schema, goOnly, []string{
-			codeReviewCommentItem, codeReviewErrorItem, codeReviewTestItem, codeReviewSerialItem,
-		}},
-		{&policy.TestSchema, goOnly, test},
-		{&policy.TestGroupSchema, goOnly, group},
-		{&policy.ScriptErrorSchema, scripts, []string{codeReviewErrorItem}},
-		{&policy.ScriptTestSchema, scripts, test},
-		{&policy.ScriptTestGroupSchema, scripts, group},
-		{&policy.TypeScriptSchema, []outline.Language{outline.TypeScript}, comment},
-		{&policy.PythonSchema, []outline.Language{outline.Python}, comment},
-	} {
-		if !slices.Contains(scope.languages, request.Language) ||
-			!slices.ContainsFunc(request.Items, func(item codeReviewItem) bool {
-				return slices.Contains(scope.kinds, item.Kind)
-			}) {
-			*scope.version = 0
-		}
+	switch {
+	case request.Items[0].Kind == codeReviewTestGroupItem && request.Language == outline.Go:
+		family.GoTestGroups = policy.GoTestGroups
+	case request.Items[0].Kind == codeReviewTestGroupItem:
+		family.ScriptTestGroups = policy.ScriptTestGroups
+	case request.Language == outline.Go:
+		family.Go = policy.Go
+	case request.Language == outline.TypeScript:
+		family.TypeScript = policy.TypeScript
+	default:
+		family.Python = policy.Python
 	}
 
-	return policy
+	return family
 }
 
 // codeReviewFamily names the prompt a request needs: one per language, and

@@ -275,32 +275,18 @@ func collectSimilarityScriptBlocks(source similarityBlockSourceFile) ([]*similar
 		return nil, fmt.Errorf("parse %s: %w", source.absolutePath, err)
 	}
 
-	packageDir := filepath.ToSlash(filepath.Dir(source.relativePath))
-	if packageDir == "." {
-		packageDir = ""
-	}
-
 	var blocks []*similarityBlock
 
 	for _, block := range file.Blocks {
-		tokens := normalizedSimilarityTokens(block.Content)
-		if len(tokens) < similarityMinimumTokens {
-			continue
+		if each := newSimilarityBlock(
+			source.relativePath,
+			block.Symbol,
+			block.Content,
+			scriptPosition(source.absolutePath, block.Pos),
+			file.Test,
+		); each != nil {
+			blocks = append(blocks, each)
 		}
-
-		sum := sha256.Sum256([]byte(block.Content))
-		blocks = append(blocks, &similarityBlock{
-			Identity:     source.relativePath + "::" + block.Symbol,
-			Symbol:       block.Symbol,
-			PackageDir:   packageDir,
-			PackageParts: similarityPathParts(packageDir),
-			RelativePath: source.relativePath,
-			Content:      block.Content,
-			ContentHash:  hex.EncodeToString(sum[:]),
-			Position:     scriptPosition(source.absolutePath, block.Pos),
-			IsTest:       file.Test,
-			Structural:   structuralShingles(tokens),
-		})
 	}
 
 	return blocks, nil

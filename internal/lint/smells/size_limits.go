@@ -22,8 +22,7 @@ const (
 // the size, and splitting first would spread dead code across new owners.
 const sizeLimitDeleteFirst = "first delete code that is no longer needed (legacy compatibility layers, redundant checks, defensive code for cases that cannot happen)"
 
-// OutlineFinding is one finding on outlines: in files[File] of a CheckSizes
-// call, or in the file of a CheckScriptTests call.
+// OutlineFinding is one finding in files[File] of a CheckSizes call.
 type OutlineFinding struct {
 	File    int
 	Pos     outline.Pos

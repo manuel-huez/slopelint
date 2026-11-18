@@ -53,12 +53,13 @@ func summary(file File) []string {
 		)
 	}
 
-	for _, pos := range file.Focused {
-		out = append(out, fmt.Sprintf("focused %d", pos.Line))
-	}
-
-	for _, pos := range file.Sleeps {
-		out = append(out, fmt.Sprintf("sleep %d", pos.Line))
+	for _, smell := range file.Smells {
+		switch smell.Kind {
+		case "test_focused":
+			out = append(out, fmt.Sprintf("focused %d", smell.Pos.Line))
+		case "test_sleep":
+			out = append(out, fmt.Sprintf("sleep %d", smell.Pos.Line))
+		}
 	}
 
 	for _, handler := range file.Handlers {

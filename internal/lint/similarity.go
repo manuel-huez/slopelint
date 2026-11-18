@@ -12,6 +12,7 @@ import (
 	"go/scanner"
 	"go/token"
 	"hash/fnv"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -675,14 +676,6 @@ func collectSimilarityFileBlocks(
 	}
 
 	relativePath = filepath.ToSlash(relativePath)
-
-	packageDir := filepath.ToSlash(filepath.Dir(relativePath))
-	if packageDir == "." {
-		packageDir = ""
-	}
-
-	packageParts := similarityPathParts(packageDir)
-
 	blocks := make([]*similarityBlock, 0)
 
 	for _, decl := range file.Decls {
@@ -691,46 +684,68 @@ func collectSimilarityFileBlocks(
 			continue
 		}
 
-		content, tokens, err := renderSimilarityFunction(pkg.FSet, fn)
+		content, err := renderSimilarityFunction(pkg.FSet, fn)
 		if err != nil {
 			return nil, err
 		}
 
-		if len(tokens) < similarityMinimumTokens {
-			continue
+		if block := newSimilarityBlock(
+			relativePath,
+			similarityFunctionSymbol(pkg.FSet, fn),
+			content,
+			pkg.FSet.Position(fn.Pos()),
+			outline.TestFile(relativePath),
+		); block != nil {
+			blocks = append(blocks, block)
 		}
-
-		symbol := similarityFunctionSymbol(pkg.FSet, fn)
-		sum := sha256.Sum256([]byte(content))
-		blocks = append(blocks, &similarityBlock{
-			Identity:     relativePath + "::" + symbol,
-			Symbol:       symbol,
-			PackageDir:   packageDir,
-			PackageParts: packageParts,
-			RelativePath: relativePath,
-			Content:      content,
-			ContentHash:  hex.EncodeToString(sum[:]),
-			Position:     pkg.FSet.Position(fn.Pos()),
-			IsTest:       outline.TestFile(relativePath),
-			Structural:   structuralShingles(tokens),
-		})
 	}
 
 	return blocks, nil
 }
 
-func renderSimilarityFunction(fset *token.FileSet, fn *ast.FuncDecl) (string, []string, error) {
+func renderSimilarityFunction(fset *token.FileSet, fn *ast.FuncDecl) (string, error) {
 	copyFn := *fn
 	copyFn.Doc = nil
 
 	var rendered bytes.Buffer
 	if err := format.Node(&rendered, fset, &copyFn); err != nil {
-		return "", nil, fmt.Errorf("format similarity function %s: %w", fn.Name.Name, err)
+		return "", fmt.Errorf("format similarity function %s: %w", fn.Name.Name, err)
 	}
 
-	content := rendered.String()
+	return rendered.String(), nil
+}
 
-	return content, normalizedSimilarityTokens(content), nil
+// newSimilarityBlock returns the block of one function at a slash-separated
+// relativePath, or nil when it has too few tokens to compare.
+func newSimilarityBlock(
+	relativePath, symbol, content string,
+	position token.Position,
+	isTest bool,
+) *similarityBlock {
+	tokens := normalizedSimilarityTokens(content)
+	if len(tokens) < similarityMinimumTokens {
+		return nil
+	}
+
+	packageDir := path.Dir(relativePath)
+	if packageDir == "." {
+		packageDir = ""
+	}
+
+	sum := sha256.Sum256([]byte(content))
+
+	return &similarityBlock{
+		Identity:     relativePath + "::" + symbol,
+		Symbol:       symbol,
+		PackageDir:   packageDir,
+		PackageParts: similarityPathParts(packageDir),
+		RelativePath: relativePath,
+		Content:      content,
+		ContentHash:  hex.EncodeToString(sum[:]),
+		Position:     position,
+		IsTest:       isTest,
+		Structural:   structuralShingles(tokens),
+	}
 }
 
 func similarityFunctionSymbol(fset *token.FileSet, fn *ast.FuncDecl) string {

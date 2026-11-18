@@ -7,13 +7,11 @@ import (
 	"go/types"
 	"slices"
 	"strings"
-	"unicode"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
-const (
-	ancestorStackCap  = 8
-	identifierWordCap = 4
-)
+const ancestorStackCap = 8
 
 type tempAliasDecl struct {
 	name *ast.Ident
@@ -214,10 +212,11 @@ func tempAliasNameLooksDisposable(name string, rhs ast.Expr) bool {
 		return false
 	}
 
-	nameWords := stripAliasNoise(splitIdentifierWords(name))
-	leafWords := stripAliasNoise(splitIdentifierWords(leaf))
+	nameWords := outline.AliasWords(name)
 
-	return len(nameWords) != 0 && slices.Equal(nameWords, leafWords)
+	// A leading underscore changes a Go name, so `_x := x` is not a rename.
+	return len(nameWords) != 0 && strings.HasPrefix(name, "_") == strings.HasPrefix(leaf, "_") &&
+		slices.Equal(nameWords, outline.AliasWords(leaf))
 }
 
 func tempAliasLeafName(expr ast.Expr) (string, bool) {
@@ -229,63 +228,6 @@ func tempAliasLeafName(expr ast.Expr) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func splitIdentifierWords(name string) []string {
-	runes := []rune(name)
-	start := 0
-	words := make([]string, 0, identifierWordCap)
-
-	for idx := 1; idx < len(runes); idx++ {
-		nextStart, split := nextIdentifierWordStart(runes, idx)
-		if split {
-			appendIdentifierWord(runes, start, idx, &words)
-			start = nextStart
-		}
-	}
-
-	appendIdentifierWord(runes, start, len(runes), &words)
-
-	return words
-}
-
-func nextIdentifierWordStart(runes []rune, idx int) (int, bool) {
-	prev := runes[idx-1]
-	curr := runes[idx]
-
-	switch {
-	case curr == '_':
-		return idx + 1, true
-	case prev == '_',
-		unicode.IsLower(prev) && unicode.IsUpper(curr),
-		unicode.IsUpper(prev) && unicode.IsUpper(curr) &&
-			idx+1 < len(runes) && unicode.IsLower(runes[idx+1]):
-		return idx, true
-	default:
-		return 0, false
-	}
-}
-
-func appendIdentifierWord(runes []rune, start, end int, words *[]string) {
-	if end <= start {
-		return
-	}
-
-	*words = append(*words, strings.ToLower(string(runes[start:end])))
-}
-
-func stripAliasNoise(words []string) []string {
-	out := make([]string, 0, len(words))
-	for _, word := range words {
-		switch word {
-		case "alias", "copy", "temp", "tmp", "val", "value":
-			continue
-		default:
-			out = append(out, word)
-		}
-	}
-
-	return out
 }
 
 func summarizeObjectUse(info *types.Info, node ast.Node, target types.Object) objectUseSummary {

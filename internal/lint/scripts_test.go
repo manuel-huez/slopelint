@@ -1,9 +1,7 @@
 package lint
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -121,48 +119,33 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 	}
 }
 
-// TestCodeReviewKeysKeepPerLanguagePolicy pins Go keys to their format from
-// before script languages, and script comment keys to theirs from before
-// script errors and tests, so tuned verdicts stay cached. Each key follows
-// only the versions of its own language and item families; test groups
-// follow only their own.
-func TestCodeReviewKeysKeepPerLanguagePolicy(t *testing.T) {
+// TestCodeReviewKeysFollowOwnFamily checks that each prompt family's version
+// change selects new records only for that family's requests, so tuned
+// verdicts of other languages and item kinds stay cached.
+func TestCodeReviewKeysFollowOwnFamily(t *testing.T) {
 	t.Parallel()
 
-	request := codeReviewRequest{
-		Language: outline.Go,
-		Source:   "1| // note\n2| func f() {}\n",
-		Items:    []codeReviewItem{{ID: "i1", Kind: codeReviewCommentItem, Lines: "1"}},
+	comment := []codeReviewItem{{ID: "i1", Kind: codeReviewCommentItem, Lines: "1"}}
+	group := []codeReviewItem{
+		{ID: "i1", Kind: codeReviewTestGroupItem, Lines: "1-2", Tests: []string{"a", "b"}},
 	}
-	script := request
-	script.Language, script.File = outline.TypeScript, "app.ts"
-
-	type legacyPolicy struct {
-		Schema           int    `json:"schema"`
-		TypeScriptSchema int    `json:"typescript_schema,omitempty"`
-		Model            string `json:"model"`
-		Effort           string `json:"effort"`
-	}
-
-	legacyKey := func(policy legacyPolicy, request codeReviewRequest) string {
-		t.Helper()
-
-		policy.Model, policy.Effort = codeReviewCurrentPolicy.Model, codeReviewCurrentPolicy.Effort
-
-		data, err := json.Marshal(struct {
-			Policy legacyPolicy     `json:"policy"`
-			File   string           `json:"file,omitempty"`
-			Test   bool             `json:"test"`
-			Source string           `json:"source"`
-			Items  []codeReviewItem `json:"items"`
-		}{policy, request.File, false, request.Source, request.Items})
-		if err != nil {
-			t.Fatal(err)
+	request := func(language outline.Language, kind string, items []codeReviewItem) codeReviewRequest {
+		if kind != "" {
+			items = []codeReviewItem{{ID: "i1", Kind: kind, Lines: "2"}}
 		}
 
-		sum := sha256.Sum256(data)
+		return codeReviewRequest{Language: language, Source: "1| // note\n2| f()\n", Items: items}
+	}
 
-		return hex.EncodeToString(sum[:])
+	requests := map[string]codeReviewRequest{
+		"Go comment":            request(outline.Go, "", comment),
+		"Go test":               request(outline.Go, codeReviewTestItem, nil),
+		"Go test group":         request(outline.Go, "", group),
+		"TypeScript comment":    request(outline.TypeScript, "", comment),
+		"TypeScript error":      request(outline.TypeScript, codeReviewErrorItem, nil),
+		"TypeScript test group": request(outline.TypeScript, "", group),
+		"Python test":           request(outline.Python, codeReviewTestItem, nil),
+		"Python test group":     request(outline.Python, "", group),
 	}
 
 	key := func(policy codeReviewPolicy, request codeReviewRequest) string {
@@ -176,82 +159,26 @@ func TestCodeReviewKeysKeepPerLanguagePolicy(t *testing.T) {
 		return value
 	}
 
-	if key(
-		codeReviewCurrentPolicy,
-		request,
-	) != legacyKey(
-		legacyPolicy{Schema: codeReviewPolicyVersion},
-		request,
-	) {
-		t.Fatal("Go review key changed format")
-	}
-
-	if key(codeReviewCurrentPolicy, script) != legacyKey(
-		legacyPolicy{TypeScriptSchema: codeReviewTypeScriptPolicyVersion},
-		script,
-	) {
-		t.Fatal("TypeScript comment review key changed format")
-	}
-
-	scriptError := script
-	scriptError.Items = []codeReviewItem{{ID: "i1", Kind: codeReviewErrorItem, Lines: "2"}}
-	scriptTest := script
-	scriptTest.Items = []codeReviewItem{{ID: "i1", Kind: codeReviewTestItem, Lines: "2"}}
-	goTest := scriptTest
-	goTest.Language, goTest.File = outline.Go, ""
-
-	group := []codeReviewItem{
-		{ID: "i1", Kind: codeReviewTestGroupItem, Lines: "1-2", Tests: []string{"a", "b"}},
-	}
-	goGroup := goTest
-	goGroup.Items = group
-	scriptGroup := scriptTest
-	scriptGroup.Items = group
-
-	const goTestRequest = "Go test"
-
-	requests := map[string]codeReviewRequest{
-		"Go comment":            request,
-		goTestRequest:           goTest,
-		"Go test group":         goGroup,
-		"TypeScript comment":    script,
-		"TypeScript error":      scriptError,
-		"TypeScript test":       scriptTest,
-		"TypeScript test group": scriptGroup,
-	}
-
-	// Each version change selects new records only for its own requests; Go
-	// test requests also carry the Go comment and error version.
 	for _, test := range []struct {
 		change  func(*codeReviewPolicy)
 		changes []string
 	}{
-		{func(policy *codeReviewPolicy) { policy.Schema++ }, []string{"Go comment", goTestRequest}},
-		{func(policy *codeReviewPolicy) { policy.TestSchema++ }, []string{goTestRequest}},
-		{func(policy *codeReviewPolicy) { policy.PythonSchema++ }, nil},
-		{func(policy *codeReviewPolicy) { policy.TypeScriptSchema++ }, []string{"TypeScript comment"}},
-		{func(policy *codeReviewPolicy) { policy.ScriptErrorSchema++ }, []string{"TypeScript error"}},
-		{func(policy *codeReviewPolicy) { policy.ScriptTestSchema++ }, []string{"TypeScript test"}},
-		{func(policy *codeReviewPolicy) { policy.TestGroupSchema++ }, []string{"Go test group"}},
+		{func(policy *codeReviewPolicy) { policy.Go++ }, []string{"Go comment", "Go test"}},
+		{func(policy *codeReviewPolicy) { policy.TypeScript++ }, []string{"TypeScript comment", "TypeScript error"}},
+		{func(policy *codeReviewPolicy) { policy.Python++ }, []string{"Python test"}},
+		{func(policy *codeReviewPolicy) { policy.GoTestGroups++ }, []string{"Go test group"}},
 		{
-			func(policy *codeReviewPolicy) { policy.ScriptTestGroupSchema++ },
-			[]string{"TypeScript test group"},
+			func(policy *codeReviewPolicy) { policy.ScriptTestGroups++ },
+			[]string{"TypeScript test group", "Python test group"},
 		},
+		{func(policy *codeReviewPolicy) { policy.Model += "-next" }, slices.Collect(maps.Keys(requests))},
 	} {
 		policy := codeReviewCurrentPolicy
 		test.change(&policy)
 
 		for name, each := range requests {
-			if moved := key(
-				policy,
-				each,
-			) != key(
-				codeReviewCurrentPolicy,
-				each,
-			); moved != slices.Contains(
-				test.changes,
-				name,
-			) {
+			moved := key(policy, each) != key(codeReviewCurrentPolicy, each)
+			if moved != slices.Contains(test.changes, name) {
 				t.Errorf("version change for %v: %s key changed=%v", test.changes, name, moved)
 			}
 		}

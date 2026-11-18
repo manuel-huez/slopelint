@@ -59,7 +59,7 @@ func (w *walker) handler(node *ts.Node, kind string) {
 // namespace, not a promise.
 func (s syntax) promiseCatch(call *ts.Node) (*ts.Node, *ts.Node, bool) {
 	callee := s.field(call, "function")
-	callback := s.soleArgument(call)
+	callback := s.argument(call, 0)
 	receiver := s.text(s.field(callee, "object"))
 
 	if s.text(s.field(callee, "property")) != "catch" ||
@@ -115,15 +115,6 @@ func (s syntax) unit(node *ts.Node) Decl {
 	}
 
 	return Decl{StartLine: s.pos(outer).Line, EndLine: s.endLine(outer)}
-}
-
-func (s syntax) soleArgument(call *ts.Node) *ts.Node {
-	args := s.field(call, "arguments")
-	if args == nil || args.NamedChildCount() != 1 {
-		return nil
-	}
-
-	return args.NamedChild(0)
 }
 
 func (s syntax) lastNamedChild(node *ts.Node, kind string) *ts.Node {
@@ -221,7 +212,7 @@ func (s syntax) exitCall(call *ts.Node) bool {
 		return false
 	}
 
-	status := s.soleArgument(call)
+	status := s.argument(call, 0)
 
 	return status != nil && s.text(status) != "0"
 }

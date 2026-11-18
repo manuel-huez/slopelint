@@ -907,8 +907,6 @@ func keepAllForTest(item codeReviewItem, _ string) codeReviewVerdict {
 	return codeReviewVerdict{Verdict: codeReviewKeep}
 }
 
-// hideCodexForTest keeps Go and Git on PATH but removes every directory that
-// holds a codex executable.
 func hideCodexForTest(t *testing.T) {
 	t.Helper()
 

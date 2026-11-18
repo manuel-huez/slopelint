@@ -35,7 +35,11 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 	)
 	writeFile(t, filepath.Join(dir, "web", "types.d.ts"), longBody)
 	// Valid TypeScript that tree-sitter cannot read: reported, never reviewed.
-	writeFile(t, filepath.Join(dir, "web", "raw.ts"), "// restates the path\nexport const path = String.raw`C:\\x`\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "web", "raw.ts"),
+		"// restates the path\nexport const path = String.raw`C:\\x`\n",
+	)
 	writeFile(
 		t,
 		filepath.Join(dir, "web", "total.py"),

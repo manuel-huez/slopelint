@@ -3,7 +3,6 @@ package lint
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -271,12 +270,9 @@ func collectSimilarityScriptBlocks(source similarityBlockSourceFile) ([]*similar
 		return nil, err
 	}
 
-	file, err := outline.Parse(source.absolutePath, content)
-	if _, ok := errors.AsType[*outline.SyntaxError](err); ok {
-		// lintScriptFile reports the file.
-		return nil, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", source.absolutePath, err)
+	file, err := parseReadableScript(source.absolutePath, content)
+	if err != nil {
+		return nil, err
 	}
 
 	var blocks []*similarityBlock

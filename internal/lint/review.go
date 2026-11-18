@@ -54,12 +54,16 @@ type codeReviewPolicy struct {
 	Effort           string `json:"effort"`
 }
 
+// codeReviewTestGroupVersion 2 asks each group twice; see
+// combineTestGroupVotes.
+const codeReviewTestGroupVersion = 2
+
 var codeReviewCurrentPolicy = codeReviewPolicy{
 	Go:               1,
 	TypeScript:       1,
 	Python:           1,
-	GoTestGroups:     2,
-	ScriptTestGroups: 2,
+	GoTestGroups:     codeReviewTestGroupVersion,
+	ScriptTestGroups: codeReviewTestGroupVersion,
 	Model:            "gpt-6.1-terra",
 	Effort:           "low",
 }
@@ -712,8 +716,6 @@ func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewP
 	return family
 }
 
-// codeReviewFamily names the prompt a request needs: one per language, and
-// one per language for test groups.
 func codeReviewFamily(request codeReviewRequest) string {
 	if request.Items[0].Kind == codeReviewTestGroupItem {
 		return string(request.Language) + " test groups"

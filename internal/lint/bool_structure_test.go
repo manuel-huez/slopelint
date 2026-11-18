@@ -6,11 +6,15 @@ import (
 	"testing"
 )
 
-func TestDetectsRedundantBoolReturn(t *testing.T) {
+func TestDetectsBooleanCeremonyAndRedundantBranches(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	for _, test := range []struct {
+		name, source, want, failure, kind string
+	}{
+		{
+			name: "DetectsRedundantBoolReturn",
+			source: `package sample
 
 func f(ok bool) bool {
 	if ok {
@@ -18,25 +22,14 @@ func f(ok bool) bool {
 	}
 	return false
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `if returns boolean literals; replace with "return ok"`) {
-		t.Fatalf("expected bool-return ceremony finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "boolean_ceremony") {
-		t.Fatalf("expected boolean_ceremony kind, got %#v", issues)
-	}
-}
-
-func TestDetectsRedundantBoolAssignment(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    `if returns boolean literals; replace with "return ok"`,
+			failure: "expected bool-return ceremony finding, got:\n%s",
+			kind:    "boolean_ceremony",
+		},
+		{
+			name: "DetectsRedundantBoolAssignment",
+			source: `package sample
 
 func f(ok bool) bool {
 	out := false
@@ -47,21 +40,13 @@ func f(ok bool) bool {
 	}
 	return out
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(joined, `if assigns boolean literals; replace with "out = ok"`) {
-		t.Fatalf("expected bool-assignment ceremony finding, got:\n%s", joined)
-	}
-}
-
-func TestDetectsIdenticalIfElseBodies(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    `if assigns boolean literals; replace with "out = ok"`,
+			failure: "expected bool-assignment ceremony finding, got:\n%s",
+		},
+		{
+			name: "DetectsIdenticalIfElseBodies",
+			source: `package sample
 
 func f(ok bool) error {
 	if ok {
@@ -70,59 +55,14 @@ func f(ok bool) error {
 		return nil
 	}
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`if and else branches are identical; preserve condition evaluation and hoist shared body`,
-	) {
-		t.Fatalf("expected identical-branch finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "control_flow_merge") {
-		t.Fatalf("expected control_flow_merge kind, got %#v", issues)
-	}
-}
-
-func TestSkipsIdenticalIfElseBodiesWhenScopeWouldChange(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func f(ok bool) int {
-	if ok {
-		v := 1
-		return v
-	} else {
-		v := 1
-		return v
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(
-		joined,
-		`if and else branches are identical; preserve condition evaluation and hoist shared body`,
-	) {
-		t.Fatalf(
-			"unexpected identical-branch finding when branch-local defs exist, got:\n%s",
-			joined,
-		)
-	}
-}
-
-func TestDetectsRedundantReturnGuardBeforeFallback(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    `if and else branches are identical; preserve condition evaluation and hoist shared body`,
+			failure: "expected identical-branch finding, got:\n%s",
+			kind:    "control_flow_merge",
+		},
+		{
+			name: "DetectsRedundantReturnGuardBeforeFallback",
+			source: `package sample
 
 func f(err error) error {
 	if err != nil {
@@ -131,24 +71,13 @@ func f(err error) error {
 
 	return nil
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`1 guard return(s) duplicate following return "return nil"; drop redundant branch checks`,
-	) {
-		t.Fatalf("expected redundant return guard finding, got:\n%s", joined)
-	}
-}
-
-func TestDetectsRedundantReturnGuardSetBeforeFallback(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			want:    `1 guard return(s) duplicate following return "return nil"; drop redundant branch checks`,
+			failure: "expected redundant return guard finding, got:\n%s",
+		},
+		{
+			name: "DetectsRedundantReturnGuardSetBeforeFallback",
+			source: `package sample
 
 func f(first bool, second bool) int {
 	if first {
@@ -160,24 +89,108 @@ func f(first bool, second bool) int {
 
 	return 0
 }
-`)
+`,
+			want:    `2 guard return(s) duplicate following return "return 0"; drop redundant branch checks`,
+			failure: "expected redundant return guard set finding, got:\n%s",
+		},
+		{
+			name: "DetectsNestedFinalIfPyramid",
+			source: `package sample
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+func f(ok bool, ready bool) {
+	if ok {
+		if ready {
+			println("run")
+		}
+	}
+}
+`,
+			want:    `nested if pyramid has 2 levels at function end; invert conditions into guard clauses`,
+			failure: "expected nested if pyramid finding, got:\n%s",
+		},
+		{
+			name: "DetectsIdenticalSwitchCaseBodies",
+			source: `package sample
 
-	if !strings.Contains(
-		joined,
-		`2 guard return(s) duplicate following return "return 0"; drop redundant branch checks`,
-	) {
-		t.Fatalf("expected redundant return guard set finding, got:\n%s", joined)
+func f(ok bool) int {
+	switch ok {
+	case true:
+		return 1
+	case false:
+		return 1
+	}
+	return 0
+}
+`,
+			want:    `switch case "false" has identical body as previous case "true"; merge case lists`,
+			failure: "expected identical switch branch finding, got:\n%s",
+		},
+		{
+			name: "DetectsExhaustiveBoolDefault",
+			source: `package sample
+
+func f(ok bool) {
+	switch ok {
+	case true:
+		println("yes")
+	case false:
+		println("no")
+	default:
+		println("dead")
+	}
+}
+`,
+			want:    `default case is redundant; bool switch already covers true and false`,
+			failure: "expected redundant default finding, got:\n%s",
+			kind:    "redundant_default",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			issues := lintInDir(t, tmp)
+			joined := joinMessages(issues)
+
+			if !strings.Contains(joined, test.want) {
+				t.Fatalf(test.failure, joined)
+			}
+
+			if test.kind != "" && !hasIssueKind(issues, test.kind) {
+				t.Fatalf("expected %s kind, got %#v", test.kind, issues)
+			}
+		})
 	}
 }
 
-func TestSkipsRedundantReturnGuardWhenConditionMayPanic(t *testing.T) {
+func TestSkipsBranchMergesWhenBehaviorDiffers(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+	for _, test := range []struct {
+		name, source, forbidden, failure string
+	}{
+		{
+			name: "SkipsIdenticalIfElseBodiesWhenScopeWouldChange",
+			source: `package sample
+
+func f(ok bool) int {
+	if ok {
+		v := 1
+		return v
+	} else {
+		v := 1
+		return v
+	}
+}
+`,
+			forbidden: `if and else branches are identical; preserve condition evaluation and hoist shared body`,
+			failure:   "unexpected identical-branch finding when branch-local defs exist, got:\n%s",
+		},
+		{
+			name: "SkipsRedundantReturnGuardWhenConditionMayPanic",
+			source: `package sample
 
 type req struct { name string }
 
@@ -188,24 +201,13 @@ func f(req *req) string {
 
 	return ""
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `drop redundant branch checks`) {
-		t.Fatalf(
-			"unexpected redundant return guard finding for selector condition, got:\n%s",
-			joined,
-		)
-	}
-}
-
-func TestSkipsRedundantReturnGuardWhenEqualityMayPanic(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			forbidden: `drop redundant branch checks`,
+			failure:   "unexpected redundant return guard finding for selector condition, got:\n%s",
+		},
+		{
+			name: "SkipsRedundantReturnGuardWhenEqualityMayPanic",
+			source: `package sample
 
 type box struct { value any }
 
@@ -224,50 +226,13 @@ func G(left box, right box) int {
 
 	return 0
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `drop redundant branch checks`) {
-		t.Fatalf(
-			"unexpected redundant return guard finding for equality that may panic, got:\n%s",
-			joined,
-		)
-	}
-}
-
-func TestDetectsNestedFinalIfPyramid(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func f(ok bool, ready bool) {
-	if ok {
-		if ready {
-			println("run")
-		}
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`nested if pyramid has 2 levels at function end; invert conditions into guard clauses`,
-	) {
-		t.Fatalf("expected nested if pyramid finding, got:\n%s", joined)
-	}
-}
-
-func TestSkipsNestedIfPyramidWhenWorkFollows(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			forbidden: `drop redundant branch checks`,
+			failure:   "unexpected redundant return guard finding for equality that may panic, got:\n%s",
+		},
+		{
+			name: "SkipsNestedIfPyramidWhenWorkFollows",
+			source: `package sample
 
 func f(ok bool, ready bool) {
 	if ok {
@@ -278,49 +243,13 @@ func f(ok bool, ready bool) {
 
 	println("done")
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `nested if pyramid`) {
-		t.Fatalf("unexpected nested if pyramid finding with trailing work, got:\n%s", joined)
-	}
-}
-
-func TestDetectsIdenticalSwitchCaseBodies(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func f(ok bool) int {
-	switch ok {
-	case true:
-		return 1
-	case false:
-		return 1
-	}
-	return 0
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`switch case "false" has identical body as previous case "true"; merge case lists`,
-	) {
-		t.Fatalf("expected identical switch branch finding, got:\n%s", joined)
-	}
-}
-
-func TestSkipsNonAdjacentPredicateSwitchBodies(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			forbidden: `nested if pyramid`,
+			failure:   "unexpected nested if pyramid finding with trailing work, got:\n%s",
+		},
+		{
+			name: "SkipsNonAdjacentPredicateSwitchBodies",
+			source: `package sample
 
 func f(x int) int {
 	switch {
@@ -333,57 +262,13 @@ func f(x int) int {
 	}
 	return 1
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `has identical body as previous case`) {
-		t.Fatalf(
-			"unexpected identical switch branch finding for non-adjacent predicate cases, got:\n%s",
-			joined,
-		)
-	}
-}
-
-func TestDetectsExhaustiveBoolDefault(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func f(ok bool) {
-	switch ok {
-	case true:
-		println("yes")
-	case false:
-		println("no")
-	default:
-		println("dead")
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`default case is redundant; bool switch already covers true and false`,
-	) {
-		t.Fatalf("expected redundant default finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "redundant_default") {
-		t.Fatalf("expected redundant_default kind, got %#v", issues)
-	}
-}
-
-func TestSkipsExhaustiveBoolDefaultWithPanic(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			forbidden: `has identical body as previous case`,
+			failure:   "unexpected identical switch branch finding for non-adjacent predicate cases, got:\n%s",
+		},
+		{
+			name: "SkipsExhaustiveBoolDefaultWithPanic",
+			source: `package sample
 
 func f(ok bool) {
 	switch ok {
@@ -395,24 +280,13 @@ func f(ok bool) {
 		panic("impossible")
 	}
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(
-		joined,
-		`default case is redundant; bool switch already covers true and false`,
-	) {
-		t.Fatalf("unexpected redundant default finding for panic default, got:\n%s", joined)
-	}
-}
-
-func TestSkipsExhaustiveConstSetDefault(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+`,
+			forbidden: `default case is redundant; bool switch already covers true and false`,
+			failure:   "unexpected redundant default finding for panic default, got:\n%s",
+		},
+		{
+			name: "SkipsExhaustiveConstSetDefault",
+			source: `package sample
 
 type mode int
 
@@ -431,12 +305,20 @@ func f(value mode) int {
 		return 0
 	}
 }
-`)
+`,
+			forbidden: `default case is redundant`,
+			failure:   "unexpected redundant const-set default finding, got:\n%s",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
 
-	if strings.Contains(joined, `default case is redundant`) {
-		t.Fatalf("unexpected redundant const-set default finding, got:\n%s", joined)
+			if joined := joinMessages(lintInDir(t, tmp)); strings.Contains(joined, test.forbidden) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
 	}
 }

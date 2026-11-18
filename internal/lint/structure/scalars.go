@@ -29,7 +29,6 @@ func constInt(info *types.Info, expr ast.Expr) (int64, bool) {
 	return constant.Int64Val(value)
 }
 
-// isNilValue also matches typed nil expressions, unlike isNilExpr.
 func isNilValue(info *types.Info, expr ast.Expr) bool {
 	return isNilExpr(expr) || info.Types[ast.Unparen(expr)].IsNil()
 }

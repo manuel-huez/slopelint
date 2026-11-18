@@ -50,7 +50,7 @@ func (w *walker) handler(node *ts.Node, kind string) {
 		Pos:       w.pos(anchor),
 		StartLine: w.pos(anchor).Line,
 		EndLine:   w.endLine(node),
-		Unit:      w.unit(node),
+		Unit:      w.outermostDecl(node),
 	})
 }
 
@@ -92,9 +92,7 @@ var unitWrappers = map[string]bool{
 	pyDecoratedNode:    true,
 }
 
-// unit returns the lines of the outermost function around node, or of its
-// top-level statement.
-func (s syntax) unit(node *ts.Node) Decl {
+func (s syntax) outermostDecl(node *ts.Node) Decl {
 	var outer, top *ts.Node
 
 	for current := node; current != nil && current.Parent() != nil; current = current.Parent() {

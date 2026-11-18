@@ -250,8 +250,6 @@ func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {
 	return out
 }
 
-// outlineFuncLits returns the function literals inside a declaration's body;
-// package-level literals are not checked.
 func (l sizeLimitCheck) outlineFuncLits(fn *ast.FuncDecl) []outline.Func {
 	if fn.Body == nil {
 		return nil

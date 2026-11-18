@@ -170,7 +170,6 @@ func (c *checker) commentsIn(start, end uint32) string {
 	return out.String()
 }
 
-// unparen drops the parentheses TypeScript puts around a condition.
 func (s syntax) unparen(cond *ts.Node) *ts.Node {
 	if cond.Type(s.grammar) == tsParenNode && cond.NamedChildCount() == 1 {
 		return cond.NamedChild(0)
@@ -179,7 +178,6 @@ func (s syntax) unparen(cond *ts.Node) *ts.Node {
 	return cond
 }
 
-// oneLine collapses source text to one line for messages.
 func (s syntax) oneLine(node *ts.Node) string {
 	return strings.Join(strings.Fields(s.text(node)), " ")
 }
@@ -376,8 +374,6 @@ func (c branchRules) list(stmts []*ts.Node, index int) {
 	}
 }
 
-// bareIf returns the condition and body of an if with no else arm and no
-// attached comment, which the Go rules' plainIfStmt matches.
 func (c branchRules) bareIf(stmt *ts.Node) (*ts.Node, []*ts.Node, bool) {
 	if stmt.Type(c.grammar) != ifNode || c.attachedComment(stmt) {
 		return nil, nil, false
@@ -555,8 +551,6 @@ func (c branchRules) safeOperand(node *ts.Node) bool {
 	}
 }
 
-// boolChoice reports an if that only returns or assigns boolean literals,
-// as the Go boolean_ceremony rule does.
 func (c branchRules) boolChoice(stmts []*ts.Node, index int) {
 	if stmts[index].Type(c.grammar) != ifNode {
 		return

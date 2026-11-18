@@ -268,10 +268,11 @@ func TestCodeReviewKeepsTestGroupsBothVotesFind(t *testing.T) {
 			want: ":28:1 " + testGroupTestAdvice + " Tests: TestCountTwo, TestCountThree; fix: table.",
 		},
 		{
-			name: "votes share one test",
+			name: "second vote saves too little",
 			second: func(verdict codeReviewVerdict) codeReviewVerdict {
 				verdict.Tests = []string{"TestCountOne", "TestCountTwo"}
 				verdict.SavedLines = testGroupMinSavedLines - 1
+
 				return verdict
 			},
 		},
@@ -299,7 +300,11 @@ func TestCodeReviewKeepsTestGroupsBothVotesFind(t *testing.T) {
 			}
 
 			if !slices.Equal(got, want) {
-				t.Fatalf("findings:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+				t.Fatalf(
+					"findings:\n%s\nwant:\n%s",
+					strings.Join(got, "\n"),
+					strings.Join(want, "\n"),
+				)
 			}
 		})
 	}

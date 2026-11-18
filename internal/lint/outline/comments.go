@@ -138,8 +138,6 @@ func (w *walker) finish(root *ts.Node) {
 	slices.SortFunc(w.file.Decls, Decl.Compare)
 }
 
-// leadingComments maps the line after each own-line comment group to the
-// group's first line.
 func leadingComments(groups []commentGroup) map[int]int {
 	docs := make(map[int]int)
 

@@ -6,39 +6,10 @@ import (
 	"testing"
 )
 
-const loopExternalCallKind = "loop_external_call"
-
-func TestDetectsMembershipScanInsideLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-import "slices"
-
-func f(items []string, allowed []string) {
-	for _, item := range items {
-		if slices.Contains(allowed, item) {
-			println(item)
-		}
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`slices.Contains scans invariant collection allowed inside loop; build a set before the loop`,
-	) {
-		t.Fatalf("expected membership scan finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "loop_membership_scan") {
-		t.Fatalf("expected loop_membership_scan kind, got %#v", issues)
-	}
-}
+const (
+	loopExternalCallKind  = "loop_external_call"
+	membershipScanFinding = "scans invariant collection"
+)
 
 func TestDetectsExplicitGenericMembershipScanInsideLoop(t *testing.T) {
 	t.Parallel()
@@ -68,11 +39,11 @@ func f(items []string, allowed []string) {
 	}
 }
 
-func TestSkipsMutatedMembershipScans(t *testing.T) {
+func TestSkipsLoopPerformanceSmellsWhenLoopChangesInputs(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name, source, failure string
+		name, source, forbidden, failure string
 	}{
 		{
 			name: "SkipsLoopSpecificMembershipScan",
@@ -92,7 +63,8 @@ func f(groups []group) {
 	}
 }
 `,
-			failure: "unexpected membership scan finding, got:\n%s",
+			forbidden: membershipScanFinding,
+			failure:   "unexpected membership scan finding, got:\n%s",
 		},
 		{
 			name: "SkipsMembershipScanAfterCollectionReassignedInsideLoop",
@@ -113,7 +85,8 @@ func f(items []string, allowed []string) {
 	}
 }
 `,
-			failure: "unexpected membership scan finding for reassigned collection, got:\n%s",
+			forbidden: membershipScanFinding,
+			failure:   "unexpected membership scan finding for reassigned collection, got:\n%s",
 		},
 		{
 			name: "SkipsMembershipScanAfterCollectionIndexMutationInsideLoop",
@@ -130,7 +103,8 @@ func f(items []string, allowed []string) {
 	}
 }
 `,
-			failure: "unexpected membership scan finding after indexed mutation, got:\n%s",
+			forbidden: membershipScanFinding,
+			failure:   "unexpected membership scan finding after indexed mutation, got:\n%s",
 		},
 		{
 			name: "SkipsMembershipScanAfterHelperMayMutateCollectionInsideLoop",
@@ -149,61 +123,12 @@ func f(items []string, allowed []string) {
 	}
 }
 `,
-			failure: "unexpected membership scan finding after helper mutation, got:\n%s",
+			forbidden: membershipScanFinding,
+			failure:   "unexpected membership scan finding after helper mutation, got:\n%s",
 		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			tmp := newTestModule(t)
-			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
-
-			issues := lintInDir(t, tmp)
-			joined := joinMessages(issues)
-
-			if strings.Contains(joined, `scans invariant collection`) {
-				t.Fatalf(test.failure, joined)
-			}
-		})
-	}
-}
-
-func TestDetectsSortInsideLoop(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-import "slices"
-
-func f(items []string, keys []int) {
-	for _, item := range items {
-		slices.Sort(keys)
-		println(item, keys[0])
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`slices.Sort orders keys inside loop; sort once outside or maintain order incrementally`,
-	) {
-		t.Fatalf("expected sort-in-loop finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "loop_sort") {
-		t.Fatalf("expected loop_sort kind, got %#v", issues)
-	}
-}
-
-func TestSkipsSortInsideLoopWhenComparatorVarUsesLoopValue(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+		{
+			name: "SkipsSortInsideLoopWhenComparatorVarUsesLoopValue",
+			source: `package sample
 
 import "sort"
 
@@ -224,13 +149,74 @@ func f(groups []group, users []user) {
 		sort.Slice(users, less)
 	}
 }
-`)
+`,
+			forbidden: `sort.Slice orders users inside loop`,
+			failure:   "unexpected sort finding for comparator var using loop value, got:\n%s",
+		},
+		{
+			name: "SkipsNestedLookupLoopWithSideEffectStmt",
+			source: `package sample
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
+type order struct {
+	customerID int
+}
 
-	if strings.Contains(joined, `sort.Slice orders users inside loop`) {
-		t.Fatalf("unexpected sort finding for comparator var using loop value, got:\n%s", joined)
+type customer struct {
+	id int
+	name string
+}
+
+func f(orders []order, customers []customer) {
+	hits := 0
+	for _, order := range orders {
+		for _, customer := range customers {
+			hits++
+			if customer.id == order.customerID {
+				println(customer.name)
+				break
+			}
+		}
+	}
+	println(hits)
+}
+`,
+			forbidden: `nested range scans customers`,
+			failure:   "unexpected nested lookup finding with side effect stmt, got:\n%s",
+		},
+		{
+			name: "SkipsPairwiseComparisonLoopForShadowedRangeSource",
+			source: `package sample
+
+type span struct {
+	start int
+	end int
+}
+
+func f(spans []span) {
+	for _, left := range spans {
+		spans := []span{{start: left.start, end: left.end}}
+		for _, right := range spans {
+			if left.start < right.end && right.start < left.end {
+				println("overlap")
+			}
+		}
+	}
+}
+`,
+			forbidden: `nested range compares pairs from spans`,
+			failure:   "unexpected pairwise comparison finding for shadowed source, got:\n%s",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), test.source)
+
+			if joined := joinMessages(lintInDir(t, tmp)); strings.Contains(joined, test.forbidden) {
+				t.Fatalf(test.failure, joined)
+			}
+		})
 	}
 }
 
@@ -269,6 +255,43 @@ func TestDetectsLoopInvariantAndNestedWork(t *testing.T) {
 	t.Parallel()
 
 	runDetectsLoopPerformanceSmells(t, []detectsLoopPerformanceSmellsCase{
+		{
+			name: "DetectsMembershipScanInsideLoop",
+			source: `package sample
+
+import "slices"
+
+func f(items []string, allowed []string) {
+	for _, item := range items {
+		if slices.Contains(allowed, item) {
+			println(item)
+		}
+	}
+}
+`,
+			want:     `slices.Contains scans invariant collection allowed inside loop; build a set before the loop`,
+			failure:  "expected membership scan finding, got:\n%s",
+			kind:     "loop_membership_scan",
+			failure2: "expected loop_membership_scan kind, got %#v",
+		},
+		{
+			name: "DetectsSortInsideLoop",
+			source: `package sample
+
+import "slices"
+
+func f(items []string, keys []int) {
+	for _, item := range items {
+		slices.Sort(keys)
+		println(item, keys[0])
+	}
+}
+`,
+			want:     `slices.Sort orders keys inside loop; sort once outside or maintain order incrementally`,
+			failure:  "expected sort-in-loop finding, got:\n%s",
+			kind:     "loop_sort",
+			failure2: "expected loop_sort kind, got %#v",
+		},
 		{
 			name: "DetectsLoopInvariantRegexp",
 			source: `package sample
@@ -385,75 +408,6 @@ func f(ids []string, baseURL string) {
 			failure2: "expected loop_external_call kind, got %#v",
 		},
 	})
-}
-
-func TestSkipsNestedLookupLoopWithSideEffectStmt(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type order struct {
-	customerID int
-}
-
-type customer struct {
-	id int
-	name string
-}
-
-func f(orders []order, customers []customer) {
-	hits := 0
-	for _, order := range orders {
-		for _, customer := range customers {
-			hits++
-			if customer.id == order.customerID {
-				println(customer.name)
-				break
-			}
-		}
-	}
-	println(hits)
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `nested range scans customers`) {
-		t.Fatalf("unexpected nested lookup finding with side effect stmt, got:\n%s", joined)
-	}
-}
-
-func TestSkipsPairwiseComparisonLoopForShadowedRangeSource(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-type span struct {
-	start int
-	end int
-}
-
-func f(spans []span) {
-	for _, left := range spans {
-		spans := []span{{start: left.start, end: left.end}}
-		for _, right := range spans {
-			if left.start < right.end && right.start < left.end {
-				println("overlap")
-			}
-		}
-	}
-}
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if strings.Contains(joined, `nested range compares pairs from spans`) {
-		t.Fatalf("unexpected pairwise comparison finding for shadowed source, got:\n%s", joined)
-	}
 }
 
 func TestNetworkLoopCallReceivers(t *testing.T) {

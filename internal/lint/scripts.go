@@ -225,17 +225,27 @@ func lintScriptFile(name, root string, opts Options) ([]Issue, error) {
 	return issues, nil
 }
 
+// parseReadableScript returns an empty outline for a file the parser cannot
+// read; lintScriptFile reports it, and the other passes skip it.
+func parseReadableScript(name string, content []byte) (outline.File, error) {
+	file, err := outline.Parse(name, content)
+	if _, ok := errors.AsType[*outline.SyntaxError](err); ok {
+		return outline.File{}, nil
+	} else if err != nil {
+		return outline.File{}, fmt.Errorf("parse %s: %w", name, err)
+	}
+
+	return file, nil
+}
+
 func collectScriptCodeReviewDeclarations(
 	filename string,
 	content []byte,
 	policy codeReviewPolicy,
 ) ([]codeReviewDeclaration, error) {
-	file, err := outline.Parse(filename, content)
-	if _, ok := errors.AsType[*outline.SyntaxError](err); ok {
-		// lintScriptFile reports the file.
-		return nil, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", filename, err)
+	file, err := parseReadableScript(filename, content)
+	if err != nil {
+		return nil, err
 	}
 
 	if file.Generated {

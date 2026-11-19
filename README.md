@@ -65,9 +65,11 @@ A stale stamp fails CI: run slopelint locally and commit the new stamp.
 
 ## Embedding server
 
-Run `llama-server` with the pinned
-[jina-embeddings-v2-base-code GGUF](https://registry.ollama.ai/v2/unclemusclez/jina-embeddings-v2-base-code/blobs/sha256:33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986).
-Cached vectors depend on this exact model and pooling.
+Run `llama-server` with
+[jina-embeddings-v2-base-code](https://registry.ollama.ai/v2/unclemusclez/jina-embeddings-v2-base-code/blobs/sha256:33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986)
+and the flags below. This model is required: the similarity thresholds are
+tuned to its scores, and the stamp records it, so every machine must use it.
+slopelint rejects a server that reports another model name.
 
 ```bash
 llama-server --model /path/to/jina-embeddings-v2-base-code.gguf \

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -322,8 +323,6 @@ func similarityCodexForTest(
 	})
 }
 
-// codexCLIForTest returns a fake Codex CLI that answers each prompt with the
-// JSON encoding of respond's result.
 func codexCLIForTest(t *testing.T, respond func(string) (any, error)) *codexCLI {
 	t.Helper()
 
@@ -354,7 +353,11 @@ func codexCLIForTest(t *testing.T, respond func(string) (any, error)) *codexCLI 
 
 	path := filepath.Join(t.TempDir(), "codex")
 
-	command := "#!/bin/sh\nexec '" + strings.ReplaceAll(executable, "'", "'\\''") +
+	command := "#!/bin/sh\n[ \"$1 $2\" = \"login status\" ] && exit 0\nexec '" + strings.ReplaceAll(
+		executable,
+		"'",
+		"'\\''",
+	) +
 		"' -test.run='^TestSimilarityCodexProcess$' -- \"$@\"\n"
 	if err := os.WriteFile(path, []byte(command), 0o700); err != nil {
 		t.Fatal(err)
@@ -579,4 +582,76 @@ func TestSimilarityCodexStopsWhenCanceled(t *testing.T) {
 	if len(started) != 0 {
 		t.Fatal("queued Codex batch started after cancel")
 	}
+}
+
+// A local run without a usable Codex CLI stops before any work, so it writes
+// no stamp that CI would reject.
+func TestCodeReviewStopsWithoutUsableCodex(t *testing.T) {
+	for _, test := range []struct {
+		name, script, want string
+	}{
+		{name: "CLI missing", want: "codex CLI not found"},
+		{name: "CLI logged out", script: "#!/bin/sh\nexit 1\n", want: "codex CLI is not logged in"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(codexEnv, "auto")
+
+			if bin := hideCodexForTest(t); test.script != "" {
+				writeFile(t, filepath.Join(bin, "codex"), test.script)
+
+				if err := os.Chmod(filepath.Join(bin, "codex"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			tmp, _ := newReviewTestModule(t)
+			initTestGitRepository(t, tmp)
+
+			_, err := LintRepository(
+				t.Context(), []string{allPackagesPattern}, tmp,
+				Options{CacheEnabled: true, cacheDir: t.TempDir()},
+				&SimilarityOptions{CacheEnabled: true},
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("err = %v, want %q", err, test.want)
+			}
+
+			if _, err := os.Stat(filepath.Join(tmp, similarityStampName)); !os.IsNotExist(err) {
+				t.Fatalf("stamp after failed preflight: %v", err)
+			}
+		})
+	}
+}
+
+func hideCodexForTest(t *testing.T) string {
+	t.Helper()
+
+	bin := t.TempDir()
+
+	for _, name := range []string{"go", "git"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dirs := []string{bin}
+
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if _, err := os.Stat(filepath.Join(dir, "codex")); err != nil {
+			dirs = append(dirs, dir)
+		}
+	}
+
+	t.Setenv("PATH", strings.Join(dirs, string(os.PathListSeparator)))
+
+	if _, err := exec.LookPath("codex"); err == nil {
+		t.Fatal("codex is still on PATH")
+	}
+
+	return bin
 }

@@ -67,3 +67,14 @@ faster local workflows with deliberate API use.
 - Check lines added; keep necessary changes only and simplify where possible.
 - Final response must include `Removed/merged:` and the changes, or
   `Nothing removed because:` and the reason.
+
+## Release
+
+- Releases are Go module tags. Tag only a commit that passed the full health
+  gate; push the tag and check the remote tag resolves to that commit.
+- Untagged commits never become `@latest`. Install with
+  `go install github.com/manuel-huez/slopelint/cmd/slopelint@<tag>`; if a proxy
+  returns an older tag, retry with `GOPROXY=direct`.
+- Update every active install (`~/.local/bin/slopelint`,
+  `$(go env GOPATH)/bin/slopelint`; set `GOBIN` per destination). Check each with
+  `go version -m`, compare SHA-256 hashes, and run it on this repository.

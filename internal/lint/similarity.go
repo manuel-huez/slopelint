@@ -162,7 +162,7 @@ func checkSemanticCode(
 		return nil, verifySimilarityStamp(check.stamp, check.sourceDigest)
 	}
 
-	runtime, err := codexRuntimeForOptions(opts)
+	runtime, err := codexRuntimeForOptions(ctx, opts)
 	if err != nil {
 		return nil, err
 	}

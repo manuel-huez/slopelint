@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -825,22 +824,16 @@ func TestCodeReviewCodexRetriesThenFailsOnInvalidBatch(t *testing.T) {
 
 func TestCodeReviewStampAndCI(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		codex     string
-		model     *reviewTestModel
-		hideCodex bool
-		reviewed  bool
+		name     string
+		codex    string
+		model    *reviewTestModel
+		reviewed bool
 	}{
 		{name: "review on", model: &reviewTestModel{verdict: keepAllForTest}, reviewed: true},
 		{name: "review off", codex: offText},
-		{name: "CLI missing", hideCodex: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv(codexEnv, test.codex)
-
-			if test.hideCodex {
-				hideCodexForTest(t)
-			}
 
 			tmp, _ := newReviewTestModule(t)
 			initTestGitRepository(t, tmp)
@@ -905,37 +898,6 @@ func keepAllForTest(item codeReviewItem, _ string) codeReviewVerdict {
 	}
 
 	return codeReviewVerdict{Verdict: codeReviewKeep}
-}
-
-func hideCodexForTest(t *testing.T) {
-	t.Helper()
-
-	bin := t.TempDir()
-
-	for _, name := range []string{"go", "git"} {
-		path, err := exec.LookPath(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	dirs := []string{bin}
-
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if _, err := os.Stat(filepath.Join(dir, "codex")); err != nil {
-			dirs = append(dirs, dir)
-		}
-	}
-
-	t.Setenv("PATH", strings.Join(dirs, string(os.PathListSeparator)))
-
-	if _, err := exec.LookPath("codex"); err == nil {
-		t.Fatal("codex is still on PATH")
-	}
 }
 
 func TestCodeReviewJoinsSuppressionWithReasonAbove(t *testing.T) {

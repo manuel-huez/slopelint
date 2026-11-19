@@ -126,7 +126,7 @@ type similarityDescriptionListRule struct {
 	maximum int
 }
 
-func codexRuntimeForOptions(opts SimilarityOptions) (codexRuntime, error) {
+func codexRuntimeForOptions(ctx context.Context, opts SimilarityOptions) (codexRuntime, error) {
 	enabled, err := codexEnabledFromEnv()
 	if err != nil || !enabled {
 		return codexRuntime{}, err
@@ -136,16 +136,22 @@ func codexRuntimeForOptions(opts SimilarityOptions) (codexRuntime, error) {
 		return codexRuntime{describer: opts.describer, reviewer: opts.reviewer, enabled: true}, nil
 	}
 
+	// Check before any work: without a usable Codex CLI the run could only
+	// write a stamp that CI rejects.
 	path, _ := exec.LookPath("codex")
 	if path == "" {
-		_, _ = fmt.Fprintf(
-			os.Stderr,
-			"slopelint: codex CLI not found; descriptions and code review skipped; "+
-				"CI rejects this stamp unless %s=off\n",
+		return codexRuntime{}, fmt.Errorf(
+			"codex CLI not found: install it and run `codex login` (needs a ChatGPT plan), or set %s=off",
 			codexEnv,
 		)
+	}
 
-		return codexRuntime{}, nil
+	if err := exec.CommandContext(ctx, path, "login", "status").Run(); err != nil {
+		return codexRuntime{}, fmt.Errorf(
+			"codex CLI is not logged in (`codex login status`: %w): run `codex login` (needs a ChatGPT plan), or set %s=off",
+			err,
+			codexEnv,
+		)
 	}
 
 	cli := &codexCLI{path: path}

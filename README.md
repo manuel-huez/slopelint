@@ -1,36 +1,83 @@
 # slopelint
 
-Go analyzer for redundant checks, repeated behavior, dead code, and overbuilt APIs,
-with size, structure, test, review, and similarity checks for TypeScript and Python.
-Built on `go/analysis`, with optional Codex descriptions for semantic similarity
-and Codex review of comments and dropped errors.
+Opinionated analyzer for Go, TypeScript, and Python. It reports redundant
+checks, repeated behavior, dead code, overbuilt APIs, oversized code, and weak
+tests. Optional model checks find semantically duplicate code and review
+comments, suppressions, swallowed errors, and tests. Built on `go/analysis`.
 Early-stage: expect breaking changes and conservative misses.
+
+## Requirements
+
+- Go 1.26.5+.
+- For local runs with model checks (the default):
+  - [Codex CLI](https://github.com/openai/codex), logged in with `codex login`.
+    This needs a ChatGPT plan. Code review and behavior descriptions run
+    through it, and **uncached source is sent to the Codex service.**
+  - An [embedding server](#embedding-server) at `SLOPELINT_LLAMA_URL`
+    (default `http://127.0.0.1:18080`).
+
+A local run stops at once when Codex is missing or logged out, and when it
+needs the embedding server and cannot reach it.
+`SLOPELINT_CODEX_DESCRIPTIONS=off` turns off Codex; `SLOPELINT_SIMILARITY=off`
+turns off similarity and code review, so neither dependency is needed. CI needs neither (see [CI](#ci)).
 
 ## Install and run
 
-Requires Go 1.26.5+.
-
 ```bash
-go install github.com/manuel-huez/slopelint/cmd/slopelint@v0.4.2
+go install github.com/manuel-huez/slopelint/cmd/slopelint@latest
 slopelint ./...
 ```
 
-Default local runs need the [embedding server](#embedding-server) for uncached
-semantic checks. For structural checks alone:
+A clean local run writes `.slopelint-similarity.json`, a stamp that proves the
+model checks passed for this source. Commit it.
+
+Standalone scans compare loaded packages. Vettool mode analyzes one package at a
+time and does not run semantic similarity, code review, or repo-wide dead-code
+reachability:
 
 ```bash
-SLOPELINT_SIMILARITY=off slopelint ./...
+go vet -vettool="$(command -v slopelint)" ./...
 ```
 
-Build from source or use as a vettool:
+| Standalone flag | Purpose | Default |
+| --- | --- | --- |
+| `-max-states=N` | Maximum symbolic states before widening | `32` |
+| `-json` | Write JSON diagnostics to stdout | `false` |
+| `-closed-world` | Use matched `main` packages as complete production entrypoints for exported dead-code checks | `false` |
+| `-cache` | Reuse cached results | `true` |
+| `-version` | Print the slopelint version and exit | `false` |
 
-```bash
-go build -o ./bin/slopelint ./cmd/slopelint
-./bin/slopelint ./...
-go vet -vettool="$(pwd)/bin/slopelint" ./...
+Standalone exit codes: `0` clean, `1` failure, `2` usage error, `3` findings.
+JSON format:
+
+```json
+{"issues":[{"position":"file.go:10:2","kind":"behavior_clone","message":"..."}]}
 ```
 
-### Languages
+Analyzer driver flags include `-test=false` (skip tests), `-c=N` (source context),
+and `-flags` (list flags as JSON). These select analyzer mode.
+
+## CI
+
+CI runs no model checks: it verifies that the committed stamp matches the
+source, then runs the structural checks. It needs no Codex and no embedding
+server. `CI=true` selects this mode; `SLOPELINT_SIMILARITY=ci` forces it.
+
+Use the slopelint version that wrote the stamp; a version with other review
+rules rejects it. Pin that version in CI:
+
+```yaml
+- uses: actions/setup-go@v6
+  with:
+    go-version-file: go.mod
+- run: go install github.com/manuel-huez/slopelint/cmd/slopelint@v0.4.3
+- run: slopelint ./...
+```
+
+A missing or stale stamp fails CI. Fix it by running slopelint locally and
+committing the new stamp.
+
+## Languages
 
 Standalone scans also lint tracked TypeScript (`.ts`, `.tsx`) and Python files
 of the module's Git repository, parsed with pure-Go tree-sitter. A directory
@@ -91,28 +138,6 @@ bound to a name, also through a curried wrapper such as
 `Effect.fn("f")(function* () {})`; other function values and lambdas are
 literals. Classes own methods for `god_receiver`.
 
-Standalone scans compare loaded packages. Vettool mode analyzes one package at a
-time and does not run semantic similarity, code review, or repo-wide dead-code
-reachability.
-
-| Standalone flag | Purpose | Default |
-| --- | --- | --- |
-| `-max-states=N` | Maximum symbolic states before widening | `32` |
-| `-json` | Write JSON diagnostics to stdout | `false` |
-| `-closed-world` | Use matched `main` packages as complete production entrypoints for exported dead-code checks | `false` |
-| `-cache` | Reuse cached results | `true` |
-| `-version` | Print the slopelint version and exit | `false` |
-
-Standalone exit codes: `0` clean, `1` failure, `2` usage error, `3` findings.
-JSON format:
-
-```json
-{"issues":[{"position":"file.go:10:2","kind":"behavior_clone","message":"..."}]}
-```
-
-Analyzer driver flags include `-test=false` (skip tests), `-c=N` (source context),
-and `-flags` (list flags as JSON). These select analyzer mode.
-
 ## Semantic similarity
 
 Local scans compare named functions with at least 50 Go tokens, and
@@ -124,10 +149,7 @@ and immediate sibling or parent-child packages. Large functions use overlapping
 chunks without truncation; connected matches produce one grouped finding.
 
 Source embeddings and behavior-description embeddings can each report matches.
-When authenticated Codex CLI can access `gpt-6-luna`, it describes eligible
-functions and adds detail to findings. **Uncached source is sent to the configured
-Codex service.** Set `SLOPELINT_CODEX_DESCRIPTIONS=off` to disable this channel.
-For local-only source processing, also use a local embedding server.
+Codex (`gpt-6-luna`) describes eligible functions and adds detail to findings.
 Codex work stops when the run fails or gets SIGINT/SIGTERM (exit 130); only
 records accepted before the stop stay cached. Each embedding request times out
 after 3 minutes with an error naming the URL.
@@ -141,64 +163,22 @@ SLOPELINT_SIMILARITY_ACCEPT=sim-1234,sim-5678 slopelint ./...
 
 `SLOPELINT_SIMILARITY_ACCEPT=all` accepts the entire current baseline; use only
 after review. Accepted pairs carry forward until their source changes.
-Once semantic findings are fixed or accepted and review findings are fixed,
-commit the generated `.slopelint-similarity.json` stamp.
+The stamp is written once semantic findings are fixed or accepted and review
+findings are fixed. CI checks its policy and Git digest; unless
+`SLOPELINT_CODEX_DESCRIPTIONS=off`, it must also attest a current
+[code review](#code-review). The stamp is excluded from its own digest. Each Go
+module needs its own stamp. Policy changes rescore cached vectors; unchanged
+embeddings stay reusable.
 
-CI validates the stamp's policy and Git digest before structural lint, without
-model inference. Unless `SLOPELINT_CODEX_DESCRIPTIONS=off`, CI also requires the
-stamp to attest a current [code review](#code-review). Policy changes rescore cached vectors; unchanged embeddings
-remain reusable. Missing or stale stamps fail. Refresh locally and commit the
-stamp; the stamp itself is excluded from its digest. Each Go module needs its own
-stamp.
-
-### Code review
+## Code review
 
 Local standalone scans send each top-level declaration of handwritten Go,
 TypeScript, and Python files (production and test) that has a judged item to
 `gpt-6.1-terra` (low reasoning) through the Codex CLI. Adjacent TypeScript and
-Python statements form one declaration. **Uncached declarations, with numbered source lines, are
-sent to the configured Codex service.** Items:
-
-- Comment groups in or attached to the declaration. Suppressions
-  (`//nolint`, `//exhaustive:ignore`, `//slopelint:ignore`, `//lint:ignore`) are
-  always judged, bare or with a reason; they pass only when the code shows a real
-  constraint. A comment that ends on the line above a suppression is judged with
-  it as its reason. Other directives (`//go:build`, `//go:generate`, `//go:embed`,
-  `//slopelint:ensures`), cgo preambles, and file-level comments are skipped.
-- TypeScript and Python comments, including JSDoc and docstrings, and the
-  suppressions `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`,
-  `eslint-disable*`, `oxlint-disable*`, `biome-ignore`, `# noqa`,
-  `# type: ignore`, `# pylint: disable`, `# pyright: ignore`, and
-  `# pragma: no cover`. A suppression outside every declaration is judged
-  alone. Module docstrings, triple-slash and source-map directives, and type
-  comments are skipped. Public API means `export` in TypeScript and names
-  without a leading underscore in Python.
-- Production `if err != nil` checks that drop an error which is not read again
-  before being overwritten. Errors carried across loop iterations, captured by a
-  closure, or address-taken are not judged.
-- Runnable test functions, `func TestXxx(t *testing.T)` in `_test.go` files, whole.
-  `TestMain`, benchmarks, fuzz tests, and examples are not judged.
-- TypeScript `catch` clauses and promise `.catch(fn)` callbacks, and Python
-  `except` clauses and `contextlib.suppress` blocks, in production files,
-  unless they raise again on every path. Each is judged in its outermost
-  function, apart from comments.
-- TypeScript `test`/`it` calls with a callback (not `.skip`/`.todo`) and Python
-  `test*` functions and `Test*`/`TestCase` methods in `test*.py`/`*_test.py`,
-  each with its suite or class header lines and setup hooks.
-- The `//slopelint:serial <reason>` marker of such a test, judged alone: the
-  reason must name shared state the test races on.
-- Test groups: in a file with at least 3 such tests, tests that share 40%
-  of the callees of either (at least 2, or all of a smaller set) form
-  groups, cut in file order at 8 tests and 400 lines. A group that could not
-  save 15 lines even by dropping all its tests but one is skipped. Each group
-  is sent with the one-line signatures of file-local helpers its tests call,
-  and judged `test_repeated_steps` when two or more of its tests repeat one
-  block of setup, call, or assertion steps that a table or shared fixture
-  would replace, saving at least 15 lines. Each group is asked twice, in
-  separate calls; it is reported only when both answers find it, for the
-  tests both name. The finding is at the first of those tests and names the
-  others. It is dropped when a `semantic_duplicate`
-  or `repeated_test_fixture` finding lies in one of them.
+Python statements form one declaration. **Uncached declarations, with numbered
+source lines, are sent to the Codex service.** It judges comments and
+suppressions, dropped or caught errors, tests, serial-test reasons, and groups
+of similar tests; see [review items](#review-items) for the exact scope.
 
 The model returns one verdict and one sentence of advice per item. The finding
 message is that advice: `comment_noise` (restates code), `comment_excuse`
@@ -217,15 +197,15 @@ result contract. The prompt prefers accepting an item when unsure.
 
 There is no accept list, ignore directive, or override for review findings. The
 stamp records the review policy and is written only when review finds nothing.
-Without the Codex channel there are no `swallowed_error` findings. If `codex` is
-missing, the run warns and writes a stamp without review, which CI rejects unless
-`SLOPELINT_CODEX_DESCRIPTIONS=off`.
+Without the Codex channel there are no `swallowed_error` findings.
 
 Verdicts are cached per declaration, keyed by prompt version, model, effort,
-source, and items; each language and rule family has its own prompt version; unchanged declarations cause no model calls. A test group's source holds only its tests and helper signatures, so edits elsewhere in the file keep its record. Records accepted
-before a failure or SIGINT stay cached.
+source, and items; each language and the test groups have their own prompt
+version. Unchanged declarations cause no model calls. A test group's source
+holds only its tests and helper signatures, so edits elsewhere in the file keep
+its record. Records accepted before a failure or SIGINT stay cached.
 
-### Embedding server
+## Embedding server
 
 The Go binary needs no CGO. Run a shared HTTP server separately; slopelint does
 not download models or start inference processes. Use the fixed
@@ -245,7 +225,7 @@ llama-server --model /path/to/jina-embeddings-v2-base-code.gguf \
 slopelint ./...  # default SLOPELINT_LLAMA_URL
 ```
 
-### Environment and cache
+## Environment and cache
 
 | Variable | Values / default |
 | --- | --- |
@@ -318,6 +298,51 @@ marker, such as `capture_test_support_linux.go`. Package-local helpers belong in
 `_test.go`. Filenames alone never establish test-only status; structural checks
 still apply.
 
+### Review items
+
+[Code review](#code-review) judges these items:
+
+- Comment groups in or attached to the declaration. Suppressions
+  (`//nolint`, `//exhaustive:ignore`, `//slopelint:ignore`, `//lint:ignore`) are
+  always judged, bare or with a reason; they pass only when the code shows a real
+  constraint. A comment that ends on the line above a suppression is judged with
+  it as its reason. Other directives (`//go:build`, `//go:generate`, `//go:embed`,
+  `//slopelint:ensures`), cgo preambles, and file-level comments are skipped.
+- TypeScript and Python comments, including JSDoc and docstrings, and the
+  suppressions `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`,
+  `eslint-disable*`, `oxlint-disable*`, `biome-ignore`, `# noqa`,
+  `# type: ignore`, `# pylint: disable`, `# pyright: ignore`, and
+  `# pragma: no cover`. A suppression outside every declaration is judged
+  alone. Module docstrings, triple-slash and source-map directives, and type
+  comments are skipped. Public API means `export` in TypeScript and names
+  without a leading underscore in Python.
+- Production `if err != nil` checks that drop an error which is not read again
+  before being overwritten. Errors carried across loop iterations, captured by a
+  closure, or address-taken are not judged.
+- Runnable test functions, `func TestXxx(t *testing.T)` in `_test.go` files, whole.
+  `TestMain`, benchmarks, fuzz tests, and examples are not judged.
+- TypeScript `catch` clauses and promise `.catch(fn)` callbacks, and Python
+  `except` clauses and `contextlib.suppress` blocks, in production files,
+  unless they raise again on every path. Each is judged in its outermost
+  function, apart from comments.
+- TypeScript `test`/`it` calls with a callback (not `.skip`/`.todo`) and Python
+  `test*` functions and `Test*`/`TestCase` methods in `test*.py`/`*_test.py`,
+  each with its suite or class header lines and setup hooks.
+- The `//slopelint:serial <reason>` marker of such a test, judged alone: the
+  reason must name shared state the test races on.
+- Test groups: in a file with at least 3 such tests, tests that share 40%
+  of the callees of either (at least 2, or all of a smaller set) form
+  groups, cut in file order at 8 tests and 400 lines. A group that could not
+  save 15 lines even by dropping all its tests but one is skipped. Each group
+  is sent with the one-line signatures of file-local helpers its tests call,
+  and judged `test_repeated_steps` when two or more of its tests repeat one
+  block of setup, call, or assertion steps that a table or shared fixture
+  would replace, saving at least 15 lines. Each group is asked twice, in
+  separate calls; it is reported only when both answers find it, for the
+  tests both name. The finding is at the first of those tests and names the
+  others. It is dropped when a `semantic_duplicate`
+  or `repeated_test_fixture` finding lies in one of them.
+
 ## Contracts
 
 Declare helper guarantees when its body is unavailable or the guarantee should
@@ -371,16 +396,3 @@ Test behavior-preserving rewrites against evaluation order, aliases, captured
 writes, and named types. For read-only scans of another repo, set
 `SLOPELINT_SIMILARITY=off` to avoid writing its stamp and compare Git status before
 and after.
-
-## Release and install
-
-Releases use Go module tags. After the full health gate passes for the intended
-commit, create and push the requested tag, then verify the remote tag resolves
-to that commit. Install the exact tag with
-`go install github.com/manuel-huez/slopelint/cmd/slopelint@<tag>`; an untagged
-commit does not become `@latest`.
-
-Update every active installation, including `~/.local/bin/slopelint` or
-`$(go env GOPATH)/bin/slopelint` when present; set `GOBIN` for each destination. Verify each binary with `go version -m`, compare their SHA-256
-hashes, and run the installed analyzer on this repository. If a proxy returns
-an older tag, retry exact-tag resolution with `GOPROXY=direct`.

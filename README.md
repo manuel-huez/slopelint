@@ -22,7 +22,7 @@ go install github.com/manuel-huez/slopelint/cmd/slopelint@latest
 slopelint ./...
 ```
 
-A clean run writes `.slopelint-similarity.json`. Commit it: CI checks it.
+A clean run writes `.slopelint.json`. Commit it: CI checks it.
 
 | Flag | Purpose |
 | --- | --- |

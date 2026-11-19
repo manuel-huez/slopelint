@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	similarityStampName         = ".slopelint-similarity.json"
+	similarityStampName         = ".slopelint.json"
 	similarityCacheSchema       = 1
 	similarityVectorMagic       = "SLOPEV01"
 	similarityVectorValueBytes  = 4

@@ -1,7 +1,7 @@
 {
   "schema": 14,
-  "source_digest": "3a4cabd5f03a20a41dc7a880ea8b20c93242ff4b281d89fc77c32989d2a9f67e",
-  "repository_digest": "f13f3bf737f2ae9cd68668272fb6bb3898768e677f155fe5d76b8f365ade4bc3",
+  "source_digest": "6d2cfd1c905e977e84f99a0672604d0539dfc828f97ed84f9a767663ee5d788d",
+  "repository_digest": "6a7689289dad48a2b61059e33f5a15df46f038f43b64898a62f429ca6982225e",
   "model": "jina-embeddings-v2-base-code",
   "threshold": 0.97,
   "description_schema": 4,

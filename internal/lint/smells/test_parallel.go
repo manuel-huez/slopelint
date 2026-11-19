@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -78,6 +79,8 @@ func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*a
 
 	switch {
 	case l.callsParallel(fn.Body, param, funcs):
+		l.checkSubtests(fn, param, funcs)
+
 		if marker != nil {
 			l.report(marker.Pos(), "test_not_parallel", fmt.Sprintf(
 				`test %q calls t.Parallel(), so its //slopelint:serial marker is stale; remove the marker`,
@@ -187,6 +190,86 @@ func (l testParallelCheck) changesProcessState(
 		if _, visited := seen[fn]; ok && !visited && funcs[fn] != nil {
 			seen[fn] = struct{}{}
 			found = l.changesProcessState(funcs[fn].Body, funcs, seen)
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+// checkSubtests reports table subtests of a parallel test that do not call
+// t.Parallel(). Only t.Run calls in a range loop count: subtests outside a
+// loop are often ordered steps. A subtest that writes a variable declared
+// outside it shares state with the other cases, so it is not reported.
+func (l testParallelCheck) checkSubtests(
+	fn *ast.FuncDecl,
+	param types.Object,
+	funcs map[types.Object]*ast.FuncDecl,
+) {
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		loop, ok := node.(*ast.RangeStmt)
+		if !ok {
+			return true
+		}
+
+		for _, stmt := range loop.Body.List {
+			call, lit, sub := l.subtest(stmt, param)
+			if lit == nil || l.callsParallel(lit.Body, sub, funcs) ||
+				l.changesProcessState(lit.Body, funcs, make(map[types.Object]struct{})) ||
+				writesOuterVariable(l.pkg.TypesInfo, lit) {
+				continue
+			}
+
+			l.report(call.Pos(), "test_not_parallel", fmt.Sprintf(
+				`subtests of %q do not call t.Parallel(); add it as the first statement of the t.Run function`,
+				fn.Name.Name,
+			))
+		}
+
+		return true
+	})
+}
+
+// subtest matches param.Run(name, func(t *testing.T) {...}) and returns the
+// function literal and its t.
+func (l testParallelCheck) subtest(
+	stmt ast.Stmt,
+	param types.Object,
+) (*ast.CallExpr, *ast.FuncLit, types.Object) {
+	info := l.pkg.TypesInfo
+
+	call, ok := exprStmtCall(stmt)
+	if !ok || len(call.Args) != 2 || !isPackageFuncCall(info, call, testingImportPath, "Run") {
+		return nil, nil, nil
+	}
+
+	selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	lit, isLit := call.Args[1].(*ast.FuncLit)
+
+	if !ok || !isLit || identObject(info, selector.X) != param ||
+		len(lit.Type.Params.List) != 1 || len(lit.Type.Params.List[0].Names) != 1 {
+		return nil, nil, nil
+	}
+
+	return call, lit, info.Defs[lit.Type.Params.List[0].Names[0]]
+}
+
+func writesOuterVariable(info *types.Info, lit *ast.FuncLit) bool {
+	outer := func(expr ast.Expr) bool {
+		obj := info.Uses[assignedRootIdent(expr)]
+
+		return obj != nil && (obj.Pos() < lit.Pos() || obj.Pos() >= lit.End())
+	}
+
+	found := false
+
+	ast.Inspect(lit.Body, func(node ast.Node) bool {
+		switch stmt := node.(type) {
+		case *ast.AssignStmt:
+			found = found || slices.ContainsFunc(stmt.Lhs, outer)
+		case *ast.IncDecStmt:
+			found = found || outer(stmt.X)
 		}
 
 		return !found

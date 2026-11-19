@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const testNotParallelKind = "test_not_parallel"
+
 func TestRunnableTestLintsRequireBehavior(t *testing.T) {
 	t.Parallel()
 
@@ -104,6 +106,8 @@ func TestClampWithoutFailure(t *testing.T) {
 func TestClampOnlyLogs(t *testing.T) {
 	t.Log(ClampLimit(1))
 	t.Run("sub", func(t *testing.T) {
+		t.Parallel()
+
 		t.Logf("limit %d", ClampLimit(2))
 	})
 }
@@ -299,6 +303,8 @@ func TestParallelOnlySubtest(t *testing.T) {
 
 func TestSerialSubtestSetenv(t *testing.T) {
 	t.Run("sub", func(t *testing.T) {
+		t.Parallel()
+
 		t.Setenv("SAMPLE", "1")
 		checkLimit(t, ClampLimit(defaultLimit))
 	})
@@ -337,7 +343,7 @@ func TestSerialStaleSetenv(t *testing.T) {
 
 	for _, issue := range issues {
 		// The parallel cases live in serial_test.go; the other tests are all serial.
-		if issue.Kind != "test_not_parallel" ||
+		if issue.Kind != testNotParallelKind ||
 			filepath.Base(issuePosition(issue).Filename) == "serial_test.go" {
 			messages[issue.Kind] = append(messages[issue.Kind], issue.Message)
 		}
@@ -360,7 +366,7 @@ func TestSerialStaleSetenv(t *testing.T) {
 			`test "TestClampOnlyLogs" has no failing path`,
 		},
 		"test_sleep": {"time.Sleep in test code", "time.Sleep in test code"},
-		"test_not_parallel": {
+		testNotParallelKind: {
 			`test "TestParallelOnlySubtest" does not call t.Parallel()`,
 			`test "TestSerialBare" has //slopelint:serial without a reason`,
 			`test "TestSerialStale" calls t.Parallel(), so its //slopelint:serial marker is stale`,
@@ -385,5 +391,71 @@ func TestSerialStaleSetenv(t *testing.T) {
 				t.Fatalf("%s findings miss %q; got:\n%s", kind, fragment, got)
 			}
 		}
+	}
+}
+
+// Only table subtests that share nothing are reported: ordered steps,
+// subtests that write their parent's variables, and t.Setenv users stay.
+func TestNotParallelReportsTableSubtests(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeFile(
+		t,
+		filepath.Join(tmp, "sample.go"),
+		"package sample\n\nfunc Clamp(v int) int { return min(v, 10) }\n",
+	)
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+import "testing"
+
+func useEnv(t *testing.T) { t.Setenv("SAMPLE", "1") }
+
+func check(t *testing.T, v int) {
+	if Clamp(v) > 10 {
+		t.Fatal("over")
+	}
+}
+
+func TestTableSubtests(t *testing.T) {
+	t.Parallel()
+
+	var seen int
+
+	for _, limit := range []int{1, 2} {
+		t.Run("serial", func(t *testing.T) {
+			check(t, (limit))
+		})
+		t.Run("parallel", func(t *testing.T) {
+			t.Parallel()
+			check(t, (limit))
+		})
+		t.Run("shared", func(t *testing.T) {
+			seen++
+			check(t, (limit))
+		})
+		t.Run("env", func(t *testing.T) {
+			useEnv(t)
+			check(t, (limit))
+		})
+	}
+
+	t.Run("step", func(t *testing.T) {
+		check(t, (seen))
+	})
+}
+`)
+
+	var got []string
+
+	for _, issue := range lintInDir(t, tmp) {
+		if issue.Kind == testNotParallelKind {
+			got = append(got, issue.Message)
+		}
+	}
+
+	if len(got) != 1 ||
+		!strings.Contains(got[0], `subtests of "TestTableSubtests" do not call t.Parallel()`) {
+		t.Fatalf("test_not_parallel findings = %q, want one for the plain table subtest", got)
 	}
 }

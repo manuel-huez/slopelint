@@ -657,6 +657,8 @@ func TestSimilarityRenameFingerprint(t *testing.T) {
 		{"range", `func f(xs []int) int { out := 0; for _, x := range xs { out += x }; return out }`, `func f(values []int) int { sum := 0; for _, value := range values { sum += value }; return sum }`, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			before := similarityRenameFingerprint(test.before)
 
 			after := similarityRenameFingerprint(test.after)
@@ -732,6 +734,8 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 		{name: "stale policy", content: `func fourth(input int) int { output := input + 1; return output }`, stale: true, want: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			after := makeBlock(test.content)
 			if test.path != "" {
 				after.RelativePath = test.path

@@ -191,6 +191,8 @@ func TestHTTPSimilarityEmbedderRequestsAndOrdersEmbeddings(t *testing.T) {
 		{name: "v1 root", basePath: "/v1/"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			server, requests := newSimilarityHTTPTestServer(t, similarityEmbeddingResponse{
 				Model: similarityDefaultEmbeddingModel,
 				Data: []similarityEmbeddingData{
@@ -281,6 +283,8 @@ func TestNewHTTPSimilarityEmbedderRejectsInvalidURL(t *testing.T) {
 		{name: "query", url: "http://127.0.0.1:8080?token=secret"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			_, err := newHTTPSimilarityEmbedder(tt.url, similarityDefaultEmbeddingModel)
 			if err == nil || !strings.Contains(err.Error(), similarityLlamaURLEnv) {
 				t.Fatalf("URL error = %v", err)
@@ -375,6 +379,8 @@ func TestHTTPSimilarityEmbedderRejectsInvalidResponses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			server, _ := newSimilarityHTTPTestServer(t, tt.response)
 
 			embedder, err := newHTTPSimilarityEmbedder(server.URL, similarityDefaultEmbeddingModel)
@@ -565,6 +571,8 @@ func TestSimilarityScanEmbedsBeforeDescriptionsFinish(t *testing.T) {
 
 	for _, cacheEnabled := range []bool{false, true} {
 		t.Run(strconv.FormatBool(cacheEnabled), func(t *testing.T) {
+			t.Parallel()
+
 			embedded := make(chan struct{})
 
 			var signal sync.Once
@@ -632,6 +640,8 @@ func TestSimilarityScanStopsDescriptionsAfterEmbeddingFailure(t *testing.T) {
 
 	for _, failAt := range []int{1, 2} {
 		t.Run(strconv.Itoa(failAt), func(t *testing.T) {
+			t.Parallel()
+
 			// Source and signature failures must stop Codex work, not wait for every
 			// remaining description, and must keep records accepted before the stop.
 			blocks := make([]*similarityBlock, codexWorkers+2)

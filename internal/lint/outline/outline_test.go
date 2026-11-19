@@ -259,6 +259,8 @@ class Other:
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			file, err := Parse(test.name, []byte(test.src))
 			if err != nil {
 				t.Fatal(err)

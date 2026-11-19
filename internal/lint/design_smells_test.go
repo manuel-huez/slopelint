@@ -814,6 +814,8 @@ func TestSkipsStoredResultWrappers(t *testing.T) {
 		"[2]*parseResult", "struct { outcome parseResult }", "chan *aliasResult",
 	} {
 		t.Run(storage, func(t *testing.T) {
+			t.Parallel()
+
 			tmp := newTestModule(t)
 			writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
 

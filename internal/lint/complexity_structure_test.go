@@ -300,6 +300,8 @@ func TestInputGuardPreparation(t *testing.T) {
 		{name: "format with method", setup: `name := describe(value.name); _ = name`, want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			tmp := newTestModule(t)
 			writeFile(t, filepath.Join(tmp, "scalar", "value.go"), `package scalar
 type ID int

@@ -176,6 +176,8 @@ func TestLintRepositoryCacheTracksIgnoredGoFiles(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			tmp := newTestModule(t)
 			cacheDir := t.TempDir()
 			generatedPath := filepath.Join(tmp, "generated.go")

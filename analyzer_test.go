@@ -6,26 +6,41 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/tools/go/analysis/singlechecker"
 )
+
+const vettoolEnv = "SLOPELINT_TEST_VETTOOL"
+
+// TestMain lets go vet run this test binary as the vettool, so the test needs
+// no separate build of cmd/slopelint.
+func TestMain(m *testing.M) {
+	if os.Getenv(vettoolEnv) == "1" {
+		singlechecker.Main(Analyzer)
+		return
+	}
+
+	os.Exit(m.Run())
+}
 
 func TestAnalyzerCrossPackageFacts(t *testing.T) {
 	t.Setenv("SLOPELINT_CACHE", "off")
+	t.Setenv(vettoolEnv, "1")
 
-	vettool := filepath.Join(t.TempDir(), "slopelint")
-	build := exec.Command("go", "build", "-o", vettool, "./cmd/slopelint")
-
-	build.Dir = "."
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build vettool: %v\n%s", err, out)
+	vettool, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	tmp := t.TempDir()
 	writeAnalyzerFile(t, filepath.Join(tmp, "go.mod"), "module example.com/sample\n\ngo 1.22\n")
 	writeAnalyzerFile(t, filepath.Join(tmp, "guard", "guard.go"), `package guard
 
-import "errors"
-
 type Req struct { Name string }
+
+type failure struct{}
+
+func (failure) Error() string { return "bad" }
 
 func Valid(req *Req) bool {
 	if req == nil { return false }
@@ -34,8 +49,8 @@ func Valid(req *Req) bool {
 }
 
 func Check(req *Req) error {
-	if req == nil { return errors.New("bad") }
-	if req.Name == "" { return errors.New("bad") }
+	if req == nil { return failure{} }
+	if req.Name == "" { return failure{} }
 	return nil
 }
 `)

@@ -63,30 +63,6 @@ A stale stamp fails CI: run slopelint locally and commit the new stamp.
 | `SLOPELINT_SIMILARITY_ACCEPT` | Reviewed `sim-...` pair IDs to accept, comma-separated, or `all` |
 | `SLOPELINT_CACHE` | `0` disables the cache in `os.UserCacheDir()/slopelint` |
 
-## Languages
-
-Go packages, plus tracked `.ts`, `.tsx`, and `.py` files under the scanned
-directories. Skipped: hidden, `node_modules`, `vendor`, `testdata`, `.d.ts`,
-`.gen.ts`, `.min.` files, and generated files. TypeScript and Python get the
-size, structure, test, similarity, and review rules that one file's syntax can
-prove. A file the parser cannot read gets one `parse_error`.
-
-## Model checks
-
-**Similarity:** functions of 50+ tokens are compared by source embedding, and
-Go functions also by Codex-written behavior descriptions, within a package and
-its neighbors. Similarity does not prove equal behavior: check each finding,
-then fix it or accept its pair ID with `SLOPELINT_SIMILARITY_ACCEPT`.
-
-**Code review:** Codex (`gpt-6.1-terra`) judges each declaration's comments,
-suppressions, dropped or caught errors, tests, `//slopelint:serial` reasons, and
-groups of similar tests. Each finding is the model's advice. It accepts an item
-when unsure, and a test group must be flagged by two separate answers. Review
-findings have no override: fix the code.
-
-Verdicts and vectors are cached per declaration, so unchanged code causes no
-model calls.
-
 ## Embedding server
 
 Run `llama-server` with the pinned
@@ -102,22 +78,76 @@ llama-server --model /path/to/jina-embeddings-v2-base-code.gguf \
 
 ## Rules
 
-| Checks | IDs |
-| --- | --- |
-| Repeated guards, unreachable branches | `redundant_condition`, `redundant_subexpression`, `unreachable_case` |
-| Simplifiable control flow | `boolean_ceremony`, `control_flow_merge`, `control_flow_pyramid`, `redundant_default`, `complexity_simplification`, `guard_complexity` |
-| Needless collection code and aliases | `append_ceremony`, `range_ceremony`, `temp_alias` |
-| Loop performance | `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` |
-| Wrappers and ceremony | `trivial_wrapper`, `normalization_ceremony`, `serialization_ceremony` |
-| Repeated behavior | `behavior_clone`, `semantic_duplicate` |
-| Overbuilt APIs | `abstraction_overkill`, `api_overkill`, `result_wrapper`, `generic_naming`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple` |
-| Panics and sentinel breaks | `prod_must_panic`, `sentinel_error_break` |
-| Dead code | `dead_code` |
-| Declaration grouping | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` |
-| Size: files 1,000 lines, functions 100, literals 40, 6 params, 3 results, 40 methods | `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `long_result_list`, `god_receiver` |
-| Tests | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_fatal_panic`, `test_global_func_stub`, `test_no_assertion`, `test_not_parallel`, `test_sleep`, `test_focused`, `test_support_filename` |
-| Code review | `comment_noise`, `comment_excuse`, `comment_crutch`, `swallowed_error`, `test_trivial`, `test_mock_only`, `test_wasteful`, `test_serial_excuse`, `test_repeated_steps` |
-| Directives and parsing | `invalid_contract`, `stale_complexity_suppression`, `parse_error` |
+slopelint scans Go packages and the tracked `.ts`, `.tsx`, and `.py` files under
+the scanned directories. It skips hidden, `node_modules`, `vendor`, and
+`testdata` directories, `.d.ts`, `.gen.ts`, and `.min.` files, and generated
+files. TypeScript and Python rules use one file's syntax, so they catch less
+than the typed Go rules.
+
+### Structure
+
+| Rules | Finds | Go | TS | Py |
+| --- | --- | :-: | :-: | :-: |
+| `control_flow_merge`, `boolean_ceremony`, `control_flow_pyramid`, `temp_alias` | Branches to merge, ifs that return `true`/`false`, nested final ifs, single-use aliases | ✅ | ✅ | ✅ |
+| `trivial_wrapper`, `abstraction_overkill`, `generic_naming` | Private helpers that only forward or have one tiny use, generic helper names | ✅ | ✅ | – |
+| `redundant_condition`, `redundant_subexpression`, `unreachable_case`, `redundant_default` | Guards and cases that earlier checks already decide | ✅ | – | – |
+| `complexity_simplification`, `guard_complexity` | Complex conditions with a simpler equivalent | ✅ | – | – |
+| `append_ceremony`, `range_ceremony`, `normalization_ceremony`, `serialization_ceremony` | Needless guards around append, range, normalization, and encoding | ✅ | – | – |
+| `loop_membership_scan`, `loop_sort`, `loop_invariant_work`, `loop_external_call`, `nested_lookup_loop`, `pairwise_comparison_loop` | Slow work inside loops | ✅ | – | – |
+| `api_overkill`, `result_wrapper`, `predicate_signature`, `unused_private_param`, `bool_mode_param`, `optional_result_triple` | Overbuilt signatures and APIs | ✅ | – | – |
+| `prod_must_panic`, `sentinel_error_break` | Panics in production code, sentinel errors used for control flow | ✅ | – | – |
+| `behavior_clone` | Functions or blocks with the same behavior | ✅ | – | – |
+| `dead_code` | Unreachable declarations | ✅ | – | – |
+| `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` | Declarations to group | ✅ | – | – |
+
+### Size
+
+| Rules | Finds | Go | TS | Py |
+| --- | --- | :-: | :-: | :-: |
+| `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 100, literals over 40, over 6 params, types or classes over 40 methods | ✅ | ✅ | ✅ |
+| `long_result_list` | Over 3 results | ✅ | – | – |
+
+### Tests
+
+| Rules | Finds | Go | TS | Py |
+| --- | --- | :-: | :-: | :-: |
+| `test_sleep` | Real sleeps in tests | ✅ | ✅ | ✅ |
+| `test_focused` | `.only`, `fit`, `fdescribe` | – | ✅ | – |
+| `test_no_assertion`, `test_not_parallel`, `test_fatal_panic`, `test_global_func_stub` | Tests that cannot fail, run serially, panic, or stub package functions | ✅ | – | – |
+| `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_support_filename` | Unnamed table cases, tests of constants, copied fixtures, misnamed test helpers | ✅ | – | – |
+
+### Model: duplicates
+
+| Rules | Finds | Go | TS | Py |
+| --- | --- | :-: | :-: | :-: |
+| `semantic_duplicate` | Functions of 50+ tokens with similar source or behavior | ✅ | ✅ | ✅ |
+
+Compared by source embedding within a package and its neighbors; Go functions
+also by Codex-written behavior descriptions. Similarity does not prove equal
+behavior: fix the finding or accept its pair ID with
+`SLOPELINT_SIMILARITY_ACCEPT`.
+
+### Model: code review
+
+| Rules | Finds | Go | TS | Py |
+| --- | --- | :-: | :-: | :-: |
+| `comment_noise`, `comment_excuse`, `comment_crutch` | Comments and suppressions that restate code, excuse it, or explain unclear code | ✅ | ✅ | ✅ |
+| `swallowed_error` | Dropped or caught errors that hide failures | ✅ | ✅ | ✅ |
+| `test_trivial`, `test_mock_only`, `test_wasteful` | Tests that check nothing real, only mocks, or waste time | ✅ | ✅ | ✅ |
+| `test_repeated_steps` | Tests that should share a table or fixture | ✅ | ✅ | ✅ |
+| `test_serial_excuse` | Weak `//slopelint:serial` reasons | ✅ | – | – |
+
+Codex (`gpt-6.1-terra`) judges each declaration; each finding is its advice.
+It accepts an item when unsure, and a test group must be flagged by two
+separate answers. Review findings have no override: fix the code. Verdicts are
+cached per declaration, so unchanged code causes no model calls.
+
+### Other
+
+| Rules | Finds | Go | TS | Py |
+| --- | --- | :-: | :-: | :-: |
+| `invalid_contract`, `stale_complexity_suppression` | Malformed `ensures` directives, suppressions that no longer apply | ✅ | – | – |
+| `parse_error` | Files the parser cannot read | – | ✅ | ✅ |
 
 ### Directives
 

@@ -124,10 +124,11 @@ than the typed Go rules.
 | --- | --- | :-: | :-: | :-: |
 | `semantic_duplicate` | Functions of 50+ tokens with similar source or behavior | ✅ | ✅ | ✅ |
 
-Compared by source embedding within a package and its neighbors; Go functions
-also by Codex-written behavior descriptions. Similarity does not prove equal
-behavior: fix the finding or accept its pair ID with
-`SLOPELINT_SIMILARITY_ACCEPT`.
+The embedding server turns each function into a vector, and functions with
+close vectors in the same or a nearby package are reported. For Go, Codex
+(`gpt-6-luna`) also writes a short description of what each function does, and
+the descriptions are compared the same way. A match is a hint, not proof: fix
+it, or accept its pair ID with `SLOPELINT_SIMILARITY_ACCEPT`.
 
 ### Model: code review
 

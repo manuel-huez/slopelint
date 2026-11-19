@@ -15,9 +15,8 @@ import (
 )
 
 const (
-	similarityLlamaURLEnv         = "SLOPELINT_LLAMA_URL"
-	similarityLlamaDefaultURL     = "http://127.0.0.1:18080"
-	similarityEmbeddingDimensions = 768
+	similarityLlamaURLEnv     = "SLOPELINT_LLAMA_URL"
+	similarityLlamaDefaultURL = "http://127.0.0.1:18080"
 	// One full batch takes about 20s on an 8-core VPS CPU. The limit leaves room
 	// for a server shared by parallel runs and fails a hung server in minutes.
 	similarityEmbeddingRequestTimeout   = 3 * time.Minute
@@ -33,6 +32,7 @@ type similarityEmbedder interface {
 
 type httpSimilarityEmbedder struct {
 	endpoint string
+	model    string
 	client   *http.Client
 	timeout  time.Duration
 }
@@ -53,7 +53,7 @@ type similarityEmbeddingData struct {
 	Embedding []float64 `json:"embedding"`
 }
 
-func newHTTPSimilarityEmbedder(rawURL string) (*httpSimilarityEmbedder, error) {
+func newHTTPSimilarityEmbedder(rawURL, model string) (*httpSimilarityEmbedder, error) {
 	endpoint, err := similarityEmbeddingEndpoint(rawURL)
 	if err != nil {
 		return nil, err
@@ -66,6 +66,7 @@ func newHTTPSimilarityEmbedder(rawURL string) (*httpSimilarityEmbedder, error) {
 
 	return &httpSimilarityEmbedder{
 		endpoint: endpoint,
+		model:    model,
 		client:   &http.Client{Transport: transport},
 		timeout:  similarityEmbeddingRequestTimeout,
 	}, nil
@@ -114,7 +115,7 @@ func (embedder *httpSimilarityEmbedder) embed(inputs []string) (vectors [][]floa
 	}
 
 	body, err := json.Marshal(similarityEmbeddingRequest{
-		Model:          similarityModelName,
+		Model:          embedder.model,
 		Input:          inputs,
 		EncodingFormat: "float",
 	})
@@ -158,14 +159,15 @@ func (embedder *httpSimilarityEmbedder) embed(inputs []string) (vectors [][]floa
 
 	defer func() { err = errors.Join(err, response.Body.Close()) }()
 
-	return readSimilarityEmbeddingResponse(response, embedder.endpoint, len(inputs))
+	return embedder.readResponse(response, len(inputs))
 }
 
-func readSimilarityEmbeddingResponse(
+func (embedder *httpSimilarityEmbedder) readResponse(
 	response *http.Response,
-	endpoint string,
 	inputCount int,
 ) ([][]float32, error) {
+	endpoint := embedder.endpoint
+
 	if response.StatusCode != http.StatusOK {
 		message, readErr := io.ReadAll(
 			io.LimitReader(response.Body, similarityEmbeddingMaxErrorBytes+1),
@@ -219,18 +221,20 @@ func readSimilarityEmbeddingResponse(
 		return nil, fmt.Errorf("decode llama-server embedding response: %w", err)
 	}
 
-	return validateSimilarityEmbeddingResponse(decoded, inputCount)
+	return validateSimilarityEmbeddingResponse(decoded, inputCount, embedder.model)
 }
 
 func validateSimilarityEmbeddingResponse(
 	decoded similarityEmbeddingResponse,
 	inputCount int,
+	model string,
 ) ([][]float32, error) {
-	if decoded.Model != similarityModelName {
+	if decoded.Model != model {
 		return nil, fmt.Errorf(
-			"llama-server returned model %q, want %q",
+			"llama-server returned model %q, want %q from %s",
 			decoded.Model,
-			similarityModelName,
+			model,
+			similarityEmbeddingModelEnv,
 		)
 	}
 
@@ -243,6 +247,11 @@ func validateSimilarityEmbeddingResponse(
 	}
 
 	vectors := make([][]float32, inputCount)
+	// Models differ in width; one response must still use one width.
+	dimensions := 0
+	if len(decoded.Data) > 0 {
+		dimensions = len(decoded.Data[0].Embedding)
+	}
 
 	seen := make([]bool, inputCount)
 	for _, item := range decoded.Data {
@@ -258,7 +267,7 @@ func validateSimilarityEmbeddingResponse(
 			return nil, fmt.Errorf("llama-server returned duplicate embedding index %d", item.Index)
 		}
 
-		vector, err := validatedSimilarityEmbeddingVector(item)
+		vector, err := validatedSimilarityEmbeddingVector(item, dimensions)
 		if err != nil {
 			return nil, err
 		}
@@ -270,17 +279,24 @@ func validateSimilarityEmbeddingResponse(
 	return vectors, nil
 }
 
-func validatedSimilarityEmbeddingVector(item similarityEmbeddingData) ([]float32, error) {
-	if len(item.Embedding) != similarityEmbeddingDimensions {
+func validatedSimilarityEmbeddingVector(
+	item similarityEmbeddingData,
+	dimensions int,
+) ([]float32, error) {
+	if len(item.Embedding) == 0 {
+		return nil, fmt.Errorf("llama-server embedding %d is empty", item.Index)
+	}
+
+	if len(item.Embedding) != dimensions {
 		return nil, fmt.Errorf(
 			"llama-server embedding %d has %d dimensions, want %d",
 			item.Index,
 			len(item.Embedding),
-			similarityEmbeddingDimensions,
+			dimensions,
 		)
 	}
 
-	vector := make([]float32, similarityEmbeddingDimensions)
+	vector := make([]float32, dimensions)
 
 	for dimension, value := range item.Embedding {
 		if math.IsNaN(value) || math.IsInf(value, 0) ||

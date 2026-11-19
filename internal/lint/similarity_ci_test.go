@@ -94,7 +94,7 @@ func TestSimilarityLocalRefreshesRepositoryDigestWithoutInference(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	stamp := newSimilarityStamp(sourceDigest, 0, nil, false, "")
+	stamp := newSimilarityStamp(sourceDigest, 0, nil, false, "", SimilarityOptions{})
 	stamp.RepositoryDigest = "old-digest"
 
 	encoded, err := json.Marshal(stamp)
@@ -148,7 +148,7 @@ func TestLintRepositoryCIStaleStampFailsBeforeGoList(t *testing.T) {
 	writeFile(t, sourcePath, "package sample\n")
 	initTestGitRepository(t, tmp)
 
-	stamp := newSimilarityStamp("source", 0, nil, false, "")
+	stamp := newSimilarityStamp("source", 0, nil, false, "", SimilarityOptions{})
 	if err := storeSimilarityStamp(tmp, stamp); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestLintRepositoryCIValidStampStillRunsStructuralLint(t *testing.T) {
 	)
 	initTestGitRepository(t, tmp)
 
-	stamp := newSimilarityStamp("source", 1, nil, false, "")
+	stamp := newSimilarityStamp("source", 1, nil, false, "", SimilarityOptions{})
 	if err := storeSimilarityStamp(tmp, stamp); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestLintRepositoryCIRejectsStampWithoutRepositoryDigest(t *testing.T) {
 	t.Setenv(codexEnv, offText)
 
 	tmp := newTestModule(t)
-	stamp := newSimilarityStamp("source", 1, nil, false, "")
+	stamp := newSimilarityStamp("source", 1, nil, false, "", SimilarityOptions{})
 
 	data, err := json.Marshal(stamp)
 	if err != nil {

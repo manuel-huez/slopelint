@@ -58,7 +58,7 @@ func TestSimilarityEmbeddingOrdersMissingInputsByLength(t *testing.T) {
 
 	embedder := new(similarityOrderingTestEmbedder)
 
-	runtime := newSimilarityEmbeddingRuntime(embedder, t.TempDir(), false)
+	runtime := &similarityEmbeddingRuntime{embedder: embedder, cacheRoot: t.TempDir()}
 	if _, err := runtime.populate(blocks, similaritySourceVector); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestSimilarityEmbeddingCapsLongBatchesByBytes(t *testing.T) {
 
 	embedder := new(similarityOrderingTestEmbedder)
 
-	runtime := newSimilarityEmbeddingRuntime(embedder, t.TempDir(), false)
+	runtime := &similarityEmbeddingRuntime{embedder: embedder, cacheRoot: t.TempDir()}
 	if _, err := runtime.populate(blocks, similaritySourceVector); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +113,12 @@ func (*similarityTestEmbedder) close() error {
 	return nil
 }
 
+// similarityHTTPTestDimensions is the default model width; the embedder
+// accepts any width that stays the same within a response.
+const similarityHTTPTestDimensions = 768
+
 func similarityHTTPTestVector(first float64) []float64 {
-	vector := make([]float64, similarityEmbeddingDimensions)
+	vector := make([]float64, similarityHTTPTestDimensions)
 	vector[0] = first
 
 	return vector
@@ -167,7 +171,7 @@ func requireSimilarityHTTPRequest(
 	if request.method != http.MethodPost ||
 		request.path != similarityEmbeddingsPath ||
 		request.contentType != "application/json" ||
-		request.body.Model != similarityModelName ||
+		request.body.Model != similarityDefaultEmbeddingModel ||
 		request.body.EncodingFormat != "float" ||
 		!slices.Equal(request.body.Input, inputs) {
 		t.Fatalf("embedding request = %+v", request)
@@ -188,14 +192,17 @@ func TestHTTPSimilarityEmbedderRequestsAndOrdersEmbeddings(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			server, requests := newSimilarityHTTPTestServer(t, similarityEmbeddingResponse{
-				Model: similarityModelName,
+				Model: similarityDefaultEmbeddingModel,
 				Data: []similarityEmbeddingData{
 					{Index: 1, Embedding: similarityHTTPTestVector(2)},
 					{Index: 0, Embedding: similarityHTTPTestVector(1)},
 				},
 			})
 
-			embedder, err := newHTTPSimilarityEmbedder(server.URL + tt.basePath)
+			embedder, err := newHTTPSimilarityEmbedder(
+				server.URL+tt.basePath,
+				similarityDefaultEmbeddingModel,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -221,8 +228,10 @@ func TestHTTPSimilarityEmbedderRequestsAndOrdersEmbeddings(t *testing.T) {
 }
 
 func TestSimilarityEmbeddingRuntimeUsesConfiguredServer(t *testing.T) {
+	const model = "configured-model"
+
 	server, requests := newSimilarityHTTPTestServer(t, similarityEmbeddingResponse{
-		Model: similarityModelName,
+		Model: model,
 		Data: []similarityEmbeddingData{{
 			Index:     0,
 			Embedding: similarityHTTPTestVector(1),
@@ -231,7 +240,7 @@ func TestSimilarityEmbeddingRuntimeUsesConfiguredServer(t *testing.T) {
 
 	t.Setenv(similarityLlamaURLEnv, server.URL+"/v1")
 
-	runtime := newSimilarityEmbeddingRuntime(nil, t.TempDir(), false)
+	runtime := &similarityEmbeddingRuntime{model: model, cacheRoot: t.TempDir()}
 	t.Cleanup(func() {
 		if err := runtime.close(); err != nil {
 			t.Error(err)
@@ -246,16 +255,17 @@ func TestSimilarityEmbeddingRuntimeUsesConfiguredServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if matrix.Dimensions != similarityEmbeddingDimensions {
+	if matrix.Dimensions != similarityHTTPTestDimensions {
 		t.Fatalf(
 			"matrix dimensions = %d, want %d",
 			matrix.Dimensions,
-			similarityEmbeddingDimensions,
+			similarityHTTPTestDimensions,
 		)
 	}
 
-	if path := (<-requests).path; path != similarityEmbeddingsPath {
-		t.Fatalf("request path = %s, want %s", path, similarityEmbeddingsPath)
+	if request := <-requests; request.path != similarityEmbeddingsPath ||
+		request.body.Model != model {
+		t.Fatalf("request = %+v, want %s with model %s", request, similarityEmbeddingsPath, model)
 	}
 }
 
@@ -271,7 +281,7 @@ func TestNewHTTPSimilarityEmbedderRejectsInvalidURL(t *testing.T) {
 		{name: "query", url: "http://127.0.0.1:8080?token=secret"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := newHTTPSimilarityEmbedder(tt.url)
+			_, err := newHTTPSimilarityEmbedder(tt.url, similarityDefaultEmbeddingModel)
 			if err == nil || !strings.Contains(err.Error(), similarityLlamaURLEnv) {
 				t.Fatalf("URL error = %v", err)
 			}
@@ -285,7 +295,7 @@ func TestHTTPSimilarityEmbedderRejectsInvalidResponses(t *testing.T) {
 	const input = "embedding input"
 
 	validVector := similarityHTTPTestVector(1)
-	shortVector := make([]float64, similarityEmbeddingDimensions-1)
+	shortVector := make([]float64, similarityHTTPTestDimensions-1)
 	overflowVector := similarityHTTPTestVector(1)
 	overflowVector[10] = float64(2) * math.MaxFloat32
 
@@ -307,14 +317,14 @@ func TestHTTPSimilarityEmbedderRejectsInvalidResponses(t *testing.T) {
 		{
 			name:     "wrong count",
 			inputs:   []string{input},
-			response: similarityEmbeddingResponse{Model: similarityModelName},
+			response: similarityEmbeddingResponse{Model: similarityDefaultEmbeddingModel},
 			wantErr:  "returned 0 embeddings for 1 inputs",
 		},
 		{
 			name:   "index out of range",
 			inputs: []string{input},
 			response: similarityEmbeddingResponse{
-				Model: similarityModelName,
+				Model: similarityDefaultEmbeddingModel,
 				Data:  []similarityEmbeddingData{{Index: 1, Embedding: validVector}},
 			},
 			wantErr: "embedding index 1 for 1 inputs",
@@ -323,7 +333,7 @@ func TestHTTPSimilarityEmbedderRejectsInvalidResponses(t *testing.T) {
 			name:   "duplicate index",
 			inputs: []string{input, input + " second"},
 			response: similarityEmbeddingResponse{
-				Model: similarityModelName,
+				Model: similarityDefaultEmbeddingModel,
 				Data: []similarityEmbeddingData{
 					{Index: 0, Embedding: validVector},
 					{Index: 0, Embedding: validVector},
@@ -332,19 +342,31 @@ func TestHTTPSimilarityEmbedderRejectsInvalidResponses(t *testing.T) {
 			wantErr: "duplicate embedding index 0",
 		},
 		{
-			name:   "wrong dimensions",
-			inputs: []string{input},
+			name:   "mixed dimensions",
+			inputs: []string{input, input + " second"},
 			response: similarityEmbeddingResponse{
-				Model: similarityModelName,
-				Data:  []similarityEmbeddingData{{Index: 0, Embedding: shortVector}},
+				Model: similarityDefaultEmbeddingModel,
+				Data: []similarityEmbeddingData{
+					{Index: 0, Embedding: validVector},
+					{Index: 1, Embedding: shortVector},
+				},
 			},
 			wantErr: "has 767 dimensions, want 768",
+		},
+		{
+			name:   "empty embedding",
+			inputs: []string{input},
+			response: similarityEmbeddingResponse{
+				Model: similarityDefaultEmbeddingModel,
+				Data:  []similarityEmbeddingData{{Index: 0}},
+			},
+			wantErr: "embedding 0 is empty",
 		},
 		{
 			name:   "float32 overflow",
 			inputs: []string{input},
 			response: similarityEmbeddingResponse{
-				Model: similarityModelName,
+				Model: similarityDefaultEmbeddingModel,
 				Data:  []similarityEmbeddingData{{Index: 0, Embedding: overflowVector}},
 			},
 			wantErr: "dimension 10 is not a finite float32",
@@ -355,7 +377,7 @@ func TestHTTPSimilarityEmbedderRejectsInvalidResponses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server, _ := newSimilarityHTTPTestServer(t, tt.response)
 
-			embedder, err := newHTTPSimilarityEmbedder(server.URL)
+			embedder, err := newHTTPSimilarityEmbedder(server.URL, similarityDefaultEmbeddingModel)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -387,7 +409,7 @@ func TestHTTPSimilarityEmbedderBoundsServerError(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	embedder, err := newHTTPSimilarityEmbedder(server.URL)
+	embedder, err := newHTTPSimilarityEmbedder(server.URL, similarityDefaultEmbeddingModel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +436,7 @@ func TestHTTPSimilarityEmbedderReportsConnectionFailure(t *testing.T) {
 	serverURL := server.URL
 	server.Close()
 
-	embedder, err := newHTTPSimilarityEmbedder(serverURL)
+	embedder, err := newHTTPSimilarityEmbedder(serverURL, similarityDefaultEmbeddingModel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +466,7 @@ func TestHTTPSimilarityEmbedderTimesOutSilentServer(t *testing.T) {
 	t.Cleanup(server.Close)
 	t.Cleanup(func() { close(release) })
 
-	embedder, err := newHTTPSimilarityEmbedder(server.URL)
+	embedder, err := newHTTPSimilarityEmbedder(server.URL, similarityDefaultEmbeddingModel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +500,7 @@ func TestSimilarityDescriptionVectorsStreamInScanOrder(t *testing.T) {
 	close(ready)
 
 	embedder := new(similarityOrderingTestEmbedder)
-	runtime := newSimilarityEmbeddingRuntime(embedder, t.TempDir(), false)
+	runtime := &similarityEmbeddingRuntime{embedder: embedder, cacheRoot: t.TempDir()}
 
 	got, err := runtime.populateDescriptions(blocks, ready)
 	if err != nil {

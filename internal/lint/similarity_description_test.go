@@ -268,7 +268,13 @@ func storeSimilarityCacheWithOlderPolicy(
 		t.Fatal(err)
 	}
 
-	cache, ok := loadSimilarityScanCache(cacheRoot, moduleRoot, true, stamp.SourceDigest)
+	cache, ok := loadSimilarityScanCache(
+		cacheRoot,
+		moduleRoot,
+		true,
+		stamp.SourceDigest,
+		SimilarityOptions{},
+	)
 	if !ok {
 		t.Fatal("missing warm scan cache")
 	}
@@ -331,7 +337,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		t.Fatal(err)
 	}
 
-	if !stamp.policyMatches() {
+	if !stamp.policyMatches(options) {
 		t.Fatalf("enriched stamp policy = %#v", stamp)
 	}
 
@@ -359,7 +365,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	requireSimilarityCount(t, "policy change description calls", describer.calls, 2)
 	requireSimilarityCount(t, "policy change embedding batches", embedder.calls, 2)
 
-	cache, ok := loadSimilarityScanCache(cacheRoot, tmp, true, stamp.SourceDigest)
+	cache, ok := loadSimilarityScanCache(cacheRoot, tmp, true, stamp.SourceDigest, options)
 	if !ok || cache.SimilaritySchema != similaritySchema || len(cache.Matches) != 1 {
 		t.Fatalf(
 			"policy change did not rescore cached pair: schema=%d matches=%d",
@@ -367,6 +373,8 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 			len(cache.Matches),
 		)
 	}
+
+	requireSimilaritySettingChanges(t, tmp, options, embedder)
 
 	withoutCodex := options
 	withoutCodex.describer = nil
@@ -400,6 +408,52 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 	requireSingleSimilarityIssue(t, issues, err)
 	requireSimilarityCount(t, "description requests after rename", describer.requests, 4)
 	requireSimilarityCount(t, "source embedding batches after rename", embedder.calls, 3)
+}
+
+// requireSimilaritySettingChanges checks that a threshold change rescores from
+// cached vectors, another model embeds again, and CI names the setting that
+// differs from the stamp. It ends with the default settings restored.
+func requireSimilaritySettingChanges(
+	t *testing.T,
+	tmp string,
+	options SimilarityOptions,
+	embedder *similarityTestEmbedder,
+) {
+	t.Helper()
+
+	calls := embedder.calls
+	rescored := options
+	rescored.Threshold = similaritySameFileThreshold + 0.001
+	otherModel := options
+	otherModel.EmbeddingModel = "other-model"
+	otherEmbedder := &similarityTestEmbedder{vector: embedder.vector}
+	otherModel.embedder = otherEmbedder
+
+	for _, test := range []struct {
+		options SimilarityOptions
+		env     string
+	}{{rescored, similarityThresholdEnv}, {otherModel, similarityEmbeddingModelEnv}} {
+		pkgs := loadPackagesForTest(t, tmp)
+		issues, err := checkSemanticCode(t.Context(), pkgs, nil, test.options, nil)
+		requireNoSimilarityIssues(t, issues, err)
+
+		pkgs = loadPackagesForTest(t, tmp)
+
+		_, err = checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{CI: true}, nil)
+		if err == nil || !strings.Contains(err.Error(), test.env) {
+			t.Fatalf("CI error = %v, want %s", err, test.env)
+		}
+	}
+
+	requireSimilarityCount(t, "threshold change embedding batches", embedder.calls, calls)
+
+	if otherEmbedder.calls == 0 {
+		t.Fatal("model change reused cached vectors")
+	}
+
+	// Restore the default scan cache that later rename checks reuse.
+	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
+	requireNoSimilarityIssues(t, issues, err)
 }
 
 func TestSimilarityDescriptionsCoverAllBlocksIndependentlyOfSource(t *testing.T) {
@@ -544,32 +598,35 @@ func TestSimilarityDescriptionStampPolicyTracksEnrichment(t *testing.T) {
 
 	digest := strings.Repeat("a", 64)
 
-	enriched := newSimilarityStamp("source", 2, nil, true, digest)
-	if !enriched.policyMatches() || !enriched.covers("source", true, false) ||
-		!enriched.covers("source", false, false) || enriched.covers("source", true, true) {
+	var opts SimilarityOptions
+
+	enriched := newSimilarityStamp("source", 2, nil, true, digest, opts)
+	if !enriched.policyMatches(opts) || !enriched.covers(opts, "source", true, false) ||
+		!enriched.covers(opts, "source", false, false) ||
+		enriched.covers(opts, "source", true, true) {
 		t.Fatalf("enriched stamp = %#v", enriched)
 	}
 
-	sourceOnly := newSimilarityStamp("source", 2, nil, false, "")
-	if !sourceOnly.policyMatches() || !sourceOnly.covers("source", false, false) ||
-		sourceOnly.covers("source", true, false) {
+	sourceOnly := newSimilarityStamp("source", 2, nil, false, "", opts)
+	if !sourceOnly.policyMatches(opts) || !sourceOnly.covers(opts, "source", false, false) ||
+		sourceOnly.covers(opts, "source", true, false) {
 		t.Fatalf("source-only stamp = %#v", sourceOnly)
 	}
 
 	reviewed := enriched
 	reviewed.Review = &codeReviewCurrentPolicy
 
-	if !reviewed.covers("source", true, true) {
+	if !reviewed.covers(opts, "source", true, true) {
 		t.Fatalf("reviewed stamp = %#v", reviewed)
 	}
 
 	reviewed.Review = &codeReviewPolicy{Go: codeReviewCurrentPolicy.Go - 1}
-	if reviewed.policyMatches() {
+	if reviewed.policyMatches(opts) {
 		t.Fatal("obsolete review policy accepted")
 	}
 
 	enriched.DescriptionDigest = "short"
-	if enriched.policyMatches() {
+	if enriched.policyMatches(opts) {
 		t.Fatal("short description digest accepted")
 	}
 }
@@ -653,9 +710,9 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 		Schema:            similarityScanCacheSchema,
 		SimilaritySchema:  similaritySchema,
 		SourceDigest:      before.ContentHash,
-		DescriptionDigest: similarityModelDigest,
-		Model:             similarityModelName,
-		ModelDigest:       similarityModelDigest,
+		DescriptionDigest: strings.Repeat("a", 64),
+		Model:             similarityDefaultEmbeddingModel,
+		Threshold:         similaritySameFileThreshold,
 		Descriptions:      true,
 		DescriptionSchema: similarityDescriptionPromptSchema,
 		DescriptionModel:  similarityDescriptionModel,
@@ -689,6 +746,7 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 				[]*similarityBlock{after},
 				cache,
 				root,
+				SimilarityOptions{},
 			); err != nil {
 				t.Fatal(err)
 			}

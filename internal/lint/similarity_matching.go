@@ -25,6 +25,7 @@ func scanSimilarityPairs(
 	blocks []*similarityBlock,
 	vectors similarityVectorMatrices,
 	changed map[string]struct{},
+	shift float64,
 ) []similarityMatch {
 	if len(blocks) < similarityMinimumBlocks {
 		return nil
@@ -78,6 +79,7 @@ func scanSimilarityPairs(
 					vectors,
 					jobs[index],
 					changedFlags,
+					shift,
 				)
 			}
 		})
@@ -105,6 +107,7 @@ func similarityMatchesForJob(
 	vectors similarityVectorMatrices,
 	job similarityScanJob,
 	changed []bool,
+	shift float64,
 ) []similarityMatch {
 	matches := make([]similarityMatch, 0)
 
@@ -116,6 +119,7 @@ func similarityMatchesForJob(
 					vectors,
 					left,
 					right,
+					shift,
 				); ok {
 					matches = append(matches, match)
 				}
@@ -138,6 +142,7 @@ func similarityMatchesForJob(
 			vectors,
 			left,
 			right,
+			shift,
 		); ok {
 			matches = append(matches, match)
 		}
@@ -151,6 +156,7 @@ func similarityMatchForPair(
 	vectors similarityVectorMatrices,
 	leftIndex int,
 	rightIndex int,
+	shift float64,
 ) (similarityMatch, bool) {
 	left := blocks[leftIndex]
 	right := blocks[rightIndex]
@@ -163,8 +169,8 @@ func similarityMatchForPair(
 
 	embedding, leftChunk, rightChunk := maximumDotSimilarity(vectors.Source, left, right)
 	description := maximumDescriptionDotSimilarity(vectors.Description, left, right)
-	sourceThreshold := similarityEmbeddingThreshold(tier, left.IsTest || right.IsTest)
-	descriptionThreshold := similarityDescriptionThreshold(tier, left.IsTest && right.IsTest)
+	sourceThreshold := similarityEmbeddingThreshold(tier, left.IsTest || right.IsTest, shift)
+	descriptionThreshold := similarityDescriptionThreshold(tier, left.IsTest && right.IsTest, shift)
 
 	// Code shape and described behavior are independent evidence. Either channel
 	// can report a pair; one never gates, promotes, or weakens the other.
@@ -366,7 +372,9 @@ func structuralSimilarity(left, right map[uint64]struct{}) float64 {
 	return float64(intersection) / float64(len(left)+len(right)-intersection)
 }
 
-func similarityEmbeddingThreshold(tier int, testPair bool) float64 {
+// similarityEmbeddingThreshold adds shift, the configured offset from the
+// tuned same-file gate, before the test offset and cap.
+func similarityEmbeddingThreshold(tier int, testPair bool, shift float64) float64 {
 	// Nearby duplicates are more actionable. Test harnesses need stronger evidence because
 	// their setup shape repeats intentionally across cases.
 	var threshold float64
@@ -380,6 +388,8 @@ func similarityEmbeddingThreshold(tier int, testPair bool) float64 {
 		threshold = similarityDistantThreshold
 	}
 
+	threshold += shift
+
 	if testPair {
 		threshold = min(
 			threshold+similarityTestThresholdOffset,
@@ -390,7 +400,7 @@ func similarityEmbeddingThreshold(tier int, testPair bool) float64 {
 	return threshold
 }
 
-func similarityDescriptionThreshold(tier int, testPair bool) float64 {
+func similarityDescriptionThreshold(tier int, testPair bool, shift float64) float64 {
 	var threshold float64
 
 	switch tier {
@@ -405,6 +415,8 @@ func similarityDescriptionThreshold(tier int, testPair bool) float64 {
 			threshold = similarityDescriptionSamePackageThreshold
 		}
 	}
+
+	threshold += shift
 
 	if testPair {
 		threshold += similarityDescriptionTestOffset
@@ -481,7 +493,7 @@ func similarityPairID(left, right *similarityBlock) string {
 	return "sim-" + hex.EncodeToString(sum[:8])
 }
 
-func (match similarityMatch) issue() Issue {
+func (match similarityMatch) issue(shift float64) Issue {
 	chunkDetail := ""
 	if match.Left.VectorCount > 1 || match.Right.VectorCount > 1 {
 		chunkDetail = fmt.Sprintf(
@@ -521,6 +533,7 @@ func (match similarityMatch) issue() Issue {
 			similarityDescriptionThreshold(
 				match.LocalityTier,
 				match.Left.IsTest && match.Right.IsTest,
+				shift,
 			),
 		)
 	}
@@ -548,6 +561,7 @@ func (match similarityMatch) issue() Issue {
 		similarityEmbeddingThreshold(
 			match.LocalityTier,
 			match.Left.IsTest || match.Right.IsTest,
+			shift,
 		),
 		chunkDetail,
 		scoreDetail,

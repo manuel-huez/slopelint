@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -201,10 +202,24 @@ func similarityOptionsFromEnv(cacheActive bool) (*lint.SimilarityOptions, error)
 		return nil, err
 	}
 
+	// Empty values keep the defaults tuned in the lint package.
+	var threshold float64
+	if value := strings.TrimSpace(os.Getenv("SLOPELINT_SIMILARITY_THRESHOLD")); value != "" {
+		threshold, err = strconv.ParseFloat(value, 64)
+		if err != nil || !(threshold > 0 && threshold < 1) {
+			return nil, fmt.Errorf(
+				"SLOPELINT_SIMILARITY_THRESHOLD must be a number between 0 and 1; got %q",
+				value,
+			)
+		}
+	}
+
 	return &lint.SimilarityOptions{
 		CI:              mode == similarityCI,
 		CacheEnabled:    cacheActive,
 		AcceptedPairIDs: similarityAcceptedPairIDs(),
+		EmbeddingModel:  strings.TrimSpace(os.Getenv("SLOPELINT_EMBEDDING_MODEL")),
+		Threshold:       threshold,
 	}, nil
 }
 

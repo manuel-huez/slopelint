@@ -22,7 +22,12 @@ func populateSimilarityScanVectors(
 	cacheRoot string,
 	opts SimilarityOptions,
 ) (vectors similarityVectorMatrices, err error) {
-	embeddings := newSimilarityEmbeddingRuntime(opts.embedder, cacheRoot, opts.CacheEnabled)
+	embeddings := &similarityEmbeddingRuntime{
+		embedder:  opts.embedder,
+		model:     opts.embeddingModel(),
+		cacheRoot: cacheRoot,
+		cache:     opts.CacheEnabled,
+	}
 
 	defer func() { err = errors.Join(err, embeddings.close()) }()
 
@@ -134,28 +139,17 @@ func similarityEmbeddingInputs(content string) []string {
 
 type similarityEmbeddingRuntime struct {
 	embedder     similarityEmbedder
+	model        string
 	cacheRoot    string
 	cache        bool
 	ownsEmbedder bool
-}
-
-func newSimilarityEmbeddingRuntime(
-	embedder similarityEmbedder,
-	cacheRoot string,
-	cacheEnabled bool,
-) *similarityEmbeddingRuntime {
-	return &similarityEmbeddingRuntime{
-		embedder:  embedder,
-		cacheRoot: cacheRoot,
-		cache:     cacheEnabled,
-	}
 }
 
 func (runtime *similarityEmbeddingRuntime) populate(
 	blocks []*similarityBlock,
 	kind similarityVectorKind,
 ) (similarityVectorMatrix, error) {
-	blockInputs, inputs := similarityVectorInputs(blocks, kind, nil)
+	blockInputs, inputs := similarityVectorInputs(blocks, kind, runtime.model, nil)
 	if err := runtime.populateInputs(inputs); err != nil {
 		return similarityVectorMatrix{}, err
 	}
@@ -171,7 +165,12 @@ func (runtime *similarityEmbeddingRuntime) populateDescriptions(
 	byBlock := make(map[*similarityBlock][]*similarityVectorInput, len(blocks))
 
 	for batch := range ready {
-		blockInputs, inputs := similarityVectorInputs(batch, similarityDescriptionVector, byKey)
+		blockInputs, inputs := similarityVectorInputs(
+			batch,
+			similarityDescriptionVector,
+			runtime.model,
+			byKey,
+		)
 		if err := runtime.populateInputs(inputs); err != nil {
 			return similarityVectorMatrix{}, err
 		}
@@ -250,7 +249,7 @@ func (runtime *similarityEmbeddingRuntime) ensureEmbedder() error {
 		return nil
 	}
 
-	embedder, err := newHTTPSimilarityEmbedder(os.Getenv(similarityLlamaURLEnv))
+	embedder, err := newHTTPSimilarityEmbedder(os.Getenv(similarityLlamaURLEnv), runtime.model)
 	if err != nil {
 		return err
 	}
@@ -272,6 +271,7 @@ func (runtime *similarityEmbeddingRuntime) close() error {
 func similarityVectorInputs(
 	blocks []*similarityBlock,
 	kind similarityVectorKind,
+	model string,
 	byKey map[string]*similarityVectorInput,
 ) ([][]*similarityVectorInput, []*similarityVectorInput) {
 	if byKey == nil {
@@ -300,7 +300,7 @@ func similarityVectorInputs(
 		chunked := len(chunks) > 1
 
 		for index, content := range chunks {
-			key := similarityVectorCacheKey(content, kind, chunked)
+			key := similarityVectorCacheKey(content, kind, chunked, model)
 
 			input := byKey[key]
 			if input == nil {
@@ -331,6 +331,7 @@ func similarityVectorCacheKey(
 	content string,
 	kind similarityVectorKind,
 	chunked bool,
+	model string,
 ) string {
 	cacheContent := content
 	if chunked {
@@ -341,7 +342,8 @@ func similarityVectorCacheKey(
 		cacheContent = similarityDescriptionVectorPrefix + cacheContent
 	}
 
-	fingerprint := similarityModelDigest + "\x00" + strconv.Itoa(
+	// The model name keys vectors so models never share cached vectors.
+	fingerprint := model + "\x00" + strconv.Itoa(
 		similarityVectorInputSchema,
 	) + "\x00" + cacheContent
 	sum := sha256.Sum256([]byte(fingerprint))

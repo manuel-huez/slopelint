@@ -12,7 +12,7 @@ import (
 func TestLlamaServerSimilarityIntegration(t *testing.T) {
 	t.Setenv(codexEnv, offText)
 
-	embedder, err := newHTTPSimilarityEmbedder(os.Getenv(similarityLlamaURLEnv))
+	embedder, err := newHTTPSimilarityEmbedder(os.Getenv(similarityLlamaURLEnv), similarityDefaultEmbeddingModel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestLlamaServerSimilarityIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(vectors) != 1 || len(vectors[0]) != similarityEmbeddingDimensions {
+	if len(vectors) != 1 || len(vectors[0]) == 0 {
 		t.Fatalf(
 			"live embeddings = %d vectors with %d dimensions",
 			len(vectors),

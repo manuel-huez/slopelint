@@ -20,22 +20,18 @@ const (
 	similarityVectorMagic       = "SLOPEV01"
 	similarityVectorValueBytes  = 4
 	similarityVectorInputSchema = 2
-
-	// Server setup must use these pinned GGUF weights; thresholds depend on this model.
-	similarityModelName   = "jina-embeddings-v2-base-code"
-	similarityModelDigest = "33a8a1b6a1cbba662f292d32bb55f8d109c0e6cb02de2d243a1b70705ea20986"
 )
 
 type similarityStamp struct {
-	Schema            int    `json:"schema"`
-	SourceDigest      string `json:"source_digest"`
-	RepositoryDigest  string `json:"repository_digest,omitempty"`
-	Model             string `json:"model"`
-	ModelDigest       string `json:"model_digest"`
-	DescriptionSchema int    `json:"description_schema,omitempty"`
-	DescriptionModel  string `json:"description_model,omitempty"`
-	DescriptionEffort string `json:"description_effort,omitempty"`
-	DescriptionDigest string `json:"description_digest,omitempty"`
+	Schema            int     `json:"schema"`
+	SourceDigest      string  `json:"source_digest"`
+	RepositoryDigest  string  `json:"repository_digest,omitempty"`
+	Model             string  `json:"model"`
+	Threshold         float64 `json:"threshold"`
+	DescriptionSchema int     `json:"description_schema,omitempty"`
+	DescriptionModel  string  `json:"description_model,omitempty"`
+	DescriptionEffort string  `json:"description_effort,omitempty"`
+	DescriptionDigest string  `json:"description_digest,omitempty"`
 	// Review attests that code review ran with this policy and found nothing.
 	Review        *codeReviewPolicy      `json:"review,omitempty"`
 	CheckedBlocks int                    `json:"checked_blocks"`
@@ -242,12 +238,13 @@ func newSimilarityStamp(
 	accepted []similarityAcceptance,
 	descriptionsEnabled bool,
 	descriptionDigest string,
+	opts SimilarityOptions,
 ) similarityStamp {
 	stamp := similarityStamp{
 		Schema:        similaritySchema,
 		SourceDigest:  sourceDigest,
-		Model:         similarityModelName,
-		ModelDigest:   similarityModelDigest,
+		Model:         opts.embeddingModel(),
+		Threshold:     opts.threshold(),
 		CheckedBlocks: checkedBlocks,
 		Accepted:      accepted,
 	}
@@ -262,10 +259,10 @@ func newSimilarityStamp(
 	return stamp
 }
 
-func (stamp similarityStamp) policyMatches() bool {
+func (stamp similarityStamp) policyMatches(opts SimilarityOptions) bool {
 	return stamp.Schema == similaritySchema &&
-		stamp.Model == similarityModelName &&
-		stamp.ModelDigest == similarityModelDigest &&
+		stamp.Model == opts.embeddingModel() &&
+		stamp.Threshold == opts.threshold() &&
 		(stamp.Review == nil || *stamp.Review == codeReviewCurrentPolicy) &&
 		stamp.descriptionPolicyMatches()
 }
@@ -284,11 +281,12 @@ func (stamp similarityStamp) descriptionPolicyMatches() bool {
 }
 
 func (stamp similarityStamp) covers(
+	opts SimilarityOptions,
 	sourceDigest string,
 	descriptionsEnabled bool,
 	reviewed bool,
 ) bool {
-	return stamp.policyMatches() &&
+	return stamp.policyMatches(opts) &&
 		stamp.SourceDigest == sourceDigest &&
 		(!descriptionsEnabled || stamp.DescriptionModel != "") &&
 		(!reviewed || stamp.Review != nil)
@@ -296,7 +294,11 @@ func (stamp similarityStamp) covers(
 
 // verifySimilarityStamp checks a committed stamp; a missing one has Schema 0.
 // Unless the Codex channel is off, the stamp must attest code review.
-func verifySimilarityStamp(stamp similarityStamp, sourceDigest string) error {
+func verifySimilarityStamp(
+	stamp similarityStamp,
+	sourceDigest string,
+	opts SimilarityOptions,
+) error {
 	if stamp.Schema == 0 {
 		return fmt.Errorf(
 			"%s is missing; run slopelint locally and commit the generated stamp",
@@ -304,7 +306,29 @@ func verifySimilarityStamp(stamp similarityStamp, sourceDigest string) error {
 		)
 	}
 
-	if !stamp.policyMatches() {
+	// Name the differing setting: CI must use the same model and threshold as
+	// the machine that wrote the stamp.
+	if stamp.Schema == similaritySchema && stamp.Model != opts.embeddingModel() {
+		return fmt.Errorf(
+			"%s uses embedding model %q, but %s is %q; use the same value everywhere",
+			similarityStampName,
+			stamp.Model,
+			similarityEmbeddingModelEnv,
+			opts.embeddingModel(),
+		)
+	}
+
+	if stamp.Schema == similaritySchema && stamp.Threshold != opts.threshold() {
+		return fmt.Errorf(
+			"%s uses similarity threshold %g, but %s is %g; use the same value everywhere",
+			similarityStampName,
+			stamp.Threshold,
+			similarityThresholdEnv,
+			opts.threshold(),
+		)
+	}
+
+	if !stamp.policyMatches(opts) {
 		return fmt.Errorf(
 			"%s uses an obsolete semantic similarity policy; run slopelint locally",
 			similarityStampName,

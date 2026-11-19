@@ -16,10 +16,11 @@ func reuseRenamedSimilarityDescriptions(
 	blocks []*similarityBlock,
 	previous similarityScanCache,
 	root string,
+	opts SimilarityOptions,
 ) error {
 	// Reuse records only from a validated scan with the current model/prompt policy.
 	// Keep exact source keys: renames still invalidate pairs, vectors, and attestations.
-	if !previous.Descriptions || !previous.policyMatches(previous.Descriptions) {
+	if !previous.Descriptions || !previous.policyMatches(opts, previous.Descriptions) {
 		return nil
 	}
 

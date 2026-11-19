@@ -403,9 +403,11 @@ func TestSimilarityThresholdUsesLocalityAndTestCode(t *testing.T) {
 	if sameFile, samePackage := similarityEmbeddingThreshold(
 		0,
 		false,
+		0,
 	), similarityEmbeddingThreshold(
 		1,
 		false,
+		0,
 	); sameFile >= samePackage {
 		t.Fatalf("same-file threshold %f must be below same-package %f", sameFile, samePackage)
 	}
@@ -413,31 +415,39 @@ func TestSimilarityThresholdUsesLocalityAndTestCode(t *testing.T) {
 	if production, testCode := similarityEmbeddingThreshold(
 		0,
 		false,
+		0,
 	), similarityEmbeddingThreshold(
 		0,
 		true,
+		0,
 	); production >= testCode {
 		t.Fatalf("production threshold %f must be below test threshold %f", production, testCode)
 	}
 
+	// A configured threshold shifts every gate; test offsets and the cap stay.
 	tests := []struct {
-		name string
-		tier int
-		test bool
-		want float64
+		name  string
+		tier  int
+		test  bool
+		shift float64
+		want  float64
 	}{
 		{name: similaritySameFileCase, tier: 0, want: 0.970},
 		{name: similaritySamePackageCase, tier: 1, want: 0.975},
 		{name: "sibling package", tier: 2, want: 0.980},
 		{name: "test code", tier: 0, test: true, want: 0.995},
 		{name: "sibling test code", tier: 2, test: true, want: 0.999},
+		{name: "lower same file", tier: 0, shift: -0.02, want: 0.950},
+		{name: "lower sibling package", tier: 2, shift: -0.02, want: 0.960},
+		{name: "lower sibling test code", tier: 2, test: true, shift: -0.02, want: 0.985},
+		{name: "higher test code cap", tier: 0, test: true, shift: 0.02, want: 0.999},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := similarityEmbeddingThreshold(test.tier, test.test)
+			got := similarityEmbeddingThreshold(test.tier, test.test, test.shift)
 			if math.Abs(got-test.want) > 1e-12 {
 				t.Fatalf("threshold = %f, want %f", got, test.want)
 			}
@@ -449,23 +459,26 @@ func TestSimilarityDescriptionThresholdUsesIndependentCalibration(t *testing.T) 
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		tier int
-		test bool
-		want float64
+		name  string
+		tier  int
+		test  bool
+		shift float64
+		want  float64
 	}{
 		{name: similaritySameFileCase, tier: 0, want: 0.950},
 		{name: similaritySamePackageCase, tier: 1, want: 0.960},
 		{name: "sibling package", tier: 2, want: 0.958},
 		{name: "test code", tier: 0, test: true, want: 0.965},
 		{name: "sibling test code", tier: 2, test: true, want: 0.975},
+		{name: "lower same file", tier: 0, shift: -0.02, want: 0.930},
+		{name: "higher sibling test code", tier: 2, test: true, shift: 0.02, want: 0.995},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := similarityDescriptionThreshold(test.tier, test.test)
+			got := similarityDescriptionThreshold(test.tier, test.test, test.shift)
 			if math.Abs(got-test.want) > 1e-12 {
 				t.Fatalf("threshold = %f, want %f", got, test.want)
 			}
@@ -493,7 +506,7 @@ func TestSimilaritySkipsPackagesBeyondImmediateRelations(t *testing.T) {
 		{{1, 0}},
 	})
 
-	if _, ok := similarityMatchForPair(blocks, matrices, 0, 1); ok {
+	if _, ok := similarityMatchForPair(blocks, matrices, 0, 1, 0); ok {
 		t.Fatal("distant package branches were compared")
 	}
 }
@@ -692,7 +705,7 @@ func TestSimilarityStructureCannotBypassEmbeddingThreshold(t *testing.T) {
 
 	if matches := groupSimilarityMatches(
 		blocks,
-		scanSimilarityPairs(blocks, matrices, nil),
+		scanSimilarityPairs(blocks, matrices, nil, 0),
 	); len(
 		matches,
 	) != 0 {
@@ -735,7 +748,7 @@ func TestSimilarityDescriptionIsIndependentAndSameKindOnly(t *testing.T) {
 
 	blocks := makeBlocks(false, false)
 
-	match, ok := similarityMatchForPair(blocks, matrices, 0, 1)
+	match, ok := similarityMatchForPair(blocks, matrices, 0, 1, 0)
 	if !ok {
 		t.Fatal("behavior-equivalent pair was not reported independently")
 	}
@@ -755,6 +768,7 @@ func TestSimilarityDescriptionIsIndependentAndSameKindOnly(t *testing.T) {
 		crossKind,
 		0,
 		1,
+		0,
 	); ok {
 		t.Fatal("production and test descriptions matched across shapes")
 	}
@@ -779,7 +793,7 @@ func TestSimilarityCompactsExactCopyGroups(t *testing.T) {
 		{{1, 0}},
 	})
 
-	matches := groupSimilarityMatches(blocks, scanSimilarityPairs(blocks, matrices, nil))
+	matches := groupSimilarityMatches(blocks, scanSimilarityPairs(blocks, matrices, nil, 0))
 	if len(matches) != 1 {
 		t.Fatalf("exact-copy groups = %d, want 1", len(matches))
 	}
@@ -789,13 +803,13 @@ func TestSimilarityCompactsExactCopyGroups(t *testing.T) {
 	}
 
 	changed := map[string]struct{}{blocks[3].Identity: {}}
-	if got := len(scanSimilarityPairs(blocks, matrices, changed)); got != len(blocks)-1 {
+	if got := len(scanSimilarityPairs(blocks, matrices, changed, 0)); got != len(blocks)-1 {
 		t.Fatalf("incremental pairs = %d, want %d", got, len(blocks)-1)
 	}
 
 	if got := len(groupSimilarityMatches(
 		blocks,
-		scanSimilarityPairs(blocks, matrices, changed),
+		scanSimilarityPairs(blocks, matrices, changed, 0),
 	)); got != 1 {
 		t.Fatalf("incremental exact-copy matches = %d, want 1", got)
 	}
@@ -847,7 +861,7 @@ func TestSimilarityPolicyChangeKeepsContentBoundAcceptances(t *testing.T) {
 		LeftHash:  left.ContentHash,
 		Right:     right.Identity,
 		RightHash: right.ContentHash,
-	}}, false, "")
+	}}, false, "", SimilarityOptions{})
 	stamp.Schema--
 
 	got := carrySimilarityAcceptances(stamp, map[string]string{

@@ -137,7 +137,7 @@ func preflightSimilarityCI(dir string, opts *SimilarityOptions) error {
 		return err
 	}
 
-	if err := verifySimilarityStamp(stamp, stamp.SourceDigest); err != nil {
+	if err := verifySimilarityStamp(stamp, stamp.SourceDigest, *opts); err != nil {
 		return err
 	}
 

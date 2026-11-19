@@ -177,3 +177,28 @@ func TestSimilarityModeExplicitLocalOverridesCI(t *testing.T) {
 		t.Fatalf("similarity mode = %d, want local", mode)
 	}
 }
+
+func TestSimilarityOptionsReadModelAndThreshold(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "local")
+	t.Setenv("SLOPELINT_EMBEDDING_MODEL", " custom-model ")
+	t.Setenv("SLOPELINT_SIMILARITY_THRESHOLD", "0.95")
+
+	options, err := similarityOptionsFromEnv(false)
+	if err != nil || options.EmbeddingModel != "custom-model" || options.Threshold != 0.95 {
+		t.Fatalf("options = %+v, err = %v", options, err)
+	}
+
+	for _, value := range []string{"high", "0", "1", "NaN"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("SLOPELINT_SIMILARITY_THRESHOLD", value)
+
+			var stderr strings.Builder
+
+			code := runStandalone(t.Context(), []string{cacheDisabled, "."}, io.Discard, &stderr)
+			if code != exitFailure ||
+				!strings.Contains(stderr.String(), "SLOPELINT_SIMILARITY_THRESHOLD must be") {
+				t.Fatalf("exit = %d, stderr = %q", code, stderr.String())
+			}
+		})
+	}
+}

@@ -23,7 +23,7 @@ import (
 
 const (
 	// Matching policy changes rescore findings without changing content-addressed vectors.
-	similaritySchema        = 13
+	similaritySchema        = 14
 	similarityMinimumBlocks = 2
 	// Immediate siblings and parent-child packages share refactor ownership.
 	// Deeper branches do not; skipping them bounds cold all-pairs work.
@@ -49,6 +49,8 @@ const (
 
 	// Related analyzer functions score highly even when behavior differs. Precision-first
 	// thresholds keep only near-identical embeddings; locality still lowers nearby gates.
+	// These values are tuned for the default model. A configured threshold shifts
+	// every source and description gate by its difference from the same-file gate.
 	similaritySameFileThreshold    = 0.970
 	similaritySamePackageThreshold = 0.975
 	similarityDistantThreshold     = 0.980
@@ -61,17 +63,41 @@ const (
 	similarityDescriptionSamePackageThreshold = 0.960
 	similarityDescriptionDistantThreshold     = 0.958
 	similarityDescriptionTestOffset           = 0.015
+
+	// The stamp records model and threshold so CI rejects mixed settings.
+	similarityDefaultEmbeddingModel = "jina-embeddings-v2-base-code"
+	similarityEmbeddingModelEnv     = "SLOPELINT_EMBEDDING_MODEL"
+	similarityThresholdEnv          = "SLOPELINT_SIMILARITY_THRESHOLD"
 )
 
-// SimilarityOptions controls repo-wide semantic duplicate analysis.
+// SimilarityOptions controls repo-wide semantic duplicate analysis. A zero
+// EmbeddingModel or Threshold selects the tuned default.
 type SimilarityOptions struct {
 	CI              bool
 	CacheEnabled    bool
 	cacheDir        string
 	AcceptedPairIDs []string
+	EmbeddingModel  string
+	Threshold       float64
 	embedder        similarityEmbedder
 	describer       similarityDescriber
 	reviewer        codeReviewer
+}
+
+func (opts SimilarityOptions) embeddingModel() string {
+	if opts.EmbeddingModel == "" {
+		return similarityDefaultEmbeddingModel
+	}
+
+	return opts.EmbeddingModel
+}
+
+func (opts SimilarityOptions) threshold() float64 {
+	if opts.Threshold == 0 {
+		return similaritySameFileThreshold
+	}
+
+	return opts.Threshold
 }
 
 type similarityBlock struct {
@@ -128,6 +154,7 @@ type similarityVectorMatrices struct {
 type similarityScanResult struct {
 	rawMatches        []similarityMatch
 	cacheRoot         string
+	descriptions      bool
 	descriptionDigest string
 }
 
@@ -159,7 +186,7 @@ func checkSemanticCode(
 	}
 
 	if opts.CI {
-		return nil, verifySimilarityStamp(check.stamp, check.sourceDigest)
+		return nil, verifySimilarityStamp(check.stamp, check.sourceDigest, opts)
 	}
 
 	runtime, err := codexRuntimeForOptions(ctx, opts)
@@ -168,7 +195,7 @@ func checkSemanticCode(
 	}
 
 	if check.stamp.Schema != 0 &&
-		check.stamp.covers(check.sourceDigest, runtime.enabled, runtime.reviewer != nil) {
+		check.stamp.covers(opts, check.sourceDigest, runtime.enabled, runtime.reviewer != nil) {
 		// A current stamp proves both checks were clean for this source. Refresh
 		// repository attestations when their file-selection rule changes.
 		return nil, refreshSimilarityStamp(check.root, check.stamp)
@@ -233,8 +260,9 @@ func checkSimilarCode(
 			check.root,
 			runtime.enabled,
 			check.sourceDigest,
+			opts,
 		)
-		if ok && cache.covers(check.sourceDigest, runtime.enabled) {
+		if ok && cache.covers(opts, check.sourceDigest, runtime.enabled) {
 			findings, valid := cache.replayFindings(check.root)
 			if valid {
 				return acceptSimilarityFindings(
@@ -243,7 +271,7 @@ func checkSimilarCode(
 					cache.Descriptions,
 					cache.Blocks,
 					findings,
-					opts.AcceptedPairIDs,
+					opts,
 				)
 			}
 		}
@@ -283,6 +311,7 @@ func analyzeChangedSimilarCode(
 			check.root,
 			descriptionRuntime.enabled,
 			check.sourceDigest,
+			opts,
 		)
 	}
 
@@ -318,17 +347,17 @@ func analyzeChangedSimilarCode(
 
 	cachedBlocks := cacheSimilarityBlocks(blocks)
 
-	findings := similarityFindingsForMatches(matches)
+	findings := similarityFindingsForMatches(matches, opts)
 	if opts.CacheEnabled {
 		// Scan cache is an optimization only. Source digest and committed stamp
 		// remain the correctness boundary.
 		if storeSimilarityScanCache(
 			scan,
 			check,
-			descriptionRuntime.enabled,
 			files,
 			cachedBlocks,
 			findings,
+			opts,
 		) == nil {
 			maybePruneCaches(opts.cacheDir)
 		}
@@ -340,7 +369,7 @@ func analyzeChangedSimilarCode(
 		descriptionRuntime.enabled,
 		cachedBlocks,
 		findings,
-		opts.AcceptedPairIDs,
+		opts,
 	)
 }
 
@@ -401,6 +430,7 @@ func similarityMatchesForBlocks(
 	opts SimilarityOptions,
 ) (result similarityScanResult, err error) {
 	result.cacheRoot = cacheRoot
+	result.descriptions = descriptionRuntime.enabled
 
 	if len(blocks) < similarityMinimumBlocks {
 		result.descriptionDigest, err = similarityDescriptionsDigest(nil)
@@ -411,7 +441,7 @@ func similarityMatchesForBlocks(
 		blocks,
 		previous,
 		descriptionRuntime.enabled,
-		opts.CacheEnabled,
+		opts,
 	)
 
 	if noChangedBlocks {
@@ -442,6 +472,7 @@ func similarityMatchesForBlocks(
 			descriptionBlocks,
 			previous,
 			cacheRoot,
+			opts,
 		); err != nil {
 			return similarityScanResult{}, err
 		}
@@ -472,6 +503,7 @@ func similarityMatchesForBlocks(
 		scanBlocks,
 		vectors,
 		changed,
+		opts.threshold()-similaritySameFileThreshold,
 	)
 	if previous.Schema != 0 {
 		result.rawMatches = append(
@@ -510,13 +542,13 @@ func previousSimilarityScan(
 	blocks []*similarityBlock,
 	previous similarityScanCache,
 	descriptions bool,
-	cacheEnabled bool,
+	opts SimilarityOptions,
 ) (similarityScanCache, map[string]struct{}, bool) {
-	if !cacheEnabled || previous.Schema == 0 {
+	if !opts.CacheEnabled || previous.Schema == 0 {
 		return similarityScanCache{}, nil, false
 	}
 
-	if !previous.policyMatches(descriptions) {
+	if !previous.policyMatches(opts, descriptions) {
 		return similarityScanCache{}, nil, false
 	}
 
@@ -572,13 +604,13 @@ func acceptSimilarityFindings(
 	descriptions bool,
 	blocks []similarityCachedBlock,
 	findings []similarityFinding,
-	requestedIDs []string,
+	opts SimilarityOptions,
 ) ([]Issue, similarityStamp, error) {
 	acceptances, issues, err := reviewSimilarityFindings(
 		findings,
 		check.stamp,
 		similarityBlockHashes(blocks),
-		requestedIDs,
+		opts.AcceptedPairIDs,
 	)
 	if err != nil || len(issues) > 0 {
 		return issues, similarityStamp{}, err
@@ -592,15 +624,21 @@ func acceptSimilarityFindings(
 		acceptances,
 		descriptions,
 		descriptionDigest,
+		opts,
 	), nil
 }
 
-func similarityFindingsForMatches(matches []similarityMatch) []similarityFinding {
+func similarityFindingsForMatches(
+	matches []similarityMatch,
+	opts SimilarityOptions,
+) []similarityFinding {
+	shift := opts.threshold() - similaritySameFileThreshold
 	findings := make([]similarityFinding, 0, len(matches))
+
 	for _, match := range matches {
 		findings = append(findings, similarityFinding{
 			acceptance: match.acceptance(),
-			issue:      match.issue(),
+			issue:      match.issue(shift),
 		})
 	}
 

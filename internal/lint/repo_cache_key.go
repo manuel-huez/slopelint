@@ -195,7 +195,7 @@ type repoAnalysisSimilarityFingerprint struct {
 	AcceptedPairIDs   []string          `json:"accepted_pair_ids,omitempty"`
 	Schema            int               `json:"schema"`
 	Model             string            `json:"model"`
-	ModelDigest       string            `json:"model_digest"`
+	Threshold         float64           `json:"threshold"`
 	Descriptions      bool              `json:"descriptions"`
 	DescriptionSchema int               `json:"description_schema,omitempty"`
 	DescriptionModel  string            `json:"description_model,omitempty"`
@@ -218,8 +218,8 @@ func repoAnalysisSimilarityKey(
 		CI:              opts.CI,
 		AcceptedPairIDs: accepted,
 		Schema:          similaritySchema,
-		Model:           similarityModelName,
-		ModelDigest:     similarityModelDigest,
+		Model:           opts.embeddingModel(),
+		Threshold:       opts.threshold(),
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv(codexEnv)))

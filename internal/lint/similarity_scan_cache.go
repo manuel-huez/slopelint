@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	similarityScanCacheSchema    = 7
+	similarityScanCacheSchema    = 8
 	similarityScanCacheSnapshots = 16
 	similarityScanCacheExt       = ".json.gz"
 )
@@ -28,7 +28,7 @@ type similarityScanCache struct {
 	SimilaritySchema  int                       `json:"similarity_schema"`
 	SourceDigest      string                    `json:"source_digest"`
 	Model             string                    `json:"model"`
-	ModelDigest       string                    `json:"model_digest"`
+	Threshold         float64                   `json:"threshold"`
 	Descriptions      bool                      `json:"descriptions"`
 	DescriptionSchema int                       `json:"description_schema,omitempty"`
 	DescriptionModel  string                    `json:"description_model,omitempty"`
@@ -92,19 +92,22 @@ type similarityScanPolicy struct {
 	ScanSchema        int
 	SimilaritySchema  int
 	Model             string
-	ModelDigest       string
+	Threshold         float64
 	Descriptions      bool
 	DescriptionSchema int
 	DescriptionModel  string
 	DescriptionEffort string
 }
 
-func (cache similarityScanCache) policyMatches(descriptions bool) bool {
+// policyMatches includes the threshold because cached matches and findings
+// are already scored. Vectors are cached by model only, so a threshold change
+// rescores without new embeddings.
+func (cache similarityScanCache) policyMatches(opts SimilarityOptions, descriptions bool) bool {
 	want := similarityScanPolicy{
 		ScanSchema:       similarityScanCacheSchema,
 		SimilaritySchema: similaritySchema,
-		Model:            similarityModelName,
-		ModelDigest:      similarityModelDigest,
+		Model:            opts.embeddingModel(),
+		Threshold:        opts.threshold(),
 		Descriptions:     descriptions,
 	}
 
@@ -118,7 +121,7 @@ func (cache similarityScanCache) policyMatches(descriptions bool) bool {
 		ScanSchema:        cache.Schema,
 		SimilaritySchema:  cache.SimilaritySchema,
 		Model:             cache.Model,
-		ModelDigest:       cache.ModelDigest,
+		Threshold:         cache.Threshold,
 		Descriptions:      cache.Descriptions,
 		DescriptionSchema: cache.DescriptionSchema,
 		DescriptionModel:  cache.DescriptionModel,
@@ -127,7 +130,7 @@ func (cache similarityScanCache) policyMatches(descriptions bool) bool {
 
 	digestLength := 0
 	if descriptions {
-		digestLength = len(similarityModelDigest)
+		digestLength = hex.EncodedLen(sha256.Size)
 	}
 
 	return got == want &&
@@ -135,8 +138,12 @@ func (cache similarityScanCache) policyMatches(descriptions bool) bool {
 		len(cache.DescriptionDigest) == digestLength
 }
 
-func (cache similarityScanCache) covers(sourceDigest string, descriptions bool) bool {
-	return cache.policyMatches(descriptions) && cache.SourceDigest == sourceDigest
+func (cache similarityScanCache) covers(
+	opts SimilarityOptions,
+	sourceDigest string,
+	descriptions bool,
+) bool {
+	return cache.policyMatches(opts, descriptions) && cache.SourceDigest == sourceDigest
 }
 
 func loadSimilarityScanCache(
@@ -144,6 +151,7 @@ func loadSimilarityScanCache(
 	moduleRoot string,
 	descriptions bool,
 	sourceDigest string,
+	opts SimilarityOptions,
 ) (similarityScanCache, bool) {
 	exactPath := similarityScanCachePath(
 		root,
@@ -151,7 +159,7 @@ func loadSimilarityScanCache(
 		descriptions,
 		sourceDigest,
 	)
-	if cache, ok := readSimilarityScanCache(exactPath); ok {
+	if cache, ok := readSimilarityScanCache(exactPath, opts); ok {
 		return cache, true
 	}
 
@@ -161,7 +169,7 @@ func loadSimilarityScanCache(
 			continue
 		}
 
-		if cache, ok := readSimilarityScanCache(snapshot.path); ok {
+		if cache, ok := readSimilarityScanCache(snapshot.path, opts); ok {
 			return cache, true
 		}
 	}
@@ -169,7 +177,7 @@ func loadSimilarityScanCache(
 	return similarityScanCache{}, false
 }
 
-func readSimilarityScanCache(path string) (similarityScanCache, bool) {
+func readSimilarityScanCache(path string, opts SimilarityOptions) (similarityScanCache, bool) {
 	file, err := os.Open(path)
 	if err != nil {
 		return similarityScanCache{}, false
@@ -190,7 +198,7 @@ func readSimilarityScanCache(path string) (similarityScanCache, bool) {
 		return similarityScanCache{}, false
 	}
 
-	if cache.policyMatches(cache.Descriptions) {
+	if cache.policyMatches(opts, cache.Descriptions) {
 		refreshCacheEntry(path)
 	}
 
@@ -337,24 +345,24 @@ func validSimilarityCachedBlockLocation(block similarityCachedBlock) bool {
 func storeSimilarityScanCache(
 	scan similarityScanResult,
 	check similarityCheck,
-	descriptions bool,
 	files []similarityCachedFile,
 	blocks []similarityCachedBlock,
 	findings []similarityFinding,
+	opts SimilarityOptions,
 ) error {
 	cache := similarityScanCache{
 		Schema:           similarityScanCacheSchema,
 		SimilaritySchema: similaritySchema,
 		SourceDigest:     check.sourceDigest,
-		Model:            similarityModelName,
-		ModelDigest:      similarityModelDigest,
-		Descriptions:     descriptions,
+		Model:            opts.embeddingModel(),
+		Threshold:        opts.threshold(),
+		Descriptions:     scan.descriptions,
 		Files:            files,
 		Blocks:           blocks,
 		Matches:          make([]similarityCachedMatch, 0, len(scan.rawMatches)),
 		Findings:         make([]similarityCachedFinding, 0, len(findings)),
 	}
-	if descriptions {
+	if scan.descriptions {
 		cache.DescriptionSchema = similarityDescriptionPromptSchema
 		cache.DescriptionModel = similarityDescriptionModel
 		cache.DescriptionEffort = similarityDescriptionEffort
@@ -396,7 +404,7 @@ func storeSimilarityScanCache(
 	path := similarityScanCachePath(
 		scan.cacheRoot,
 		check.root,
-		descriptions,
+		scan.descriptions,
 		check.sourceDigest,
 	)
 	if err := writeSimilarityScanCache(path, cache); err != nil {

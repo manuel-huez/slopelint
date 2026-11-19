@@ -12,7 +12,10 @@ import (
 func TestLlamaServerSimilarityIntegration(t *testing.T) {
 	t.Setenv(codexEnv, offText)
 
-	embedder, err := newHTTPSimilarityEmbedder(os.Getenv(similarityLlamaURLEnv), similarityDefaultEmbeddingModel)
+	embedder, err := newHTTPSimilarityEmbedder(
+		os.Getenv(similarityLlamaURLEnv),
+		similarityDefaultEmbeddingModel,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

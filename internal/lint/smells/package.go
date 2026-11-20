@@ -35,6 +35,9 @@ type Package struct {
 	FSet             *token.FileSet
 	TypesPkg         *types.Package
 	TypesInfo        *types.Info
+	// ImportedParallelParams returns ParallelParams of a function in another
+	// package; nil when no summaries are available.
+	ImportedParallelParams func(*types.Func) []int
 }
 
 // RunDefault runs smell checks enabled by default.

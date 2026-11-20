@@ -20,7 +20,7 @@ const (
 
 // sizeLimitDeleteFirst leads size advice: removing unneeded code often fixes
 // the size, and splitting first would spread dead code across new owners.
-const sizeLimitDeleteFirst = "first delete code that is no longer needed (legacy compatibility layers, redundant checks, defensive code for cases that cannot happen)"
+const sizeLimitDeleteFirst = "first check what each part is for and who calls it, and delete what nothing needs (legacy paths, code only tests use, redundant checks, defensive code for cases that cannot happen)"
 
 // OutlineFinding is one finding in files[File] of a CheckSizes call.
 type OutlineFinding struct {
@@ -99,7 +99,7 @@ func godReceiverFindings(
 				Pos:  typ.Pos,
 				Kind: "god_receiver",
 				Message: fmt.Sprintf(
-					"type %q has %d methods across %d files; "+sizeLimitDeleteFirst+", then split the rest by responsibility so each new type owns its own state; moving methods to functions that take the type as a parameter is not a fix",
+					"type %q has %d methods across %d files, counting functions that take a pointer to it first; "+sizeLimitDeleteFirst+", then split the rest by responsibility so each new type owns its own state; turning methods into functions that take the type is not a fix",
 					typ.Name,
 					methods[typ.Name],
 					len(methodFiles[typ.Name]),
@@ -154,7 +154,7 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 	if fn.Body && lines > funcDeclLineLimit {
 		report(
 			"long_function",
-			"function %q has %d lines; "+sizeLimitDeleteFirst+", then split the rest by responsibility",
+			"function %q has %d lines; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
 			fn.Name,
 			lines,
 		)
@@ -234,18 +234,35 @@ func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {
 		Body:      fn.Body != nil,
 	}
 
-	recv := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func).Signature().Recv()
-	if recv == nil {
+	signature := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func).Signature()
+	if recv := signature.Recv(); recv != nil {
+		typ := types.Unalias(recv.Type())
+		if ptr, ok := typ.(*types.Pointer); ok {
+			typ = types.Unalias(ptr.Elem())
+		}
+
+		// Origin maps generic receivers such as Set[T] to their base type.
+		out.Receiver = typ.(*types.Named).Origin().Obj().Name()
+
 		return out
 	}
 
-	typ := types.Unalias(recv.Type())
-	if ptr, ok := typ.(*types.Pointer); ok {
-		typ = types.Unalias(ptr.Elem())
+	// A function that takes a pointer to a package type first is a method in
+	// all but name, so turning methods into such functions does not shrink
+	// the type.
+	if signature.Params().Len() == 0 {
+		return out
 	}
 
-	// Origin maps generic receivers such as Set[T] to their base type.
-	out.Receiver = typ.(*types.Named).Origin().Obj().Name()
+	ptr, ok := types.Unalias(signature.Params().At(0).Type()).(*types.Pointer)
+	if !ok {
+		return out
+	}
+
+	if named, ok := types.Unalias(ptr.Elem()).(*types.Named); ok &&
+		named.Obj().Pkg() == l.pkg.TypesPkg {
+		out.Receiver = named.Origin().Obj().Name()
+	}
 
 	return out
 }

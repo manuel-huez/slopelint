@@ -3,6 +3,7 @@ package lint
 import (
 	"go/ast"
 	"go/types"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,8 +27,9 @@ type resultSummary struct {
 }
 
 type callSummary struct {
-	always  []guardContract
-	results map[int]resultSummary
+	always         []guardContract
+	results        map[int]resultSummary
+	parallelParams []int
 }
 
 type summaryBinding struct {
@@ -41,6 +43,7 @@ type summarizableFunc struct {
 	key         string
 	bindings    []summaryBinding
 	resultCount int
+	parallel    []int
 }
 
 type classifiedReturn struct {
@@ -409,7 +412,8 @@ func guardContractKey(contract guardContract) string {
 }
 
 func callSummaryEqual(left, right callSummary) bool {
-	if !guardContractsEqual(left.always, right.always) {
+	if !guardContractsEqual(left.always, right.always) ||
+		!slices.Equal(left.parallelParams, right.parallelParams) {
 		return false
 	}
 
@@ -499,7 +503,10 @@ func (c *callFacts) forCall(call *ast.CallExpr) callSummary {
 }
 
 func (c *callFacts) exported(fn summarizableFunc) callSummary {
-	return c.withExplicit(fn.key, c.inferred[fn.key])
+	summary := c.withExplicit(fn.key, c.inferred[fn.key])
+	summary.parallelParams = fn.parallel
+
+	return summary
 }
 
 func (c *callFacts) withExplicit(key string, summary callSummary) callSummary {

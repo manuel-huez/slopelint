@@ -60,7 +60,8 @@ type Func struct {
 	// Literal marks an anonymous function value: a Go func literal, an inline
 	// TypeScript callback, or a Python lambda.
 	Literal bool
-	// Receiver names the type or class that owns a method.
+	// Receiver names the type or class that owns a method. For Go it also
+	// names the package type a plain function takes a pointer to first.
 	Receiver string
 }
 

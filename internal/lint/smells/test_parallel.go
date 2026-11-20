@@ -77,8 +77,15 @@ func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*a
 
 	name := fn.Name.Name
 
+	calls := parallelCalls(l.pkg.TypesInfo, fn.Body, param, funcs, l.pkg.ImportedParallelParams)
+
 	switch {
-	case l.callsParallel(fn.Body, param, funcs):
+	case calls > 1:
+		l.report(fn.Name.Pos(), "test_not_parallel", fmt.Sprintf(
+			`test %q calls t.Parallel() more than once, directly or through a helper, and Go panics on the second call; keep only one`,
+			name,
+		))
+	case calls == 1:
 		l.checkSubtests(fn, param, funcs)
 
 		if marker != nil {
@@ -109,19 +116,23 @@ func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*a
 	}
 }
 
-// callsParallel matches t.Parallel() among the top-level statements of body,
-// directly or in a same-package helper given t. A subtest's Parallel does not
-// make its parent parallel, so function literals are not searched.
-func (l testParallelCheck) callsParallel(
+// parallelCalls counts the top-level statements of body that call
+// t.Parallel() on param, directly or in a helper given param: a same-package
+// helper one level deep, or an imported one through its call summary. A
+// subtest's Parallel does not make its parent parallel, so function literals
+// are not searched.
+func parallelCalls(
+	info *types.Info,
 	body *ast.BlockStmt,
 	param types.Object,
 	funcs map[types.Object]*ast.FuncDecl,
-) bool {
+	imported func(*types.Func) []int,
+) int {
 	if param == nil {
-		return false
+		return 0
 	}
 
-	info := l.pkg.TypesInfo
+	count := 0
 
 	for _, stmt := range body.List {
 		call, ok := exprStmtCall(stmt)
@@ -132,36 +143,66 @@ func (l testParallelCheck) callsParallel(
 		if selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok &&
 			isPackageFuncCall(info, call, testingImportPath, "Parallel") &&
 			identObject(info, selector.X) == param {
-			return true
+			count++
+
+			continue
 		}
 
-		if fn, _, ok := calledFunc(info, call); ok && funcs[fn] != nil &&
-			l.helperCallsParallel(call, fn, param, funcs[fn]) {
-			return true
+		if helperCallsParallel(info, call, param, funcs, imported) {
+			count++
 		}
+	}
+
+	return count
+}
+
+func helperCallsParallel(
+	info *types.Info,
+	call *ast.CallExpr,
+	param types.Object,
+	funcs map[types.Object]*ast.FuncDecl,
+	imported func(*types.Func) []int,
+) bool {
+	fn, _, ok := calledFunc(info, call)
+	if !ok {
+		return false
+	}
+
+	params := fn.Signature().Params()
+
+	for index, arg := range call.Args {
+		if identObject(info, arg) != param || index >= params.Len() {
+			continue
+		}
+
+		if helper := funcs[fn]; helper != nil {
+			return parallelCalls(info, helper.Body, params.At(index), nil, imported) > 0
+		}
+
+		return imported != nil && slices.Contains(imported(fn), index)
 	}
 
 	return false
 }
 
-// helperCallsParallel checks one helper level: the helper's own calls are
-// matched only as direct t.Parallel() calls on the parameter given t.
-func (l testParallelCheck) helperCallsParallel(
-	call *ast.CallExpr,
-	fn *types.Func,
-	param types.Object,
-	helper *ast.FuncDecl,
-) bool {
-	params := fn.Signature().Params()
+// ParallelParams returns the indexes of fn's parameters that fn calls
+// t.Parallel() on, so tests in other packages see helpers that do it.
+func ParallelParams(info *types.Info, fn *ast.FuncDecl, imported func(*types.Func) []int) []int {
+	obj, ok := info.Defs[fn.Name].(*types.Func)
+	if !ok || fn.Body == nil {
+		return nil
+	}
 
-	for index, arg := range call.Args {
-		if index < params.Len() && identObject(l.pkg.TypesInfo, arg) == param &&
-			l.callsParallel(helper.Body, params.At(index), nil) {
-			return true
+	var out []int
+
+	params := obj.Signature().Params()
+	for index := range params.Len() {
+		if parallelCalls(info, fn.Body, params.At(index), nil, imported) > 0 {
+			out = append(out, index)
 		}
 	}
 
-	return false
+	return out
 }
 
 // changesProcessState matches t.Setenv or t.Chdir anywhere in body, or in
@@ -215,7 +256,14 @@ func (l testParallelCheck) checkSubtests(
 
 		for _, stmt := range loop.Body.List {
 			call, lit, sub := l.subtest(stmt, param)
-			if lit == nil || l.callsParallel(lit.Body, sub, funcs) ||
+			if lit == nil ||
+				parallelCalls(
+					l.pkg.TypesInfo,
+					lit.Body,
+					sub,
+					funcs,
+					l.pkg.ImportedParallelParams,
+				) > 0 ||
 				l.changesProcessState(lit.Body, funcs, make(map[types.Object]struct{})) ||
 				writesOuterVariable(l.pkg.TypesInfo, lit) {
 				continue

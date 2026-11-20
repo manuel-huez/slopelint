@@ -459,3 +459,57 @@ func TestTableSubtests(t *testing.T) {
 		t.Fatalf("test_not_parallel findings = %q, want one for the plain table subtest", got)
 	}
 }
+
+// A helper in another package that calls t.Parallel() makes its caller
+// parallel, and reaching t.Parallel() twice is reported.
+func TestNotParallelFollowsImportedHelpers(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "harness", "harness.go"), `package harness
+
+import "testing"
+
+func RunParallel(t *testing.T) {
+	t.Parallel()
+}
+`)
+	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+
+import (
+	"testing"
+
+	"example.com/sample/harness"
+)
+
+func TestImportedHelper(t *testing.T) {
+	harness.RunParallel(t)
+
+	if testing.Short() {
+		t.Fatal("short")
+	}
+}
+
+func TestTwice(t *testing.T) {
+	t.Parallel()
+	harness.RunParallel(t)
+
+	if testing.Short() {
+		t.Fatal("short")
+	}
+}
+`)
+
+	var got []string
+
+	for _, issue := range lintInDir(t, tmp) {
+		if issue.Kind == testNotParallelKind {
+			got = append(got, issue.Message)
+		}
+	}
+
+	if len(got) != 1 ||
+		!strings.Contains(got[0], `test "TestTwice" calls t.Parallel() more than once`) {
+		t.Fatalf("test_not_parallel findings = %q, want one for TestTwice", got)
+	}
+}

@@ -52,7 +52,8 @@ func TestDetectsFunctionSizeLimits(t *testing.T) {
 
 	joined := joinMessages(lintInDir(t, tmp))
 	for _, want := range []string{
-		`function "long" has 101 lines` + sizeLimitDeleteFirst + "split the rest by responsibility",
+		`function "long" has 101 lines` + sizeLimitDeleteFirst +
+			"split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
 		"function literal has 41 lines" + sizeLimitDeleteFirst + "extract the rest into a named function",
 		`function "params" has 7 parameters` + sizeLimitDeleteFirst + "group related parameters into a struct or split the function",
 		`function "results" returns 4 results` + sizeLimitDeleteFirst + "return a named struct",
@@ -108,12 +109,15 @@ func TestDetectsGodReceiver(t *testing.T) {
 	tmp := newTestModule(t)
 	writeFile(t, filepath.Join(tmp, "big.go"),
 		methodSource("", "b *big[T]", "pointer", 21)+"\ntype big[T any] struct{}\n")
-	writeFile(t, filepath.Join(tmp, "big_more.go"), methodSource("", "b big[T]", "value", 20))
+	// A function taking *big first counts as a method; one taking big does not.
+	writeFile(t, filepath.Join(tmp, "big_more.go"), methodSource("", "b big[T]", "value", 19)+
+		"func moved[T any](b *big[T]) {}\nfunc byValue[T any](b big[T]) {}\n")
 
 	joined := joinMessages(lintInDir(t, tmp))
-	want := `type "big" has 41 methods across 2 files` + sizeLimitDeleteFirst +
+	want := `type "big" has 41 methods across 2 files, counting functions that take a pointer to it first` +
+		sizeLimitDeleteFirst +
 		"split the rest by responsibility so each new type owns its own state; " +
-		"moving methods to functions that take the type as a parameter is not a fix"
+		"turning methods into functions that take the type is not a fix"
 
 	if !strings.Contains(joined, want) {
 		t.Fatalf("expected %q, got:\n%s", want, joined)

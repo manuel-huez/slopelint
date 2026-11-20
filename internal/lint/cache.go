@@ -8,7 +8,7 @@ import (
 )
 
 // Bump when the persisted cache/replay format changes. Analysis keys track builds.
-const analysisCacheSchema = 13
+const analysisCacheSchema = 14
 
 const analysisCacheTypeDigestRefreshLimit = 8
 

@@ -28,8 +28,9 @@ type resultSummaryFact struct {
 }
 
 type callSummaryFact struct {
-	Always  []guardContractFact
-	Results []resultSummaryFact
+	Always         []guardContractFact
+	Results        []resultSummaryFact
+	ParallelParams []int
 }
 
 func (*callSummaryFact) AFact() {}
@@ -96,7 +97,8 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 
 func callSummaryFactFromSummary(summary callSummary) *callSummaryFact {
 	fact := &callSummaryFact{
-		Always: contractsToFacts(summary.always),
+		Always:         contractsToFacts(summary.always),
+		ParallelParams: summary.parallelParams,
 	}
 
 	for _, index := range sortedSummaryResultIndices(summary.results) {
@@ -115,7 +117,8 @@ func callSummaryFactFromSummary(summary callSummary) *callSummaryFact {
 
 func callSummaryFromFact(fact *callSummaryFact) callSummary {
 	summary := callSummary{
-		always: contractsFromFacts(fact.Always),
+		always:         contractsFromFacts(fact.Always),
+		parallelParams: fact.ParallelParams,
 	}
 
 	for _, result := range fact.Results {

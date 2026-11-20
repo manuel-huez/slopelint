@@ -110,7 +110,7 @@ than the typed Go rules.
 
 | Rules | Finds | Go | TS | Py |
 | --- | --- | :-: | :-: | :-: |
-| `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 100, literals over 40, over 6 params, types or classes over 40 methods | ✅ | ✅ | ✅ |
+| `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 100, literals over 40, over 6 params, types or classes over 40 methods (Go also counts functions that take `*T` first) | ✅ | ✅ | ✅ |
 | `long_result_list` | Over 3 results | ✅ | – | – |
 
 ### Tests
@@ -119,7 +119,7 @@ than the typed Go rules.
 | --- | --- | :-: | :-: | :-: |
 | `test_sleep` | Real sleeps in tests | ✅ | ✅ | ✅ |
 | `test_focused` | `.only`, `fit`, `fdescribe` | – | ✅ | – |
-| `test_no_assertion`, `test_not_parallel`, `test_fatal_panic`, `test_global_func_stub` | Tests that cannot fail, run serially, panic, or stub package functions | ✅ | – | – |
+| `test_no_assertion`, `test_not_parallel`, `test_fatal_panic`, `test_global_func_stub` | Tests that cannot fail, run serially or call `t.Parallel()` twice (helpers in other packages count), panic, or stub package functions | ✅ | – | – |
 | `table_test_grouping`, `const_value_test`, `repeated_test_fixture`, `test_support_filename` | Unnamed table cases, tests of constants, copied fixtures, misnamed test helpers | ✅ | – | – |
 
 ### Model: duplicates

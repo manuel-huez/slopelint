@@ -8,7 +8,7 @@ import (
 
 const (
 	oversizedOwnerFixtureLines = 1000
-	sizeLimitDeleteFirst       = "; first delete code that is no longer needed (legacy compatibility layers, redundant checks, defensive code for cases that cannot happen), then "
+	sizeLimitDeleteFirst       = "; first check what each part is for and who calls it, and delete what nothing needs (legacy paths, code only tests use, redundant checks, defensive code for cases that cannot happen), then "
 )
 
 func TestDetectsDuplicateValidationLadder(t *testing.T) {

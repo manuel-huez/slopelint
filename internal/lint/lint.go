@@ -6,6 +6,7 @@ import (
 	"go/types"
 	"maps"
 
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 	structurecheck "github.com/manuel-huez/slopelint/internal/lint/structure"
 )
 
@@ -115,6 +116,14 @@ func (l *linter) run(external func(*types.Func) (callSummary, bool)) {
 		explicit: explicit,
 		inferred: make(map[string]callSummary, len(l.funcs)),
 		external: external,
+	}
+
+	for index := range l.funcs {
+		l.funcs[index].parallel = smellcheck.ParallelParams(
+			l.pkg.TypesInfo,
+			l.funcs[index].decl,
+			l.importedParallelParams,
+		)
 	}
 
 	// Summary walks repeat the main walk, so their diagnostics are dropped.

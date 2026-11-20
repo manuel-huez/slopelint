@@ -1,6 +1,8 @@
 package lint
 
 import (
+	"go/types"
+
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
 	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
@@ -26,17 +28,24 @@ func (l *linter) scanPackageChecks() {
 
 func (l *linter) smellsPackage() *smellcheck.Package {
 	return &smellcheck.Package{
-		Files:            l.index.files,
-		ProductionFiles:  l.index.productionFiles,
-		TestFiles:        l.index.testFiles,
-		TestSupportFiles: l.index.testSupportFiles,
-		ProductionDecls:  l.index.productionDecls,
-		ProductionFuncs:  l.index.productionFuncs,
-		ProductionTypes:  l.index.productionTypes,
-		FSet:             l.pkg.FSet,
-		TypesPkg:         l.pkg.TypesPkg,
-		TypesInfo:        l.pkg.TypesInfo,
+		Files:                  l.index.files,
+		ProductionFiles:        l.index.productionFiles,
+		TestFiles:              l.index.testFiles,
+		TestSupportFiles:       l.index.testSupportFiles,
+		ProductionDecls:        l.index.productionDecls,
+		ProductionFuncs:        l.index.productionFuncs,
+		ProductionTypes:        l.index.productionTypes,
+		FSet:                   l.pkg.FSet,
+		TypesPkg:               l.pkg.TypesPkg,
+		TypesInfo:              l.pkg.TypesInfo,
+		ImportedParallelParams: l.importedParallelParams,
 	}
+}
+
+func (l *linter) importedParallelParams(fn *types.Func) []int {
+	summary, _ := l.calls.external(fn)
+
+	return summary.parallelParams
 }
 
 func (l *linter) addSmellFindings(findings []smellcheck.Finding) {

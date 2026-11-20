@@ -597,3 +597,55 @@ func Load(data []byte) (Payload, error) {
 		}
 	}
 }
+
+func TestRepoDeadCodeKeepsGoJSONExperimentHooks(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "go.mod"), `module example.com/sample
+
+go 1.22
+
+require github.com/go-json-experiment/json v0.0.0
+
+replace github.com/go-json-experiment/json => ./jsonexp
+`)
+	writeTestGoMod(t, filepath.Join(tmp, "jsonexp"), "github.com/go-json-experiment/json")
+	writeFile(t, filepath.Join(tmp, "jsonexp", "json.go"), `package json
+
+import "io"
+
+type Options interface{}
+
+func UnmarshalRead(io.Reader, any, ...Options) error { return nil }
+`)
+	writeFile(
+		t,
+		filepath.Join(tmp, "jsonexp", "jsontext", "jsontext.go"),
+		"package jsontext\n\ntype Decoder struct{}\n",
+	)
+	writeTestMain(t, tmp, `	_ = lib.Read(nil)`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"io"
+
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
+)
+
+type ticks struct{}
+
+func (*ticks) UnmarshalJSONFrom(*jsontext.Decoder) error { return nil }
+
+func Read(reader io.Reader) error {
+	var value ticks
+
+	return jsonv2.UnmarshalRead(reader, &value)
+}
+`)
+
+	if joined := joinMessages(lintInDir(t, tmp)); strings.Contains(joined, `"UnmarshalJSONFrom"`) {
+		t.Fatalf("go-json-experiment hook reported dead:\n%s", joined)
+	}
+}

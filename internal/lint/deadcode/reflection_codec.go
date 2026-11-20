@@ -147,6 +147,22 @@ var (
 	}
 )
 
+// reflectedJSONv2Codec covers encoding/json/v2 and go-json-experiment/json,
+// the module it came from, which keeps the same API.
+var reflectedJSONv2Codec = reflectedPackageCodec{
+	tag: reflectedJSONTag,
+	decodeFuncs: map[string]reflectedCodecFunc{
+		reflectedUnmarshalFunc: {argIndex: reflectedSecondArgIndex},
+		"UnmarshalDecode":      {argIndex: reflectedSecondArgIndex},
+		"UnmarshalRead":        {argIndex: reflectedSecondArgIndex},
+	},
+	marshalFuncs: map[string]reflectedCodecFunc{
+		reflectedMarshalFunc: reflectedFirstArgCodecFunc,
+		"MarshalEncode":      {argIndex: reflectedSecondArgIndex},
+		"MarshalWrite":       {argIndex: reflectedSecondArgIndex},
+	},
+}
+
 var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 	"encoding/gob": {
 		tag: "",
@@ -160,19 +176,8 @@ var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 		marshalFuncs: reflectedCodecFuncsWith(reflectedEncodeMarshalFuncs, "MarshalIndent"),
 	},
 	// v2 takes trailing options, so the value is not always the last argument.
-	"encoding/json/v2": {
-		tag: reflectedJSONTag,
-		decodeFuncs: map[string]reflectedCodecFunc{
-			reflectedUnmarshalFunc: {argIndex: reflectedSecondArgIndex},
-			"UnmarshalDecode":      {argIndex: reflectedSecondArgIndex},
-			"UnmarshalRead":        {argIndex: reflectedSecondArgIndex},
-		},
-		marshalFuncs: map[string]reflectedCodecFunc{
-			reflectedMarshalFunc: reflectedFirstArgCodecFunc,
-			"MarshalEncode":      {argIndex: reflectedSecondArgIndex},
-			"MarshalWrite":       {argIndex: reflectedSecondArgIndex},
-		},
-	},
+	"encoding/json/v2":                   reflectedJSONv2Codec,
+	"github.com/go-json-experiment/json": reflectedJSONv2Codec,
 	reflectedGoccyJSON: {
 		tag: reflectedJSONTag,
 		// goccy context hooks are only reachable through APIs that carry context.
@@ -500,7 +505,8 @@ func reflectedJSONTextParamErrorSignature(sig *types.Signature, name string) boo
 
 	ptr, ok := types.Unalias(sig.Params().At(0).Type()).(*types.Pointer)
 
-	return ok && namedTypeMatches(ptr.Elem(), "encoding/json/jsontext", name)
+	return ok && (namedTypeMatches(ptr.Elem(), "encoding/json/jsontext", name) ||
+		namedTypeMatches(ptr.Elem(), "github.com/go-json-experiment/json/jsontext", name))
 }
 
 func reflectedNoParamBytesErrorSignature(sig *types.Signature) bool {

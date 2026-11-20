@@ -59,17 +59,26 @@ type codeReviewPolicy struct {
 	Effort         string `json:"effort"`
 }
 
-// codeReviewTestGroupVersion 2 asks each group twice; see
-// combineTestGroupVotes.
-const codeReviewTestGroupVersion = 2
+const (
+	// codeReviewLanguageVersion 3 asks to delete stale suppressions and to
+	// name intended error fallbacks, and a finding needs two votes; see
+	// combineFindingVotes.
+	codeReviewLanguageVersion = 3
+	// codeReviewTestGroupVersion 2 asks each group twice; see
+	// combineTestGroupVotes.
+	codeReviewTestGroupVersion = 2
+	// codeReviewSplitHelperVersion 3 only advises inlining a fragment, and a
+	// fragment needs two votes; see combineFindingVotes.
+	codeReviewSplitHelperVersion = 3
+)
 
 var codeReviewCurrentPolicy = codeReviewPolicy{
-	Go:               1,
-	TypeScript:       1,
-	Python:           1,
+	Go:               codeReviewLanguageVersion,
+	TypeScript:       codeReviewLanguageVersion,
+	Python:           codeReviewLanguageVersion,
 	GoTestGroups:     codeReviewTestGroupVersion,
 	ScriptTestGroups: codeReviewTestGroupVersion,
-	GoSplitHelpers:   1,
+	GoSplitHelpers:   codeReviewSplitHelperVersion,
 	Model:            "gpt-6.1-terra",
 	Effort:           "low",
 }
@@ -296,6 +305,13 @@ func (review codeReview) generate(
 		}
 	}
 
+	if second := collector.secondVotes; len(second) > 0 {
+		collector.total += len(second)
+		if err := review.reviewer.review(ctx, second, collector.accept); err != nil {
+			return err
+		}
+	}
+
 	if collector.accepted != collector.total {
 		return fmt.Errorf(
 			"codex returned %d reviews for %d declarations",
@@ -331,12 +347,50 @@ func codeReviewRecordPath(root, key string) string {
 	return filepath.Join(root, "reviews", key[:2], key[2:]+".json")
 }
 
+// combineFindingVotes keeps a finding only when a second, separate answer
+// gives the same verdict; otherwise the item takes its kind's accepting
+// verdict. One answer flips on unchanged code too often for a finding that
+// cannot be overridden.
+func combineFindingVotes(
+	request codeReviewRequest,
+	first, second codeReviewRecord,
+) codeReviewRecord {
+	kinds := make(map[string]string, len(request.Items))
+	for _, item := range request.Items {
+		kinds[item.ID] = item.Kind
+	}
+
+	confirmed := make(map[string]string, len(second.Items))
+	for _, verdict := range second.Items {
+		confirmed[verdict.ID] = verdict.Verdict
+	}
+
+	for index, verdict := range first.Items {
+		if codeReviewFindingKinds[verdict.Verdict] != "" &&
+			confirmed[verdict.ID] != verdict.Verdict {
+			first.Items[index] = codeReviewVerdict{
+				ID:      verdict.ID,
+				Verdict: codeReviewVerdicts[kinds[verdict.ID]][0],
+			}
+		}
+	}
+
+	return first
+}
+
+func recordHasFinding(record codeReviewRecord) bool {
+	return slices.ContainsFunc(record.Items, func(item codeReviewVerdict) bool {
+		return codeReviewFindingKinds[item.Verdict] != ""
+	})
+}
+
 type codeReviewCollector struct {
 	sync.Mutex
 	policy       codeReviewPolicy
 	requested    map[string]codeReviewRequest
 	records      map[string]codeReviewRecord
 	firstVotes   map[string]codeReviewRecord
+	secondVotes  []codeReviewRequest
 	cacheRoot    string
 	cacheEnabled bool
 	accepted     int
@@ -354,14 +408,25 @@ func (collector *codeReviewCollector) accept(records []codeReviewRecord) error {
 		request := collector.requested[key]
 		collector.accepted++
 
-		if request.Items[0].Kind == codeReviewTestGroupItem {
-			first, voted := collector.firstVotes[key]
+		first, voted := collector.firstVotes[key]
+
+		switch request.Items[0].Kind {
+		case codeReviewTestGroupItem:
 			if !voted {
 				collector.firstVotes[key] = record
 				continue
 			}
 
 			record = combineTestGroupVotes(first, record)
+		default:
+			if voted {
+				record = combineFindingVotes(request, first, record)
+			} else if recordHasFinding(record) {
+				collector.firstVotes[key] = record
+				collector.secondVotes = append(collector.secondVotes, request)
+
+				continue
+			}
 		}
 
 		record.ID = ""

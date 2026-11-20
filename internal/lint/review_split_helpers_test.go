@@ -3,6 +3,7 @@ package lint
 import (
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -35,5 +36,33 @@ func TestCodeReviewSendsSplitHelpersWithCaller(t *testing.T) {
 			strings.Join(got, "\n"),
 			strings.Join(want, "\n"),
 		)
+	}
+}
+
+func TestCodeReviewNeedsTwoFragmentVotes(t *testing.T) {
+	tmp, _ := newReviewTestModule(t)
+
+	var votes atomic.Int32
+
+	model := &reviewTestModel{verdict: func(item codeReviewItem, text string) codeReviewVerdict {
+		if item.Kind == codeReviewSplitHelperItem && strings.Contains(text, "Part") &&
+			votes.Add(1) > 1 {
+			return codeReviewVerdict{Verdict: codeReviewOwnJob}
+		}
+
+		return reviewTestVerdict(item, text)
+	}}
+
+	issues, err := lintWithReviewForTest(t, tmp, t.TempDir(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if votes.Load() != 2 {
+		t.Fatalf("fragment votes = %d, want 2", votes.Load())
+	}
+
+	if hasIssueKind(issues, codeReviewFindingKinds[codeReviewFragment]) {
+		t.Fatalf("one fragment vote became a finding:\n%s", joinMessages(issues))
 	}
 }

@@ -263,8 +263,17 @@ func (model *reviewTestModel) review(
 	requests []codeReviewRequest,
 	accept func([]codeReviewRecord) error,
 ) error {
+	// A second vote on a finding asks the same declaration again; tests count
+	// declarations, so each is recorded once.
 	model.Lock()
-	model.requests = append(model.requests, requests...)
+	for _, request := range requests {
+		if !slices.ContainsFunc(
+			model.requests,
+			func(seen codeReviewRequest) bool { return seen.ID == request.ID },
+		) {
+			model.requests = append(model.requests, request)
+		}
+	}
 	model.Unlock()
 
 	records := make([]codeReviewRecord, len(requests))
@@ -585,9 +594,14 @@ func TestCodeReviewPolicyChangeSelectsNewRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cold := model.requestCount()
-
 	cacheRoot, err := similarityVectorCacheRoot(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recordGlob := filepath.Join(cacheRoot, "reviews", "*", "*.json")
+
+	cold, err := filepath.Glob(recordGlob)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -606,9 +620,9 @@ func TestCodeReviewPolicyChangeSelectsNewRecords(t *testing.T) {
 		t.Fatalf("new prompt version asked %d declarations, want 4", model.requestCount()-before)
 	}
 
-	records, err := filepath.Glob(filepath.Join(cacheRoot, "reviews", "*", "*.json"))
-	if err != nil || len(records) != cold+4 {
-		t.Fatalf("records = %d, want %d kept by key, err=%v", len(records), cold+4, err)
+	records, err := filepath.Glob(recordGlob)
+	if err != nil || len(records) != len(cold)+4 {
+		t.Fatalf("records = %d, want %d kept by key, err=%v", len(records), len(cold)+4, err)
 	}
 }
 

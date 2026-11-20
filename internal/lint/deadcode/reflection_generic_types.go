@@ -473,32 +473,6 @@ func collectReflectedNamedCompositeTypeParamUses(
 		return
 	}
 
-	collectReflectedNamedTypeParamUses(typ, codec, typeParamIndexes, out, seen, context)
-}
-
-func collectReflectedStructCompositeTypeParamUses(
-	typ *types.Struct,
-	codec reflectedCodecUse,
-	typeParamIndexes map[*types.TypeParam]int,
-	out *[]reflectedTypeParamUse,
-	seen map[string]struct{},
-	context reflectedTypeParamUseContext,
-) {
-	if context == reflectedDecodeTargetContext {
-		return
-	}
-
-	collectReflectedStructTypeParamUses(typ, codec, typeParamIndexes, out, seen, context)
-}
-
-func collectReflectedNamedTypeParamUses(
-	typ *types.Named,
-	codec reflectedCodecUse,
-	typeParamIndexes map[*types.TypeParam]int,
-	out *[]reflectedTypeParamUse,
-	seen map[string]struct{},
-	context reflectedTypeParamUseContext,
-) {
 	key := deadCodeTypeString(typ)
 	if _, ok := seen[key]; ok {
 		return
@@ -527,7 +501,7 @@ func collectReflectedNamedTypeParamUses(
 	delete(seen, key)
 }
 
-func collectReflectedStructTypeParamUses(
+func collectReflectedStructCompositeTypeParamUses(
 	typ *types.Struct,
 	codec reflectedCodecUse,
 	typeParamIndexes map[*types.TypeParam]int,
@@ -535,6 +509,10 @@ func collectReflectedStructTypeParamUses(
 	seen map[string]struct{},
 	context reflectedTypeParamUseContext,
 ) {
+	if context == reflectedDecodeTargetContext {
+		return
+	}
+
 	for field := range typ.Fields() {
 		collectReflectedTypeParamUses(
 			field.Type(),

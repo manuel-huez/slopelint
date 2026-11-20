@@ -29,7 +29,7 @@ Comment items are {comments}. They take one verdict:
 - excuse: justifies a shortcut, deferred work, a suppression, kept legacy or compatibility code, defensive code, or a test-only hook in production code, without naming a real constraint.
 - crutch: explains what unclear code does, where a rename or a small local restructure would make the comment unnecessary. A comment that documents a deliberate mutation, caller obligation, or performance tradeoff is keep. A comment that states {never}, is never restates. A comment that states what {returned} means, or what {absent} argument or another caller-visible parameter contract means when the signature does not show it, is restates only when a body of a few lines shows it directly; otherwise it is crutch when a rename would carry that meaning, with advice naming the rename, and keep when no name could.
 
-Suppression directives such as {suppressions} are always items, with or without a reason{reason}. A suppression is keep only when {justifier} shows a real constraint that justifies it, such as {justified}{test_justified}. A bare or weakly justified suppression is excuse; its advice says how to fix the code, or which constraint to name in the reason.
+Suppression directives such as {suppressions} are always items, with or without a reason{reason}. A suppression is keep only when {justifier} shows a real constraint that justifies it, such as {justified}{test_justified}. A bare or weakly justified suppression is excuse; its advice says how to fix the code, or which constraint to name in the reason. When the code may no longer trigger the suppressed check, the advice says to delete the suppression if the check passes without it.
 
 advice: empty for keep. Otherwise one concrete sentence of 6-30 words saying what to change in the code, naming identifiers: rename, restructure, or delete. Never suggest rewording a comment, except naming the constraint behind a bare suppression. Do not cite line numbers.
 
@@ -84,7 +84,7 @@ var codeReviewPrompts = map[outline.Language]string{
 
 Skipping one invalid element with continue while building a filtered collection is handled when the function's name or doc says it filters, selects, or keeps only valid entries, or when the skip is recorded elsewhere, such as a counter, log, or diagnostics list. It is swallowed when the function claims to return all records and nothing records the skip.
 
-Dropped-error advice: empty for handled. Otherwise one concrete sentence of 6-30 words naming identifiers: return or wrap the error. Do not cite line numbers.`,
+Dropped-error advice: empty for handled. Otherwise one concrete sentence of 6-30 words naming identifiers: return or wrap the error, or, when the fallback is the intended behavior, say so in the function's name or doc comment so callers can rely on it. Do not cite line numbers.`,
 		"{test}",
 		"Go test function",
 		"{test_view}",
@@ -212,7 +212,7 @@ var scriptReviewSlots = strings.NewReplacer(
 
 Skipping an element while scanning, selecting, or building a collection is handled when the skip is the evident selection rule: the function's name or doc says it filters, selects, searches, or picks the best or first match, or the skipped element simply does not have the wanted shape, such as a column name that is not a number when only numbered columns are renamed; or when the skip is recorded, such as a counter, log, or diagnostics list. It is swallowed when the function claims to return all records and nothing records the skip.
 
-Caught-error advice: empty for handled. Otherwise one concrete sentence of 6-30 words naming identifiers: {raise}, or return an explicit failure the caller must check. Do not cite line numbers.`,
+Caught-error advice: empty for handled. Otherwise one concrete sentence of 6-30 words naming identifiers: {raise}, or return an explicit failure the caller must check, or, when the fallback is the intended behavior, say so in the function's name or doc comment so callers can rely on it. Do not cite line numbers.`,
 	"{test_view}",
 	"The declaration shows that test with the header lines of its enclosing {suites} and their setup hooks; a {gap} line marks omitted code. You do not see helpers, fixtures, or the production code the test calls, so judge only what the test shows.",
 	"{unseen}",
@@ -371,7 +371,7 @@ Items take one verdict:
 - own_job: a reader understands what the helper does from its name and signature alone, without reading the caller: it computes a value, checks a condition, performs one operation, or handles one case of a dispatch, and its inputs are what that job needs. Moving it back into the caller would make the caller harder to read.
 - fragment: the helper is a stretch of the caller's steps moved out: it needs much of the caller's state passed in or handed back, its name only says where it sits in the caller's flow, such as a step number, part, rest, or prepare, or it only makes sense next to the caller's other steps. Many passed variables or returned values are a strong sign, not proof.
 
-advice: empty for own_job. Otherwise one concrete sentence of 6-30 words naming identifiers: inline the helper into its caller, or name the job it should own and what to move into it. Do not cite line numbers.`
+advice: empty for own_job. Otherwise one concrete sentence of 6-30 words naming identifiers: inline the helper into its caller. Never suggest moving its code into another new helper. Do not cite line numbers.`
 
 var codeReviewSplitHelperSchema = strings.Replace(
 	codeReviewSchema,

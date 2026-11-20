@@ -221,8 +221,8 @@ func TestCodeReviewReportsRepeatedTestsOnceAndKeepsUnitKeys(t *testing.T) {
 		}
 	}
 
-	if groups != 2 {
-		t.Fatalf("test group requests = %d, want 2 votes", groups)
+	if groups != 1 {
+		t.Fatalf("test group requests = %d, want 1", groups)
 	}
 
 	// A test outside the unit changes only its own requests, and the cached

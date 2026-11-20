@@ -56,6 +56,10 @@ type Func struct {
 	// Statements counts the statements in the body, nested functions
 	// included. Formatting does not change it, unlike a line count.
 	Statements int
+	// Callback marks a function its file only passes as a value and never
+	// calls, as when it is registered with a framework, which then fixes
+	// its parameters. TypeScript and Python only.
+	Callback bool
 	// Largest are the top-level statements that hold the most statements,
 	// so a long function's report names where its size is.
 	Largest []StatementBlock

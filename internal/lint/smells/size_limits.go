@@ -126,7 +126,7 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 		return findings
 	}
 
-	if fn.Params > funcParamLimit {
+	if fn.Params > funcParamLimit && !fn.Callback {
 		report(
 			"long_param_list",
 			"function %q has %d parameters; "+sizeLimitDeleteFirst+", then group related parameters into a struct or split the function",

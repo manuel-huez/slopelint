@@ -71,12 +71,49 @@ func Parse(name string, src []byte) (File, error) {
 		file:     &file,
 	}
 	w.walk(root, "")
+	w.markCallbacks(root)
 	w.finish(root)
 	w.finishTests()
 	w.finishBlocks()
 	w.finishSmells(root)
 
 	return file, nil
+}
+
+// markCallbacks sets Callback on plain functions whose name the file uses,
+// beyond its definition, but never calls.
+func (w *walker) markCallbacks(root *ts.Node) {
+	refs := make(map[string]int)
+	calls := make(map[string]int)
+
+	var visit func(*ts.Node)
+
+	visit = func(node *ts.Node) {
+		switch node.Type(w.grammar) {
+		case identifierNode:
+			refs[w.text(node)]++
+		case tsCallNode, pyCallNode:
+			if callee := w.field(
+				node,
+				"function",
+			); callee != nil &&
+				callee.Type(w.grammar) == identifierNode {
+				calls[w.text(callee)]++
+			}
+		}
+
+		for index := range node.NamedChildCount() {
+			visit(node.NamedChild(index))
+		}
+	}
+
+	visit(root)
+
+	for index, fn := range w.file.Funcs {
+		if fn.Name != "" && !fn.Literal && fn.Receiver == "" {
+			w.file.Funcs[index].Callback = calls[fn.Name] == 0 && refs[fn.Name] > 1
+		}
+	}
 }
 
 func firstSyntaxError(node *ts.Node) *ts.Node {

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -130,7 +131,7 @@ func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer)
 	closedWorld := flags.Bool(
 		"closed-world",
 		false,
-		"treat matched main packages as the complete set of production entrypoints",
+		"treat the module's main packages as the complete set of production entrypoints; needs ./... from the module root",
 	)
 
 	printVersion := flags.Bool("version", false, "print the slopelint version and exit")
@@ -149,11 +150,8 @@ func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 
 	patterns := flags.Args()
-	if len(patterns) == 0 {
-		if _, err := fmt.Fprintln(
-			stderr,
-			"usage: slopelint [flags] [package patterns]",
-		); err != nil {
+	if message := standaloneUsageError(patterns, *closedWorld); message != "" {
+		if _, err := fmt.Fprintln(stderr, message); err != nil {
 			return exitFailure
 		}
 
@@ -192,6 +190,25 @@ func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 
 	return 0
+}
+
+// standaloneUsageError returns why the arguments cannot run, or "". Closed-
+// world dead code treats the scan as the whole program, so a partial scan
+// would report code that unscanned packages use.
+func standaloneUsageError(patterns []string, closedWorld bool) string {
+	if len(patterns) == 0 {
+		return "usage: slopelint [flags] [package patterns]"
+	}
+
+	if !closedWorld {
+		return ""
+	}
+
+	if _, err := os.Stat("go.mod"); err != nil || !slices.Equal(patterns, []string{"./..."}) {
+		return "slopelint: -closed-world needs the whole module: run `slopelint -closed-world ./...` from the module root"
+	}
+
+	return ""
 }
 
 // similarityOptionsFromEnv returns nil when SLOPELINT_SIMILARITY or CI markers

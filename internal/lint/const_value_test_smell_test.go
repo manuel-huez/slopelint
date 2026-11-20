@@ -490,6 +490,18 @@ func TestImportedHelper(t *testing.T) {
 	}
 }
 
+func TestThroughLocalHelpers(t *testing.T) {
+	outerHelper(t)
+
+	if testing.Short() {
+		t.Fatal("short")
+	}
+}
+
+func outerHelper(t *testing.T) { innerHelper(t) }
+
+func innerHelper(t *testing.T) { harness.RunParallel(t) }
+
 func TestTwice(t *testing.T) {
 	t.Parallel()
 	harness.RunParallel(t)

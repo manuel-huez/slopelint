@@ -27,7 +27,7 @@ A clean run writes `.slopelint.json`. Commit it: CI checks it.
 | Flag | Purpose |
 | --- | --- |
 | `-json` | JSON output: `{"issues":[{"position","kind","message"}]}` |
-| `-closed-world` | Treat matched `main` packages as all entrypoints, so exported dead code is found |
+| `-closed-world` | Treat the module's `main` packages as all entrypoints, so exported dead code is found; needs `./...` from the module root |
 | `-cache=false` | Ignore cached results |
 | `-max-states=N` | Symbolic states before widening (default 32) |
 | `-version` | Print version |

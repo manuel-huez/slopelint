@@ -118,12 +118,9 @@ func (l *linter) run(external func(*types.Func) (callSummary, bool)) {
 		external: external,
 	}
 
+	parallel := smellcheck.ParallelParams(l.pkg.TypesInfo, l.pkg.Files, l.importedParallelParams)
 	for index := range l.funcs {
-		l.funcs[index].parallel = smellcheck.ParallelParams(
-			l.pkg.TypesInfo,
-			l.funcs[index].decl,
-			l.importedParallelParams,
-		)
+		l.funcs[index].parallel = parallel[l.funcs[index].obj]
 	}
 
 	// Summary walks repeat the main walk, so their diagnostics are dropped.

@@ -34,27 +34,19 @@ type testParallelCheck struct {
 }
 
 func (l testParallelCheck) check() {
-	funcs := make(map[types.Object]*ast.FuncDecl)
-
-	for _, file := range l.pkg.Files {
-		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-				funcs[l.pkg.TypesInfo.Defs[fn.Name]] = fn
-			}
-		}
-	}
+	walk := newParallelWalk(l.pkg.TypesInfo, l.pkg.Files, l.pkg.ImportedParallelParams)
 
 	for _, file := range l.pkg.TestFiles {
 		for _, decl := range file.Decls {
 			if fn, ok := decl.(*ast.FuncDecl); ok &&
 				runnableTestPackage(l.pkg.TypesInfo, fn) != nil {
-				l.checkTest(fn, funcs)
+				l.checkTest(fn, walk)
 			}
 		}
 	}
 }
 
-func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*ast.FuncDecl) {
+func (l testParallelCheck) checkTest(fn *ast.FuncDecl, walk parallelWalk) {
 	var (
 		marker *ast.Comment
 		reason string
@@ -77,7 +69,7 @@ func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*a
 
 	name := fn.Name.Name
 
-	calls := parallelCalls(l.pkg.TypesInfo, fn.Body, param, funcs, l.pkg.ImportedParallelParams)
+	calls := walk.calls(fn.Body, param, make(map[*ast.FuncDecl]bool))
 
 	switch {
 	case calls > 1:
@@ -86,7 +78,7 @@ func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*a
 			name,
 		))
 	case calls == 1:
-		l.checkSubtests(fn, param, funcs)
+		l.checkSubtests(fn, param, walk)
 
 		if marker != nil {
 			l.report(marker.Pos(), "test_not_parallel", fmt.Sprintf(
@@ -96,7 +88,7 @@ func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*a
 		}
 	// Go panics when t.Parallel() is combined with t.Setenv or t.Chdir, also
 	// when a subtest calls them, so such tests are serial by necessity.
-	case l.changesProcessState(fn.Body, funcs, make(map[types.Object]struct{})):
+	case l.changesProcessState(fn.Body, walk.funcs, make(map[types.Object]struct{})):
 		if marker != nil {
 			l.report(marker.Pos(), "test_not_parallel", fmt.Sprintf(
 				`test %q uses t.Setenv or t.Chdir, which already forbid t.Parallel(); remove its //slopelint:serial marker`,
@@ -116,17 +108,44 @@ func (l testParallelCheck) checkTest(fn *ast.FuncDecl, funcs map[types.Object]*a
 	}
 }
 
-// parallelCalls counts the top-level statements of body that call
-// t.Parallel() on param, directly or in a helper given param: a same-package
-// helper one level deep, or an imported one through its call summary. A
-// subtest's Parallel does not make its parent parallel, so function literals
-// are not searched.
-func parallelCalls(
+// parallelWalk finds t.Parallel() calls on a *testing.T: direct, in
+// same-package helpers given it at any depth, or in imported helpers through
+// their call summaries.
+type parallelWalk struct {
+	info     *types.Info
+	funcs    map[types.Object]*ast.FuncDecl
+	imported func(*types.Func) []int
+}
+
+func newParallelWalk(
 	info *types.Info,
+	files []*ast.File,
+	imported func(*types.Func) []int,
+) parallelWalk {
+	walk := parallelWalk{
+		info:     info,
+		funcs:    make(map[types.Object]*ast.FuncDecl),
+		imported: imported,
+	}
+
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+				walk.funcs[info.Defs[fn.Name]] = fn
+			}
+		}
+	}
+
+	return walk
+}
+
+// calls counts the top-level statements of body that call t.Parallel() on
+// param. A subtest's Parallel does not make its parent parallel, so function
+// literals are not searched. visiting stops recursion through helper cycles.
+func (walk parallelWalk) calls(
 	body *ast.BlockStmt,
 	param types.Object,
-	funcs map[types.Object]*ast.FuncDecl,
-	imported func(*types.Func) []int,
+	visiting map[*ast.FuncDecl]bool,
 ) int {
 	if param == nil {
 		return 0
@@ -141,14 +160,14 @@ func parallelCalls(
 		}
 
 		if selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok &&
-			isPackageFuncCall(info, call, testingImportPath, "Parallel") &&
-			identObject(info, selector.X) == param {
+			isPackageFuncCall(walk.info, call, testingImportPath, "Parallel") &&
+			identObject(walk.info, selector.X) == param {
 			count++
 
 			continue
 		}
 
-		if helperCallsParallel(info, call, param, funcs, imported) {
+		if walk.helperCalls(call, param, visiting) {
 			count++
 		}
 	}
@@ -156,14 +175,12 @@ func parallelCalls(
 	return count
 }
 
-func helperCallsParallel(
-	info *types.Info,
+func (walk parallelWalk) helperCalls(
 	call *ast.CallExpr,
 	param types.Object,
-	funcs map[types.Object]*ast.FuncDecl,
-	imported func(*types.Func) []int,
+	visiting map[*ast.FuncDecl]bool,
 ) bool {
-	fn, _, ok := calledFunc(info, call)
+	fn, _, ok := calledFunc(walk.info, call)
 	if !ok {
 		return false
 	}
@@ -171,34 +188,50 @@ func helperCallsParallel(
 	params := fn.Signature().Params()
 
 	for index, arg := range call.Args {
-		if identObject(info, arg) != param || index >= params.Len() {
+		if identObject(walk.info, arg) != param || index >= params.Len() {
 			continue
 		}
 
-		if helper := funcs[fn]; helper != nil {
-			return parallelCalls(info, helper.Body, params.At(index), nil, imported) > 0
+		helper := walk.funcs[fn]
+		if helper == nil {
+			return walk.imported != nil && slices.Contains(walk.imported(fn), index)
 		}
 
-		return imported != nil && slices.Contains(imported(fn), index)
+		if visiting[helper] {
+			return false
+		}
+
+		visiting[helper] = true
+		defer delete(visiting, helper)
+
+		return walk.calls(helper.Body, params.At(index), visiting) > 0
 	}
 
 	return false
 }
 
-// ParallelParams returns the indexes of fn's parameters that fn calls
-// t.Parallel() on, so tests in other packages see helpers that do it.
-func ParallelParams(info *types.Info, fn *ast.FuncDecl, imported func(*types.Func) []int) []int {
-	obj, ok := info.Defs[fn.Name].(*types.Func)
-	if !ok || fn.Body == nil {
-		return nil
-	}
+// ParallelParams maps each function in files to the indexes of the
+// parameters it calls t.Parallel() on, so tests in other packages see
+// helpers that do it.
+func ParallelParams(
+	info *types.Info,
+	files []*ast.File,
+	imported func(*types.Func) []int,
+) map[*types.Func][]int {
+	walk := newParallelWalk(info, files, imported)
+	out := make(map[*types.Func][]int)
 
-	var out []int
+	for obj, fn := range walk.funcs {
+		fnObj, ok := obj.(*types.Func)
+		if !ok {
+			continue
+		}
 
-	params := obj.Signature().Params()
-	for index := range params.Len() {
-		if parallelCalls(info, fn.Body, params.At(index), nil, imported) > 0 {
-			out = append(out, index)
+		params := fnObj.Signature().Params()
+		for index := range params.Len() {
+			if walk.calls(fn.Body, params.At(index), map[*ast.FuncDecl]bool{fn: true}) > 0 {
+				out[fnObj] = append(out[fnObj], index)
+			}
 		}
 	}
 
@@ -246,7 +279,7 @@ func (l testParallelCheck) changesProcessState(
 func (l testParallelCheck) checkSubtests(
 	fn *ast.FuncDecl,
 	param types.Object,
-	funcs map[types.Object]*ast.FuncDecl,
+	walk parallelWalk,
 ) {
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		loop, ok := node.(*ast.RangeStmt)
@@ -257,14 +290,8 @@ func (l testParallelCheck) checkSubtests(
 		for _, stmt := range loop.Body.List {
 			call, lit, sub := l.subtest(stmt, param)
 			if lit == nil ||
-				parallelCalls(
-					l.pkg.TypesInfo,
-					lit.Body,
-					sub,
-					funcs,
-					l.pkg.ImportedParallelParams,
-				) > 0 ||
-				l.changesProcessState(lit.Body, funcs, make(map[types.Object]struct{})) ||
+				walk.calls(lit.Body, sub, make(map[*ast.FuncDecl]bool)) > 0 ||
+				l.changesProcessState(lit.Body, walk.funcs, make(map[types.Object]struct{})) ||
 				writesOuterVariable(l.pkg.TypesInfo, lit) {
 				continue
 			}

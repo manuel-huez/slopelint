@@ -49,17 +49,39 @@ func TestAnalysisDriverRequested(t *testing.T) {
 	}
 }
 
-func TestRunStandaloneRequiresPackagePattern(t *testing.T) {
+func TestRunStandaloneRejectsUsageErrors(t *testing.T) {
 	t.Parallel()
 
-	var stderr strings.Builder
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "no patterns", want: "usage: slopelint"},
+		{
+			name: "partial closed world",
+			args: []string{"-closed-world", "./internal/..."},
+			want: "-closed-world needs the whole module",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	if code := runStandalone(t.Context(), nil, io.Discard, &stderr); code != exitUsage {
-		t.Fatalf("runStandalone exit = %d, want %d", code, exitUsage)
-	}
+			var stderr strings.Builder
 
-	if !strings.Contains(stderr.String(), "usage: slopelint") {
-		t.Fatalf("missing usage output: %q", stderr.String())
+			if code := runStandalone(
+				t.Context(),
+				test.args,
+				io.Discard,
+				&stderr,
+			); code != exitUsage {
+				t.Fatalf("runStandalone exit = %d, want %d", code, exitUsage)
+			}
+
+			if !strings.Contains(stderr.String(), test.want) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), test.want)
+			}
+		})
 	}
 }
 

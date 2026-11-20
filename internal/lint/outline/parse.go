@@ -139,7 +139,6 @@ const (
 	tsYieldNode  = "yield_expression"
 )
 
-// TypeScript value and switch node types.
 const (
 	tsThisNode    = "this"
 	tsNumberNode  = "number"
@@ -387,6 +386,7 @@ func (w *walker) function(node *ts.Node, name string, anchor *ts.Node, receiver 
 		Pos:        w.pos(node),
 		StartLine:  int(node.StartPoint().Row) + 1,
 		Statements: w.statements(node),
+		Largest:    w.largestStatements(node),
 		Params:     w.params(node, receiver),
 		Body:       true,
 		Literal:    anchor == nil,
@@ -426,6 +426,26 @@ func (w *walker) statements(node *ts.Node) int {
 	}
 
 	return count
+}
+
+func (w *walker) largestStatements(node *ts.Node) []StatementBlock {
+	body := w.field(node, "body")
+	if body == nil {
+		return nil
+	}
+
+	var blocks []StatementBlock
+
+	for index := range body.NamedChildCount() {
+		if child := body.NamedChild(index); child.Type(w.grammar) != commentNode {
+			blocks = append(blocks, StatementBlock{
+				Line:       int(child.StartPoint().Row) + 1,
+				Statements: 1 + w.statements(child),
+			})
+		}
+	}
+
+	return LargestStatements(blocks)
 }
 
 // params counts declared parameters. TypeScript `this` annotations and the

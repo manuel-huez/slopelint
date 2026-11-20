@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
@@ -144,13 +145,34 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 	if fn.Body && fn.Statements > funcStatementLimit {
 		report(
 			"long_function",
-			"function %q has %d statements; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
+			"function %q has %d statements, counting nested blocks and closures%s; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
 			fn.Name,
 			fn.Statements,
+			largestStatementsText(fn.Largest),
 		)
 	}
 
 	return findings
+}
+
+func largestStatementsText(blocks []outline.StatementBlock) string {
+	if len(blocks) == 0 {
+		return ""
+	}
+
+	parts := make([]string, len(blocks))
+	for index, block := range blocks {
+		parts[index] = fmt.Sprintf("line %d (%d)", block.Line, block.Statements)
+	}
+
+	if len(parts) == 1 {
+		return "; the largest statement is at " + parts[0]
+	}
+
+	return "; the largest are at " + strings.Join(
+		parts[:len(parts)-1],
+		", ",
+	) + " and " + parts[len(parts)-1]
 }
 
 type sizeLimitCheck struct {
@@ -217,6 +239,7 @@ func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {
 		Name:       fn.Name.Name,
 		Pos:        l.outlinePos(fn.Name.Pos()),
 		Statements: statementCount(fn.Body),
+		Largest:    l.largestStatements(fn.Body),
 		Params:     funcParamCount(fn.Type.Params),
 		Results:    funcParamCount(fn.Type.Results),
 		Body:       fn.Body != nil,
@@ -276,6 +299,23 @@ func statementCount(body *ast.BlockStmt) int {
 	})
 
 	return count
+}
+
+func (l sizeLimitCheck) largestStatements(body *ast.BlockStmt) []outline.StatementBlock {
+	if body == nil {
+		return nil
+	}
+
+	blocks := make([]outline.StatementBlock, 0, len(body.List))
+
+	for _, stmt := range body.List {
+		blocks = append(blocks, outline.StatementBlock{
+			Line:       l.pkg.FSet.Position(stmt.Pos()).Line,
+			Statements: statementCount(&ast.BlockStmt{List: []ast.Stmt{stmt}}),
+		})
+	}
+
+	return outline.LargestStatements(blocks)
 }
 
 func (l sizeLimitCheck) outlinePos(pos token.Pos) outline.Pos {

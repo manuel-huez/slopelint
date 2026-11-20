@@ -56,15 +56,41 @@ type Func struct {
 	// Statements counts the statements in the body, nested functions
 	// included. Formatting does not change it, unlike a line count.
 	Statements int
-	Params     int
-	Results    int
-	Body       bool
+	// Largest are the top-level statements that hold the most statements,
+	// so a long function's report names where its size is.
+	Largest []StatementBlock
+	Params  int
+	Results int
+	Body    bool
 	// Literal marks an anonymous function value: a Go func literal, an inline
 	// TypeScript callback, or a Python lambda.
 	Literal bool
 	// Receiver names the type or class that owns a method. For Go it also
 	// names the package type a plain function takes a pointer to first.
 	Receiver string
+}
+
+// StatementBlock is one top-level statement of a function and how many
+// statements it holds, itself included.
+type StatementBlock struct {
+	Line       int
+	Statements int
+}
+
+const largestStatementBlocks = 3
+
+// LargestStatements returns the blocks holding more than one statement,
+// largest first, at most three.
+func LargestStatements(blocks []StatementBlock) []StatementBlock {
+	blocks = slices.DeleteFunc(slices.Clone(blocks), func(block StatementBlock) bool {
+		return block.Statements <= 1
+	})
+	slices.SortStableFunc(
+		blocks,
+		func(a, b StatementBlock) int { return b.Statements - a.Statements },
+	)
+
+	return blocks[:min(len(blocks), largestStatementBlocks)]
 }
 
 // Type is one type or class that can own methods.

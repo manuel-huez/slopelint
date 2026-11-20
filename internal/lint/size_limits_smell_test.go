@@ -68,7 +68,8 @@ func TestDetectsFunctionSizeLimits(t *testing.T) {
 
 	joined := joinMessages(lintInDir(t, tmp))
 	for _, want := range []string{
-		`function "long" has 41 statements` + sizeLimitDeleteFirst +
+		`function "long" has 41 statements, counting nested blocks and closures; the largest statement is at line 4 (21)` +
+			sizeLimitDeleteFirst +
 			"split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
 		`function "params" has 7 parameters` + sizeLimitDeleteFirst + "group related parameters into a struct or split the function",
 		`function "results" returns 4 results` + sizeLimitDeleteFirst + "return a named struct",

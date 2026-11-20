@@ -5,47 +5,44 @@ import (
 	"go/types"
 )
 
-func addInterfaceMethodsForValueTargets(
-	l *packageLinter,
+func (s ifaceScan) addInterfaceMethodsForValueTargets(
 	out map[string]struct{},
 	expr ast.Expr,
 	targets []types.Type,
 ) {
-	if tuple, ok := l.pkg.TypesInfo.TypeOf(expr).(*types.Tuple); ok {
+	if tuple, ok := s.info.TypeOf(expr).(*types.Tuple); ok {
 		for index, target := range targets {
 			if index >= tuple.Len() {
 				continue
 			}
 
-			addInterfaceMethodsForType(l, out, tuple.At(index).Type(), target)
+			s.addInterfaceMethodsForType(out, tuple.At(index).Type(), target)
 		}
 
 		return
 	}
 
 	for _, target := range targets {
-		addInterfaceMethodsForValue(l, out, expr, target)
+		s.addInterfaceMethodsForValue(out, expr, target)
 	}
 }
 
-func addInterfaceMethodsForValue(
-	l *packageLinter,
+func (s ifaceScan) addInterfaceMethodsForValue(
 	out map[string]struct{},
 	expr ast.Expr,
 	target types.Type,
 ) {
-	for key := range interfaceMethodsForValue(l, expr, target) {
+	for key := range s.interfaceMethodsForValue(expr, target) {
 		out[key] = struct{}{}
 	}
 }
 
-func interfaceMethodsForValue(
-	l *packageLinter,
+func (s ifaceScan) interfaceMethodsForValue(
 	expr ast.Expr,
 	target types.Type,
 ) map[string]struct{} {
 	out := make(map[string]struct{})
-	addInterfaceMethodsForType(l, out, l.pkg.TypesInfo.TypeOf(expr), target)
+	s.addInterfaceMethodsForType(out, s.info.TypeOf(expr), target)
 
 	return out
 }
@@ -133,17 +130,17 @@ func (iface ifaceUses) addInterfaceMethodsForAssertedType(
 	}
 
 	if !typeIsInterface(source) {
-		addInterfaceMethodsForType(l, out, source, target)
+		l.ifaceScan().addInterfaceMethodsForType(out, source, target)
 		return
 	}
 
 	for _, receiver := range iface.candidateReceiverTypes() {
-		if !typeSatisfiesInterface(l, receiver, source) ||
-			!typeSatisfiesInterface(l, receiver, target) {
+		if !l.ifaceScan().typeSatisfiesInterface(receiver, source) ||
+			!l.ifaceScan().typeSatisfiesInterface(receiver, target) {
 			continue
 		}
 
-		addInterfaceMethodsForType(l, out, receiver, target)
+		l.ifaceScan().addInterfaceMethodsForType(out, receiver, target)
 	}
 }
 
@@ -184,8 +181,7 @@ func deadCodeMethodReceiverType(obj types.Object) types.Type {
 	return sig.Recv().Type()
 }
 
-func addInterfaceMethodsForType(
-	l *packageLinter,
+func (s ifaceScan) addInterfaceMethodsForType(
 	out map[string]struct{},
 	source types.Type,
 	target types.Type,
@@ -195,7 +191,7 @@ func addInterfaceMethodsForType(
 	}
 
 	iface, ok := types.Unalias(target).Underlying().(*types.Interface)
-	if !ok || iface.NumMethods() == 0 || !typeSatisfiesInterface(l, source, target) {
+	if !ok || iface.NumMethods() == 0 || !s.typeSatisfiesInterface(source, target) {
 		return
 	}
 
@@ -204,7 +200,7 @@ func addInterfaceMethodsForType(
 			continue
 		}
 
-		fn := lookupInterfaceMethodImplementation(l, source, method)
+		fn := s.lookupInterfaceMethodImplementation(source, method)
 		if fn == nil {
 			continue
 		}
@@ -213,7 +209,7 @@ func addInterfaceMethodsForType(
 	}
 }
 
-func typeSatisfiesInterface(l *packageLinter, source types.Type, target types.Type) bool {
+func (s ifaceScan) typeSatisfiesInterface(source types.Type, target types.Type) bool {
 	if types.AssignableTo(source, target) {
 		return true
 	}
@@ -224,7 +220,7 @@ func typeSatisfiesInterface(l *packageLinter, source types.Type, target types.Ty
 	}
 
 	for method := range iface.Methods() {
-		if lookupInterfaceMethodImplementation(l, source, method) == nil {
+		if s.lookupInterfaceMethodImplementation(source, method) == nil {
 			return false
 		}
 	}
@@ -232,8 +228,7 @@ func typeSatisfiesInterface(l *packageLinter, source types.Type, target types.Ty
 	return true
 }
 
-func lookupInterfaceMethodImplementation(
-	l *packageLinter,
+func (s ifaceScan) lookupInterfaceMethodImplementation(
 	source types.Type,
 	method *types.Func,
 ) *types.Func {
@@ -244,7 +239,7 @@ func lookupInterfaceMethodImplementation(
 	obj, _, _ := types.LookupFieldOrMethod(
 		source,
 		true,
-		interfaceMethodLookupPackage(l.pkg.TypesPkg, method),
+		interfaceMethodLookupPackage(s.pkg, method),
 		method.Name(),
 	)
 

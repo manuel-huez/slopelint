@@ -5,15 +5,14 @@ import (
 	"go/types"
 )
 
-func valueSpecInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) valueSpecInterfaceMethodUses(
 	spec *ast.ValueSpec,
 ) map[string]struct{} {
 	if spec == nil || spec.Type == nil {
 		return nil
 	}
 
-	target := l.pkg.TypesInfo.TypeOf(spec.Type)
+	target := s.info.TypeOf(spec.Type)
 	if target == nil {
 		return nil
 	}
@@ -26,14 +25,13 @@ func valueSpecInterfaceMethodUses(
 	}
 
 	for _, value := range spec.Values {
-		addInterfaceMethodsForValueTargets(l, out, value, targets)
+		s.addInterfaceMethodsForValueTargets(out, value, targets)
 	}
 
 	return out
 }
 
-func compositeLitInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) compositeLitInterfaceMethodUses(
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
 	if lit == nil {
@@ -41,22 +39,21 @@ func compositeLitInterfaceMethodUses(
 	}
 
 	out := make(map[string]struct{})
-	for key := range compositeLitCollectionInterfaceMethodUses(l, lit) {
+	for key := range s.compositeLitCollectionInterfaceMethodUses(lit) {
 		out[key] = struct{}{}
 	}
 
-	for key := range compositeLitStructInterfaceMethodUses(l, lit) {
+	for key := range s.compositeLitStructInterfaceMethodUses(lit) {
 		out[key] = struct{}{}
 	}
 
 	return out
 }
 
-func compositeLitCollectionInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) compositeLitCollectionInterfaceMethodUses(
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
-	elemType := compositeElementType(l.pkg.TypesInfo.TypeOf(lit.Type))
+	elemType := compositeElementType(s.info.TypeOf(lit.Type))
 	if elemType == nil {
 		return nil
 	}
@@ -68,17 +65,16 @@ func compositeLitCollectionInterfaceMethodUses(
 			elt = keyValue.Value
 		}
 
-		addInterfaceMethodsForValue(l, out, elt, elemType)
+		s.addInterfaceMethodsForValue(out, elt, elemType)
 	}
 
 	return out
 }
 
-func compositeLitStructInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) compositeLitStructInterfaceMethodUses(
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
-	structType := deadCodeStructType(l.pkg.TypesInfo.TypeOf(lit))
+	structType := deadCodeStructType(s.info.TypeOf(lit))
 	if structType == nil {
 		return nil
 	}
@@ -91,7 +87,7 @@ func compositeLitStructInterfaceMethodUses(
 			target = field.Type()
 		}
 
-		addInterfaceMethodsForValue(l, out, elt, target)
+		s.addInterfaceMethodsForValue(out, elt, target)
 	})
 
 	return out

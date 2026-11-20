@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-func callInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) callInterfaceMethodUses(
 	call *ast.CallExpr,
 ) map[string]struct{} {
 	if call == nil {
@@ -16,16 +15,16 @@ func callInterfaceMethodUses(
 	}
 
 	out := make(map[string]struct{})
-	if target := conversionTargetType(l.pkg.TypesInfo, call); target != nil {
-		addInterfaceMethodsForValue(l, out, call.Args[0], target)
+	if target := conversionTargetType(s.info, call); target != nil {
+		s.addInterfaceMethodsForValue(out, call.Args[0], target)
 	}
 
-	if sig := callSignature(l.pkg.TypesInfo, call); sig != nil {
-		for key := range callArgInterfaceMethodUses(l, call, sig) {
+	if sig := callSignature(s.info, call); sig != nil {
+		for key := range s.callArgInterfaceMethodUses(call, sig) {
 			out[key] = struct{}{}
 		}
 
-		for key := range knownOptionalInterfaceMethodUses(l, call, sig) {
+		for key := range s.knownOptionalInterfaceMethodUses(call, sig) {
 			out[key] = struct{}{}
 		}
 	}
@@ -33,8 +32,7 @@ func callInterfaceMethodUses(
 	return out
 }
 
-func callArgInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) callArgInterfaceMethodUses(
 	call *ast.CallExpr,
 	sig *types.Signature,
 ) map[string]struct{} {
@@ -51,18 +49,17 @@ func callArgInterfaceMethodUses(
 			continue
 		}
 
-		addInterfaceMethodsForValue(l, out, arg, target)
+		s.addInterfaceMethodsForValue(out, arg, target)
 	}
 
 	return out
 }
 
-func knownOptionalInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) knownOptionalInterfaceMethodUses(
 	call *ast.CallExpr,
 	sig *types.Signature,
 ) map[string]struct{} {
-	fn := calledFunc(l.pkg.TypesInfo, call)
+	fn := calledFunc(s.info, call)
 	if fn == nil ||
 		fn.Pkg() == nil ||
 		fn.Pkg().Path() != "github.com/ulikunitz/xz/lzma" ||
@@ -83,7 +80,7 @@ func knownOptionalInterfaceMethodUses(
 			continue
 		}
 
-		addInterfaceMethodsForValue(l, out, arg, byteReader)
+		s.addInterfaceMethodsForValue(out, arg, byteReader)
 	}
 
 	return out
@@ -410,14 +407,14 @@ func (iface ifaceUses) addStringMethodsForType(
 
 		for _, receiver := range iface.candidateReceiverTypes() {
 			if types.AssignableTo(receiver, typ) {
-				addStringMethodForType(l, out, receiver)
+				l.ifaceScan().addStringMethodForType(out, receiver)
 			}
 		}
 
 		return
 	}
 
-	addStringMethodForType(l, out, typ)
+	l.ifaceScan().addStringMethodForType(out, typ)
 }
 
 type fmtStringerParamUse struct {

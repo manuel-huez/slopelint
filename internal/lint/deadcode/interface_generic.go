@@ -5,28 +5,26 @@ import (
 	"go/types"
 )
 
-func genericInstanceInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) genericInstanceInterfaceMethodUses(
 	ident *ast.Ident,
 ) map[string]struct{} {
 	if ident == nil {
 		return nil
 	}
 
-	instance, ok := l.pkg.TypesInfo.Instances[ident]
+	instance, ok := s.info.Instances[ident]
 	if !ok || instance.TypeArgs == nil || instance.TypeArgs.Len() == 0 {
 		return nil
 	}
 
-	typeParams := genericObjectTypeParams(l.pkg.TypesInfo.Uses[ident])
+	typeParams := genericObjectTypeParams(s.info.Uses[ident])
 	if typeParams == nil || typeParams.Len() == 0 {
 		return nil
 	}
 
 	out := make(map[string]struct{})
 	for index := range min(typeParams.Len(), instance.TypeArgs.Len()) {
-		addInterfaceMethodsForType(
-			l,
+		s.addInterfaceMethodsForType(
 			out,
 			instance.TypeArgs.At(index),
 			typeParams.At(index).Constraint(),

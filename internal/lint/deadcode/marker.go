@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-func isMarkerMethod(l *packageLinter, fn *ast.FuncDecl, obj *types.Func) bool {
+func (l *packageLinter) isMarkerMethod(fn *ast.FuncDecl, obj *types.Func) bool {
 	sig, ok := markerFuncSignature(fn, obj)
 	if l == nil || !ok {
 		return false
@@ -67,7 +67,7 @@ func (l *packageLinter) markerInterfaceRequiresMethod(
 	}
 
 	iface, ok := types.Unalias(typeName.Type()).Underlying().(*types.Interface)
-	if !ok || !typeSatisfiesInterface(l, receiver, iface) {
+	if !ok || !l.ifaceScan().typeSatisfiesInterface(receiver, iface) {
 		return false
 	}
 
@@ -81,7 +81,7 @@ func (l *packageLinter) markerInterfaceRequiresMethod(
 			continue
 		}
 
-		return lookupInterfaceMethodImplementation(l, receiver, method) == obj
+		return l.ifaceScan().lookupInterfaceMethodImplementation(receiver, method) == obj
 	}
 
 	return false

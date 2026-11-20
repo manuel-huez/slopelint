@@ -5,8 +5,7 @@ import (
 	"go/types"
 )
 
-func assignInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) assignInterfaceMethodUses(
 	assign *ast.AssignStmt,
 ) map[string]struct{} {
 	if assign == nil {
@@ -18,10 +17,10 @@ func assignInterfaceMethodUses(
 	if len(assign.Rhs) == 1 {
 		targets := make([]types.Type, 0, len(assign.Lhs))
 		for _, lhs := range assign.Lhs {
-			targets = append(targets, l.pkg.TypesInfo.TypeOf(lhs))
+			targets = append(targets, s.info.TypeOf(lhs))
 		}
 
-		addInterfaceMethodsForValueTargets(l, out, assign.Rhs[0], targets)
+		s.addInterfaceMethodsForValueTargets(out, assign.Rhs[0], targets)
 
 		return out
 	}
@@ -31,14 +30,13 @@ func assignInterfaceMethodUses(
 			continue
 		}
 
-		addInterfaceMethodsForValue(l, out, rhs, l.pkg.TypesInfo.TypeOf(assign.Lhs[index]))
+		s.addInterfaceMethodsForValue(out, rhs, s.info.TypeOf(assign.Lhs[index]))
 	}
 
 	return out
 }
 
-func funcDeclReturnInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) funcDeclReturnInterfaceMethodUses(
 	fn *ast.FuncDecl,
 ) map[string]struct{} {
 	if fn == nil || fn.Body == nil {
@@ -49,7 +47,7 @@ func funcDeclReturnInterfaceMethodUses(
 		return nil
 	}
 
-	obj, ok := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
+	obj, ok := s.info.Defs[fn.Name].(*types.Func)
 	if !ok || obj == nil {
 		return nil
 	}
@@ -59,27 +57,25 @@ func funcDeclReturnInterfaceMethodUses(
 		return nil
 	}
 
-	return returnInterfaceMethodUses(l, fn.Body, sig)
+	return s.returnInterfaceMethodUses(fn.Body, sig)
 }
 
-func funcLitReturnInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) funcLitReturnInterfaceMethodUses(
 	lit *ast.FuncLit,
 ) map[string]struct{} {
 	if lit == nil || lit.Body == nil {
 		return nil
 	}
 
-	sig, ok := l.pkg.TypesInfo.TypeOf(lit).(*types.Signature)
+	sig, ok := s.info.TypeOf(lit).(*types.Signature)
 	if !ok || sig == nil {
 		return nil
 	}
 
-	return returnInterfaceMethodUses(l, lit.Body, sig)
+	return s.returnInterfaceMethodUses(lit.Body, sig)
 }
 
-func returnInterfaceMethodUses(
-	l *packageLinter,
+func (s ifaceScan) returnInterfaceMethodUses(
 	body *ast.BlockStmt,
 	sig *types.Signature,
 ) map[string]struct{} {
@@ -101,7 +97,7 @@ func returnInterfaceMethodUses(
 					continue
 				}
 
-				addInterfaceMethodsForValue(l, out, result, targets[index])
+				s.addInterfaceMethodsForValue(out, result, targets[index])
 			}
 		}
 

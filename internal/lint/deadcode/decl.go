@@ -65,7 +65,7 @@ func (l *packageLinter) keepFuncLive(
 	return obj == nil ||
 		!l.reportableFuncForMode(fn, mode) ||
 		isErrorHookMethod(obj) ||
-		isMarkerMethod(l, fn, obj)
+		l.isMarkerMethod(fn, obj)
 }
 
 func (l *packageLinter) reportableFuncForMode(

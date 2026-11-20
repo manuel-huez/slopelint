@@ -42,7 +42,7 @@ func (uses *useCollector) usesFrom(
 			return true
 		}
 
-		for key := range genericInstanceInterfaceMethodUses(l, ident) {
+		for key := range l.ifaceScan().genericInstanceInterfaceMethodUses(ident) {
 			out[key] = struct{}{}
 		}
 
@@ -77,16 +77,15 @@ func (uses *useCollector) addNonIdentUses(
 			out[key] = struct{}{}
 		}
 	case *ast.CompositeLit:
-		for key := range compositeLitFieldUses(l, node) {
+		for key := range l.compositeLitFieldUses(node) {
 			out[key] = struct{}{}
 		}
 	case *ast.SelectorExpr:
-		addSelectionUse(l, out, node)
+		l.addSelectionUse(out, node)
 	}
 }
 
-func addSelectionUse(
-	l *packageLinter,
+func (l *packageLinter) addSelectionUse(
 	out map[string]struct{},
 	selector *ast.SelectorExpr,
 ) {
@@ -110,8 +109,7 @@ func addSelectionUse(
 	}
 }
 
-func compositeLitFieldUses(
-	l *packageLinter,
+func (l *packageLinter) compositeLitFieldUses(
 	lit *ast.CompositeLit,
 ) map[string]struct{} {
 	typ := l.pkg.TypesInfo.TypeOf(lit)

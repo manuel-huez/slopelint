@@ -910,12 +910,11 @@ func interfaceRequiresStringMethod(iface *types.Interface) bool {
 	return false
 }
 
-func addStringMethodForType(
-	l *packageLinter,
+func (s ifaceScan) addStringMethodForType(
 	out map[string]struct{},
 	typ types.Type,
 ) {
-	obj, _, _ := types.LookupFieldOrMethod(typ, false, l.pkg.TypesPkg, "String")
+	obj, _, _ := types.LookupFieldOrMethod(typ, false, s.pkg, "String")
 
 	fn, ok := obj.(*types.Func)
 	if !ok || fn == nil || !stringMethodSignature(fn) {

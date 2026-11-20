@@ -383,14 +383,14 @@ func (w *walker) walkPython(node *ts.Node, kind, receiver string) {
 // literal.
 func (w *walker) function(node *ts.Node, name string, anchor *ts.Node, receiver string) {
 	fn := Func{
-		Name:      name,
-		Pos:       w.pos(node),
-		StartLine: int(node.StartPoint().Row) + 1,
-		EndLine:   w.endLine(node),
-		Params:    w.params(node, receiver),
-		Body:      true,
-		Literal:   anchor == nil,
-		Receiver:  receiver,
+		Name:       name,
+		Pos:        w.pos(node),
+		StartLine:  int(node.StartPoint().Row) + 1,
+		Statements: w.statements(node),
+		Params:     w.params(node, receiver),
+		Body:       true,
+		Literal:    anchor == nil,
+		Receiver:   receiver,
 	}
 
 	if anchor != nil {
@@ -405,6 +405,27 @@ func (w *walker) function(node *ts.Node, name string, anchor *ts.Node, receiver 
 	}
 
 	w.file.Funcs = append(w.file.Funcs, fn)
+}
+
+// statements counts the statements under node: every node directly in a
+// block, and *_statement nodes outside one, such as an unbraced if body or
+// a switch case. The Python grammar puts bare expressions such as
+// assignments in blocks, so node types alone would miss them.
+func (w *walker) statements(node *ts.Node) int {
+	count := 0
+	inBlock := node.Type(w.grammar) == "block" || node.Type(w.grammar) == "statement_block"
+
+	for index := range node.NamedChildCount() {
+		child := node.NamedChild(index)
+		if kind := child.Type(w.grammar); kind != commentNode &&
+			(inBlock || strings.HasSuffix(kind, "_statement")) {
+			count++
+		}
+
+		count += w.statements(child)
+	}
+
+	return count
 }
 
 // params counts declared parameters. TypeScript `this` annotations and the

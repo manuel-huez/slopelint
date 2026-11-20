@@ -19,12 +19,12 @@ func summary(file File) []string {
 		out = append(
 			out,
 			fmt.Sprintf(
-				"func %s:%d@%s:%d-%d",
+				"func %s:%d@%s:%d s%d",
 				name,
 				fn.Params,
 				fn.Receiver,
 				fn.StartLine,
-				fn.EndLine,
+				fn.Statements,
 			),
 		)
 	}
@@ -102,9 +102,9 @@ export default () => {}
 const o = { p: () => 1, q() {} }
 `,
 			want: []string{
-				"func f:2@:4-7", "func g:1@:5-5", "func <lit>:0@:6-6",
-				"func m:2@K:10-10", "func h:0@K:11-11", "func e:1@:13-13",
-				"func default:0@:14-14", "func p:0@:15-15", "func q:0@:15-15",
+				"func f:2@:4 s2", "func g:1@:5 s0", "func <lit>:0@:6 s0",
+				"func m:2@K:10 s0", "func h:0@K:11 s0", "func e:1@:13 s0",
+				"func default:0@:14 s0", "func p:0@:15 s0", "func q:0@:15 s0",
 				"type K",
 				"comment 1-1", "comment 3-3", "comment 5-5", "comment 8-8!",
 				// Statements without a blank line between join one declaration.
@@ -114,7 +114,7 @@ const o = { p: () => 1, q() {} }
 		{
 			name: "view.tsx",
 			src:  "/* eslint-disable */\n\nexport const V = () => <div>{/* note */}</div>\n",
-			want: []string{"func V:0@:3-3", "comment 1-1!", "comment 3-3", "decl 1-1", "decl 3-3"},
+			want: []string{"func V:0@:3 s0", "comment 1-1!", "comment 3-3", "decl 1-1", "decl 3-3"},
 		},
 		{
 			name: "mod.py",
@@ -139,8 +139,8 @@ class K:
         pass
 `,
 			want: []string{
-				"func f:5@:5-9", "func inner:1@:7-8", "func <lit>:1@:9-9",
-				"func s:3@K:15-16", "func m:1@K:18-19",
+				"func f:5@:5 s4", "func inner:1@:7 s1", "func <lit>:1@:9 s0",
+				"func s:3@K:15 s1", "func m:1@K:18 s1",
 				"type K",
 				"comment 1-1", "comment 2-2!", "comment 6-6", "comment 13-13",
 				"decl 2-2", "decl 5-9", "decl 12-19",
@@ -162,7 +162,7 @@ try { a() } catch { process.exit(1) }
 try { a() } catch { process.exit(0) }
 `,
 			want: []string{
-				"func load:0@:3-8", "func <lit>:0@:6-6", "func <lit>:0@:7-7",
+				"func load:0@:3 s12", "func <lit>:0@:6 s0", "func <lit>:0@:7 s0",
 				"comment 2-2", "decl 1-10",
 				"handler 5-5 in 2-8", "handler 6-6 in 2-8", "handler 10-10 in 10-10",
 			},
@@ -183,7 +183,7 @@ try { a() } catch { process.exit(0) }
             b()
 `,
 			want: []string{
-				"func m:0@Handlers:2-12", "type Handlers", "decl 1-12",
+				"func m:0@Handlers:2 s8", "type Handlers", "decl 1-12",
 				"handler 7-10 in 2-12", "handler 11-12 in 2-12",
 			},
 		},
@@ -206,9 +206,9 @@ describe.only('d', () => {
 })
 `,
 			want: []string{
-				"func <lit>:0@:1-1", "func <lit>:0@:2-13", "func <lit>:0@:3-3",
-				"func <lit>:0@:4-8", "func <lit>:1@:5-5", "func <lit>:0@:7-7",
-				"func <lit>:0@:9-9", "func <lit>:1@:10-12", "func <lit>:0@:11-11",
+				"func <lit>:0@:1 s0", "func <lit>:0@:2 s8", "func <lit>:0@:3 s0",
+				"func <lit>:0@:4 s3", "func <lit>:1@:5 s0", "func <lit>:0@:7 s0",
+				"func <lit>:0@:9 s0", "func <lit>:1@:10 s1", "func <lit>:0@:11 s0",
 				"decl 1-13",
 				"test 4-8 ctx [{1 1} {2 2} {3 3}]", "test 11-11 ctx [{1 1} {2 2} {3 3} {10 10}]",
 				"focused 2", "sleep 5", "sleep 11",
@@ -217,7 +217,7 @@ describe.only('d', () => {
 		{
 			name: "fake.test.ts",
 			src:  "vi.useFakeTimers()\ntest('a', async () => { await delay(10) })\n",
-			want: []string{"func <lit>:0@:2-2", "decl 1-2", "test 2-2 ctx []"},
+			want: []string{"func <lit>:0@:2 s1", "decl 1-2", "test 2-2 ctx []"},
 		},
 		{
 			// Patching time.sleep anywhere in the file fakes it in the whole
@@ -249,8 +249,8 @@ class Other:
         pass
 `,
 			want: []string{
-				"func test_a:0@:4-5", "func setUp:0@TestB:10-11", "func test_c:0@TestB:13-16",
-				"func helper:0@TestB:18-19", "func test_d:0@Other:23-24",
+				"func test_a:0@:4 s1", "func setUp:0@TestB:10 s1", "func test_c:0@TestB:13 s3",
+				"func helper:0@TestB:18 s1", "func test_d:0@Other:23 s1",
 				"type TestB", "type Other",
 				"decl 1-1", "decl 4-5", "decl 8-19", "decl 22-24",
 				"test 4-5 ctx []", "test 13-16 ctx [{9 9} {10 11}]",

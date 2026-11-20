@@ -110,7 +110,7 @@ than the typed Go rules.
 
 | Rules | Finds | Go | TS | Py |
 | --- | --- | :-: | :-: | :-: |
-| `oversized_owner_file`, `long_function`, `long_func_literal`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 100, literals over 40, over 6 params, types or classes over 40 methods (Go also counts functions that take `*T` first) | ✅ | ✅ | ✅ |
+| `oversized_owner_file`, `long_function`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 40 statements (including the closures inside them), over 6 params, types or classes over 40 methods (Go also counts functions that take `*T` first) | ✅ | ✅ | ✅ |
 | `long_result_list` | Over 3 results | ✅ | – | – |
 
 ### Tests

@@ -11,8 +11,7 @@ import (
 
 const (
 	ownerFileLineLimit = 1000
-	funcDeclLineLimit  = 100
-	funcLitLineLimit   = 40
+	funcStatementLimit = 40
 	funcParamLimit     = 6
 	funcResultLimit    = 3
 	typeMethodLimit    = 40
@@ -121,17 +120,8 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 		)
 	}
 
-	lines := fn.EndLine - fn.StartLine + 1
-
+	// A literal's statements count toward the function that holds it.
 	if fn.Literal {
-		if lines > funcLitLineLimit {
-			report(
-				"long_func_literal",
-				"function literal has %d lines; "+sizeLimitDeleteFirst+", then extract the rest into a named function",
-				lines,
-			)
-		}
-
 		return findings
 	}
 
@@ -151,12 +141,12 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 		)
 	}
 
-	if fn.Body && lines > funcDeclLineLimit {
+	if fn.Body && fn.Statements > funcStatementLimit {
 		report(
 			"long_function",
-			"function %q has %d lines; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
+			"function %q has %d statements; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
 			fn.Name,
-			lines,
+			fn.Statements,
 		)
 	}
 
@@ -217,7 +207,6 @@ func (l sizeLimitCheck) outlineDecls(file *ast.File, out *outline.File) {
 		case *ast.FuncDecl:
 			if !out.Generated {
 				out.Funcs = append(out.Funcs, l.outlineFunc(decl))
-				out.Funcs = append(out.Funcs, l.outlineFuncLits(decl)...)
 			}
 		}
 	}
@@ -225,13 +214,12 @@ func (l sizeLimitCheck) outlineDecls(file *ast.File, out *outline.File) {
 
 func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {
 	out := outline.Func{
-		Name:      fn.Name.Name,
-		Pos:       l.outlinePos(fn.Name.Pos()),
-		StartLine: l.pkg.FSet.Position(fn.Pos()).Line,
-		EndLine:   l.pkg.FSet.Position(fn.End()).Line,
-		Params:    funcParamCount(fn.Type.Params),
-		Results:   funcParamCount(fn.Type.Results),
-		Body:      fn.Body != nil,
+		Name:       fn.Name.Name,
+		Pos:        l.outlinePos(fn.Name.Pos()),
+		Statements: statementCount(fn.Body),
+		Params:     funcParamCount(fn.Type.Params),
+		Results:    funcParamCount(fn.Type.Results),
+		Body:       fn.Body != nil,
 	}
 
 	signature := l.pkg.TypesInfo.Defs[fn.Name].(*types.Func).Signature()
@@ -267,28 +255,27 @@ func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {
 	return out
 }
 
-func (l sizeLimitCheck) outlineFuncLits(fn *ast.FuncDecl) []outline.Func {
-	if fn.Body == nil {
-		return nil
+// statementCount counts the statements in body, nested literals included.
+// Blocks and case clauses only group statements, as in the TypeScript and
+// Python counts, so they do not count.
+func statementCount(body *ast.BlockStmt) int {
+	if body == nil {
+		return 0
 	}
 
-	var lits []outline.Func
+	count := 0
 
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		if lit, ok := node.(*ast.FuncLit); ok {
-			lits = append(lits, outline.Func{
-				Pos:       l.outlinePos(lit.Pos()),
-				StartLine: l.pkg.FSet.Position(lit.Pos()).Line,
-				EndLine:   l.pkg.FSet.Position(lit.End()).Line,
-				Body:      true,
-				Literal:   true,
-			})
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch node.(type) {
+		case *ast.BlockStmt, *ast.EmptyStmt, *ast.CaseClause, *ast.CommClause:
+		case ast.Stmt:
+			count++
 		}
 
 		return true
 	})
 
-	return lits
+	return count
 }
 
 func (l sizeLimitCheck) outlinePos(pos token.Pos) outline.Pos {

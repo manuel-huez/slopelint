@@ -35,22 +35,7 @@ func collectSimilarityBlocks(
 		return nil, nil, err
 	}
 
-	previousFiles := make(map[string]string, len(previous.Files))
-	previousByContent := make(map[string][]string, len(previous.Files))
-
-	for _, file := range previous.Files {
-		previousFiles[file.RelativePath] = file.ContentHash
-		key := similarityCachedFileReuseKey(file.RelativePath, file.ContentHash)
-		previousByContent[key] = append(previousByContent[key], file.RelativePath)
-	}
-
-	usedPreviousFiles := make(map[string]struct{}, len(previous.Files))
-	currentFiles := make(map[string]string, len(files))
-
-	for _, file := range files {
-		currentFiles[file.relativePath] = file.contentHash
-	}
-
+	reuse := newSimilarityBlockReuse(previous, root, files)
 	cachedFiles := make([]similarityCachedFile, 0, len(files))
 	blocks := make([]*similarityBlock, 0, len(previous.Blocks))
 
@@ -60,40 +45,9 @@ func collectSimilarityBlocks(
 			ContentHash:  file.contentHash,
 		})
 
-		if previousFiles[file.relativePath] == file.contentHash {
-			usedPreviousFiles[file.relativePath] = struct{}{}
-			blocks = append(
-				blocks,
-				previous.blocksForFile(root, file.relativePath, file.relativePath)...,
-			)
+		if reused, ok := reuse.blocks(file); ok {
+			blocks = append(blocks, reused...)
 
-			continue
-		}
-
-		reuseKey := similarityCachedFileReuseKey(file.relativePath, file.contentHash)
-		reusedByContent := false
-
-		for _, previousPath := range previousByContent[reuseKey] {
-			if _, used := usedPreviousFiles[previousPath]; used {
-				continue
-			}
-
-			if previousPath != file.relativePath &&
-				currentFiles[previousPath] == file.contentHash {
-				continue
-			}
-
-			usedPreviousFiles[previousPath] = struct{}{}
-			blocks = append(
-				blocks,
-				previous.blocksForFile(root, previousPath, file.relativePath)...,
-			)
-			reusedByContent = true
-
-			break
-		}
-
-		if reusedByContent {
 			continue
 		}
 
@@ -108,6 +62,68 @@ func collectSimilarityBlocks(
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Identity < blocks[j].Identity })
 
 	return cachedFiles, blocks, nil
+}
+
+// similarityBlockReuse hands out the previous scan's blocks for unchanged
+// files, also when a file moved within its package. Each previous file is
+// reused once, and never while a current file still has its path and content.
+type similarityBlockReuse struct {
+	previous  similarityScanCache
+	root      string
+	byPath    map[string]string
+	byContent map[string][]string
+	current   map[string]string
+	used      map[string]struct{}
+}
+
+func newSimilarityBlockReuse(
+	previous similarityScanCache,
+	root string,
+	files []similarityBlockSourceFile,
+) similarityBlockReuse {
+	reuse := similarityBlockReuse{
+		previous:  previous,
+		root:      root,
+		byPath:    make(map[string]string, len(previous.Files)),
+		byContent: make(map[string][]string, len(previous.Files)),
+		current:   make(map[string]string, len(files)),
+		used:      make(map[string]struct{}, len(previous.Files)),
+	}
+
+	for _, file := range previous.Files {
+		reuse.byPath[file.RelativePath] = file.ContentHash
+		key := similarityCachedFileReuseKey(file.RelativePath, file.ContentHash)
+		reuse.byContent[key] = append(reuse.byContent[key], file.RelativePath)
+	}
+
+	for _, file := range files {
+		reuse.current[file.relativePath] = file.contentHash
+	}
+
+	return reuse
+}
+
+func (reuse similarityBlockReuse) blocks(
+	file similarityBlockSourceFile,
+) ([]*similarityBlock, bool) {
+	if reuse.byPath[file.relativePath] == file.contentHash {
+		reuse.used[file.relativePath] = struct{}{}
+
+		return reuse.previous.blocksForFile(reuse.root, file.relativePath, file.relativePath), true
+	}
+
+	for _, previousPath := range reuse.byContent[similarityCachedFileReuseKey(file.relativePath, file.contentHash)] {
+		if _, used := reuse.used[previousPath]; used ||
+			previousPath != file.relativePath && reuse.current[previousPath] == file.contentHash {
+			continue
+		}
+
+		reuse.used[previousPath] = struct{}{}
+
+		return reuse.previous.blocksForFile(reuse.root, previousPath, file.relativePath), true
+	}
+
+	return nil, false
 }
 
 func similarityCachedFileReuseKey(relativePath, contentHash string) string {

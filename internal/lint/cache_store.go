@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -121,6 +122,13 @@ func writeFileAtomically(path string, data []byte) error {
 	}
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	// Cache pruning removes empty directories, also one just created here.
+	if errors.Is(err, fs.ErrNotExist) {
+		if err = os.MkdirAll(dir, cacheDirPerm); err == nil {
+			tmp, err = os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+		}
+	}
+
 	if err != nil {
 		return err
 	}

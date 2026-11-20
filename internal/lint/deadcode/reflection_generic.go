@@ -214,26 +214,15 @@ func collectFallbackGenericDecodeParamDecodes(
 			continue
 		}
 
-		collectFallbackGenericDecodeParamTypeDecodes(typ, codec, indexes, out)
-	}
-}
-
-func collectFallbackGenericDecodeParamTypeDecodes(
-	typ types.Type,
-	codec reflectedCodecUse,
-	indexes map[*types.TypeParam]int,
-	out *[]reflectedTypeParamUse,
-) {
-	typ = types.Unalias(typ)
-
-	if _, ok := typ.(*types.Pointer); ok {
-		collectReflectedTypeParamDecodes(
-			typ,
-			codec,
-			indexes,
-			out,
-			reflectedSettableDecodeContext,
-		)
+		if _, ok := types.Unalias(typ).(*types.Pointer); ok {
+			collectReflectedTypeParamDecodes(
+				types.Unalias(typ),
+				codec,
+				indexes,
+				out,
+				reflectedSettableDecodeContext,
+			)
+		}
 	}
 }
 

@@ -53,6 +53,7 @@ func RunDefault(pkg *Package) []Finding {
 	declGroupingCheck{env}.check()
 	sizeLimitCheck{env}.check()
 	errorCheck{env}.checkSwallowed()
+	splitHelperCheck{env}.check()
 	tableTestCheck{env}.checkUnnamedLargeTables()
 	tableTestCheck{env}.checkRepeatedFixtures()
 	constValueTestCheck{env}.check()

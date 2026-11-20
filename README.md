@@ -143,6 +143,7 @@ it, or accept its pair ID with `SLOPELINT_SIMILARITY_ACCEPT`.
 | `test_trivial`, `test_mock_only`, `test_wasteful` | Tests that check nothing real, only mocks, or waste time | ✅ | ✅ | ✅ |
 | `test_repeated_steps` | Tests that should share a table or fixture | ✅ | ✅ | ✅ |
 | `test_serial_excuse` | Weak `//slopelint:serial` reasons | ✅ | – | – |
+| `helper_fragment` | Private functions with one caller that are a piece of it, not a job of their own | ✅ | – | – |
 
 Codex (`gpt-6.1-terra`) judges each declaration; each finding is its advice.
 It accepts an item when unsure, and a test group must be flagged by two

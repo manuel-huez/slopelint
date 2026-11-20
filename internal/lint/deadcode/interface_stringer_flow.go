@@ -640,16 +640,6 @@ func fmtStringerCallerParamUses(
 		return nil
 	}
 
-	return fmtStringerCallerForwardedArgUses(info, aliases, sliceAliases, call, use)
-}
-
-func fmtStringerCallerForwardedArgUses(
-	info *types.Info,
-	aliases map[fmtStringerVarRef][]fmtStringerParamUse,
-	sliceAliases map[fmtStringerVarRef][]fmtStringerParamUse,
-	call *ast.CallExpr,
-	use fmtStringerParamUse,
-) []fmtStringerParamUse {
 	if !use.variadic {
 		if !use.slice {
 			return fmtStringerParamUsesForExpr(info, aliases, call.Args[use.index])

@@ -31,6 +31,9 @@ const (
 	// codeReviewTestGroupItem spans a comparison unit of tests from one file;
 	// its request holds no other item.
 	codeReviewTestGroupItem = "test_group"
+	// codeReviewSplitHelperItem spans a private function that one caller
+	// calls once. Its request holds the caller and its split helpers only.
+	codeReviewSplitHelperItem = "split_helper"
 
 	codeReviewAdviceMaxChars = 240
 	codeReviewAdviceMinWords = 4
@@ -48,10 +51,12 @@ type codeReviewPolicy struct {
 	TypeScript int `json:"typescript,omitempty"`
 	Python     int `json:"python,omitempty"`
 	// GoTestGroups and ScriptTestGroups version the repeated-steps prompt.
-	GoTestGroups     int    `json:"go_test_groups,omitempty"`
-	ScriptTestGroups int    `json:"script_test_groups,omitempty"`
-	Model            string `json:"model"`
-	Effort           string `json:"effort"`
+	GoTestGroups     int `json:"go_test_groups,omitempty"`
+	ScriptTestGroups int `json:"script_test_groups,omitempty"`
+	// GoSplitHelpers versions the prompt that judges single-use helpers.
+	GoSplitHelpers int    `json:"go_split_helpers,omitempty"`
+	Model          string `json:"model"`
+	Effort         string `json:"effort"`
 }
 
 // codeReviewTestGroupVersion 2 asks each group twice; see
@@ -64,6 +69,7 @@ var codeReviewCurrentPolicy = codeReviewPolicy{
 	Python:           1,
 	GoTestGroups:     codeReviewTestGroupVersion,
 	ScriptTestGroups: codeReviewTestGroupVersion,
+	GoSplitHelpers:   1,
 	Model:            "gpt-6.1-terra",
 	Effort:           "low",
 }
@@ -87,6 +93,9 @@ const (
 
 	codeReviewDistinct = "distinct"
 	codeReviewRepeated = "repeated"
+
+	codeReviewOwnJob   = "own_job"
+	codeReviewFragment = "fragment"
 )
 
 var codeReviewTestGroupFixes = []string{"table", "shared_fixture"}
@@ -108,6 +117,8 @@ var codeReviewFindingKinds = map[string]string{
 	codeReviewSerialExcuse: "test_serial_excuse",
 	codeReviewDistinct:     "",
 	codeReviewRepeated:     "test_repeated_steps",
+	codeReviewOwnJob:       "",
+	codeReviewFragment:     "helper_fragment",
 }
 
 var codeReviewVerdicts = map[string][]string{
@@ -119,8 +130,9 @@ var codeReviewVerdicts = map[string][]string{
 		codeReviewMockOnly,
 		codeReviewWasteful,
 	},
-	codeReviewSerialItem:    {codeReviewSerialOK, codeReviewSerialExcuse},
-	codeReviewTestGroupItem: {codeReviewDistinct, codeReviewRepeated},
+	codeReviewSerialItem:      {codeReviewSerialOK, codeReviewSerialExcuse},
+	codeReviewTestGroupItem:   {codeReviewDistinct, codeReviewRepeated},
+	codeReviewSplitHelperItem: {codeReviewOwnJob, codeReviewFragment},
 }
 
 // codeReviewer returns only records validated against their requests.
@@ -138,6 +150,7 @@ type codeReviewItem struct {
 	Lines string   `json:"lines"`
 	Error string   `json:"error,omitempty"`
 	Tests []string `json:"tests,omitempty"`
+	Facts string   `json:"facts,omitempty"`
 }
 
 // codeReviewRequest is one top-level declaration with numbered source lines.
@@ -512,7 +525,8 @@ func splitCodeReviewCandidates(issues []Issue) ([]Issue, []Issue) {
 	var candidates []Issue
 
 	for _, issue := range issues {
-		if issue.Kind != smellcheck.DroppedErrorCandidate {
+		if issue.Kind != smellcheck.DroppedErrorCandidate &&
+			issue.Kind != smellcheck.SplitHelperCandidate {
 			findings = append(findings, issue)
 			if issue.Kind != smellcheck.RepeatedTestFixture {
 				continue
@@ -578,7 +592,7 @@ func collectCodeReviewDeclarations(
 	}
 
 	for filename := range byFile {
-		return nil, fmt.Errorf("dropped-error candidate in unreviewed file %s", filename)
+		return nil, fmt.Errorf("code review candidate in unreviewed file %s", filename)
 	}
 
 	return declarations, nil
@@ -705,6 +719,8 @@ func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewP
 		family.GoTestGroups = policy.GoTestGroups
 	case request.Items[0].Kind == codeReviewTestGroupItem:
 		family.ScriptTestGroups = policy.ScriptTestGroups
+	case request.Items[0].Kind == codeReviewSplitHelperItem:
+		family.GoSplitHelpers = policy.GoSplitHelpers
 	case request.Language == outline.Go:
 		family.Go = policy.Go
 	case request.Language == outline.TypeScript:
@@ -717,8 +733,11 @@ func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewP
 }
 
 func codeReviewFamily(request codeReviewRequest) string {
-	if request.Items[0].Kind == codeReviewTestGroupItem {
+	switch request.Items[0].Kind {
+	case codeReviewTestGroupItem:
 		return string(request.Language) + " test groups"
+	case codeReviewSplitHelperItem:
+		return string(request.Language) + " split helpers"
 	}
 
 	return string(request.Language)

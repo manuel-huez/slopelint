@@ -17,12 +17,13 @@ import (
 )
 
 const (
-	reviewTestRestateAdvice = "Delete the comment because the function name already says this."
-	reviewTestExcuseAdvice  = "Delete the compatibility branch and keep one implementation."
-	reviewTestCrutchAdvice  = "Rename total to runningSum so the comment becomes unnecessary."
-	reviewTestSwallowAdvice = "Return lostErr to callers instead of silently using zero."
-	reviewTestTrivialAdvice = "Delete TestCountTrivial because it only checks its own literal."
-	reviewTestSerialAdvice  = "Name the shared state TestCountFlaky races on, or call t.Parallel."
+	reviewTestRestateAdvice  = "Delete the comment because the function name already says this."
+	reviewTestExcuseAdvice   = "Delete the compatibility branch and keep one implementation."
+	reviewTestFragmentAdvice = "Inline totalsPart into Totals and drop the extra return values."
+	reviewTestCrutchAdvice   = "Rename total to runningSum so the comment becomes unnecessary."
+	reviewTestSwallowAdvice  = "Return lostErr to callers instead of silently using zero."
+	reviewTestTrivialAdvice  = "Delete TestCountTrivial because it only checks its own literal."
+	reviewTestSerialAdvice   = "Name the shared state TestCountFlaky races on, or call t.Parallel."
 )
 
 const reviewTestSource = `package sample
@@ -204,6 +205,20 @@ func kind(op string) int {
 
 	return 0
 }
+
+func Totals(values []int) (int, int) {
+	sum, count := totalsPart(values, 0, 0)
+	return sum, count
+}
+
+func totalsPart(values []int, sum, count int) (int, int) {
+	for _, value := range values {
+		sum += value
+		count++
+	}
+
+	return sum, count
+}
 `
 
 const reviewTestTests = `package sample
@@ -281,6 +296,7 @@ func reviewTestVerdict(item codeReviewItem, text string) codeReviewVerdict {
 		{codeReviewTestItem, "TestCountTrivial", codeReviewTrivial, reviewTestTrivialAdvice},
 		{codeReviewSerialItem, "flaky", codeReviewSerialExcuse, reviewTestSerialAdvice},
 		{codeReviewErrorItem, "lostErr", codeReviewSwallowed, reviewTestSwallowAdvice},
+		{codeReviewSplitHelperItem, "Part", codeReviewFragment, reviewTestFragmentAdvice},
 		{codeReviewCommentItem, codeReviewRestates, codeReviewRestates, reviewTestRestateAdvice},
 		{codeReviewCommentItem, codeReviewExcuse, codeReviewExcuse, reviewTestExcuseAdvice},
 		{codeReviewCommentItem, codeReviewCrutch, codeReviewCrutch, reviewTestCrutchAdvice},
@@ -367,7 +383,8 @@ func reviewIssueSummary(issues []Issue) []string {
 			"comment_crutch",
 			codeReviewFindingKinds[codeReviewSwallowed],
 			codeReviewFindingKinds[codeReviewTrivial],
-			codeReviewFindingKinds[codeReviewSerialExcuse]:
+			codeReviewFindingKinds[codeReviewSerialExcuse],
+			codeReviewFindingKinds[codeReviewFragment]:
 			out = append(
 				out,
 				strconv.Itoa(issuePosition(issue).Line)+" "+issue.Kind+": "+issue.Message,
@@ -393,6 +410,7 @@ func TestCodeReviewVerdictsBecomeFindings(t *testing.T) {
 		"14 comment_excuse: " + reviewTestExcuseAdvice,
 		"17 comment_crutch: " + reviewTestCrutchAdvice,
 		"34 swallowed_error: " + reviewTestSwallowAdvice,
+		"186 helper_fragment: " + reviewTestFragmentAdvice,
 		"13 test_trivial: " + reviewTestTrivialAdvice,
 		"25 test_serial_excuse: " + reviewTestSerialAdvice,
 	}
@@ -895,6 +913,8 @@ func keepAllForTest(item codeReviewItem, _ string) codeReviewVerdict {
 		return codeReviewVerdict{Verdict: codeReviewSerialOK}
 	case codeReviewTestGroupItem:
 		return codeReviewVerdict{Verdict: codeReviewDistinct}
+	case codeReviewSplitHelperItem:
+		return codeReviewVerdict{Verdict: codeReviewOwnJob}
 	}
 
 	return codeReviewVerdict{Verdict: codeReviewKeep}

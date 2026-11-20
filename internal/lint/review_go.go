@@ -32,14 +32,19 @@ func collectGoCodeReviewDeclarations(
 		return nil, nil
 	}
 
+	splitHelpers := slices.DeleteFunc(slices.Clone(candidates), func(candidate Issue) bool {
+		return candidate.Kind != smellcheck.SplitHelperCandidate
+	})
 	source := codeReviewSource{
-		fset:       fset,
-		file:       file,
-		lines:      strings.Split(string(content), "\n"),
-		test:       strings.HasSuffix(filename, "_test.go"),
-		candidates: candidates,
-		ifs:        make(map[int]*ast.IfStmt),
-		policy:     policy,
+		fset:  fset,
+		file:  file,
+		lines: strings.Split(string(content), "\n"),
+		test:  strings.HasSuffix(filename, "_test.go"),
+		candidates: slices.DeleteFunc(candidates, func(candidate Issue) bool {
+			return candidate.Kind == smellcheck.SplitHelperCandidate
+		}),
+		ifs:    make(map[int]*ast.IfStmt),
+		policy: policy,
 	}
 
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -50,7 +55,7 @@ func collectGoCodeReviewDeclarations(
 		return true
 	})
 
-	for _, candidate := range candidates {
+	for _, candidate := range source.candidates {
 		if source.ifs[candidate.position.Offset] == nil {
 			return nil, fmt.Errorf("%s changed during the scan; run slopelint again", filename)
 		}
@@ -70,7 +75,9 @@ func collectGoCodeReviewDeclarations(
 	}
 
 	if !source.test {
-		return declarations, nil
+		helpers, err := source.splitHelperDeclarations(splitHelpers)
+
+		return append(declarations, helpers...), err
 	}
 
 	tests, helpers := source.groupedTests()
@@ -263,13 +270,8 @@ func (source codeReviewSource) position(pos token.Pos) token.Position {
 }
 
 func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration, error) {
-	start, doc := decl.Pos(), declDoc(decl)
-	if doc != nil {
-		start = doc.Pos()
-	}
-
-	startLine := source.position(start).Line
-	endLine := source.position(decl.End()).Line
+	doc := declDoc(decl)
+	startLine, endLine := source.lineSpan(decl)
 
 	var items []codeReviewPositionedItem
 
@@ -297,11 +299,145 @@ func (source codeReviewSource) declaration(decl ast.Decl) (codeReviewDeclaration
 	}
 
 	return newCodeReviewDeclaration(codeReviewRequest{
-		Location: fmt.Sprintf("%s:%d", source.position(start).Filename, startLine),
+		Location: fmt.Sprintf("%s:%d", source.position(decl.Pos()).Filename, startLine),
 		Language: outline.Go,
 		Test:     source.test,
 		Source:   numberedCodeReviewSource(source.lines[startLine-1 : endLine]),
 	}, items, source.policy)
+}
+
+// splitHelperDeclarations builds one request per caller: the caller, then
+// each helper split from it, so review judges the pieces together.
+func (source codeReviewSource) splitHelperDeclarations(
+	candidates []Issue,
+) ([]codeReviewDeclaration, error) {
+	funcs := make(map[int]*ast.FuncDecl)
+
+	for _, decl := range source.file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			funcs[source.position(fn.Name.Pos()).Offset] = fn
+		}
+	}
+
+	byCaller := make(map[*ast.FuncDecl][]Issue)
+
+	var callers []*ast.FuncDecl
+
+	for _, candidate := range candidates {
+		helper := funcs[candidate.position.Offset]
+
+		caller := source.caller(helper)
+		if caller == nil {
+			return nil, fmt.Errorf(
+				"%s changed during the scan; run slopelint again",
+				candidate.position.Filename,
+			)
+		}
+
+		if byCaller[caller] == nil {
+			callers = append(callers, caller)
+		}
+
+		byCaller[caller] = append(byCaller[caller], candidate)
+	}
+
+	declarations := make([]codeReviewDeclaration, 0, len(callers))
+
+	for _, caller := range callers {
+		declaration, err := source.splitHelperDeclaration(caller, byCaller[caller], funcs)
+		if err != nil {
+			return nil, err
+		}
+
+		declarations = append(declarations, declaration)
+	}
+
+	return declarations, nil
+}
+
+func (source codeReviewSource) splitHelperDeclaration(
+	caller *ast.FuncDecl,
+	candidates []Issue,
+	funcs map[int]*ast.FuncDecl,
+) (codeReviewDeclaration, error) {
+	startLine, endLine := source.lineSpan(caller)
+	lines := slices.Clone(source.lines[startLine-1 : endLine])
+	items := make([]codeReviewPositionedItem, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		helperStart, helperEnd := source.lineSpan(funcs[candidate.position.Offset])
+
+		lines = append(lines, "// ...")
+		first := len(lines) + 1
+		lines = append(lines, source.lines[helperStart-1:helperEnd]...)
+		items = append(items, codeReviewPositionedItem{
+			item: codeReviewItem{
+				Kind:  codeReviewSplitHelperItem,
+				Lines: codeReviewLines(first, len(lines)),
+				Facts: candidate.Message,
+			},
+			position: candidate.position,
+		})
+	}
+
+	return newCodeReviewDeclaration(codeReviewRequest{
+		Location: fmt.Sprintf("%s:%d", source.position(caller.Pos()).Filename, startLine),
+		Language: outline.Go,
+		Source:   numberedCodeReviewSource(lines),
+	}, items, source.policy)
+}
+
+// caller returns the other function in the file that calls helper. The
+// linter found exactly one use, so a name match finds it.
+func (source codeReviewSource) caller(helper *ast.FuncDecl) *ast.FuncDecl {
+	if helper == nil {
+		return nil
+	}
+
+	for _, decl := range source.file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn == helper || fn.Body == nil {
+			continue
+		}
+
+		found := false
+
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if call, ok := node.(*ast.CallExpr); ok && calledName(call.Fun) == helper.Name.Name {
+				found = true
+			}
+
+			return !found
+		})
+
+		if found {
+			return fn
+		}
+	}
+
+	return nil
+}
+
+func calledName(fun ast.Expr) string {
+	switch fun := ast.Unparen(fun).(type) {
+	case *ast.Ident:
+		return fun.Name
+	case *ast.SelectorExpr:
+		return fun.Sel.Name
+	case *ast.IndexExpr:
+		return calledName(fun.X)
+	default:
+		return ""
+	}
+}
+
+func (source codeReviewSource) lineSpan(decl ast.Decl) (int, int) {
+	start := decl.Pos()
+	if doc := declDoc(decl); doc != nil {
+		start = doc.Pos()
+	}
+
+	return source.position(start).Line, source.position(decl.End()).Line
 }
 
 func (source codeReviewSource) commentItems(startLine, endLine int) []codeReviewPositionedItem {

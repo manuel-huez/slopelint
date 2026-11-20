@@ -32,19 +32,7 @@ func (s ifaceScan) addInterfaceMethodsForValue(
 	expr ast.Expr,
 	target types.Type,
 ) {
-	for key := range s.interfaceMethodsForValue(expr, target) {
-		out[key] = struct{}{}
-	}
-}
-
-func (s ifaceScan) interfaceMethodsForValue(
-	expr ast.Expr,
-	target types.Type,
-) map[string]struct{} {
-	out := make(map[string]struct{})
 	s.addInterfaceMethodsForType(out, s.info.TypeOf(expr), target)
-
-	return out
 }
 
 func (iface ifaceUses) typeAssertInterfaceMethodUses(

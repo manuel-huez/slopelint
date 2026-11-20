@@ -75,8 +75,12 @@ const (
 	reflectedMarshalTextHook   = "MarshalText"
 	reflectedMarshalYAMLHook   = "MarshalYAML"
 	reflectedUnmarshalJSONHook = "UnmarshalJSON"
-	reflectedUnmarshalTextHook = "UnmarshalText"
-	reflectedUnmarshalYAMLHook = "UnmarshalYAML"
+	// encoding/json/v2 streams through jsontext; v1 calls these hooks too
+	// under the jsonv2 experiment.
+	reflectedMarshalJSONToHook     = "MarshalJSONTo"
+	reflectedUnmarshalJSONFromHook = "UnmarshalJSONFrom"
+	reflectedUnmarshalTextHook     = "UnmarshalText"
+	reflectedUnmarshalYAMLHook     = "UnmarshalYAML"
 )
 
 const (
@@ -90,12 +94,20 @@ var reflectedCodecsByTag = map[string]reflectedCodec{
 		tag: "",
 	},
 	reflectedJSONTag: {
-		tag:                reflectedJSONTag,
-		decodeHooks:        []string{reflectedUnmarshalJSONHook, reflectedUnmarshalTextHook},
-		decodeAttrHooks:    []string{reflectedUnmarshalJSONHook, reflectedUnmarshalTextHook},
-		decodeMapKeyHooks:  []string{reflectedUnmarshalTextHook},
-		marshalHooks:       []string{reflectedMarshalJSONHook, reflectedMarshalTextHook},
-		marshalAttrHooks:   []string{reflectedMarshalJSONHook, reflectedMarshalTextHook},
+		tag: reflectedJSONTag,
+		decodeHooks: []string{
+			reflectedUnmarshalJSONFromHook, reflectedUnmarshalJSONHook, reflectedUnmarshalTextHook,
+		},
+		decodeAttrHooks: []string{
+			reflectedUnmarshalJSONFromHook, reflectedUnmarshalJSONHook, reflectedUnmarshalTextHook,
+		},
+		decodeMapKeyHooks: []string{reflectedUnmarshalTextHook},
+		marshalHooks: []string{
+			reflectedMarshalJSONToHook, reflectedMarshalJSONHook, reflectedMarshalTextHook,
+		},
+		marshalAttrHooks: []string{
+			reflectedMarshalJSONToHook, reflectedMarshalJSONHook, reflectedMarshalTextHook,
+		},
 		marshalMapKeyHooks: []string{reflectedMarshalTextHook},
 	},
 	reflectedXMLTag: {
@@ -146,6 +158,20 @@ var reflectedPackageCodecs = map[string]reflectedPackageCodec{
 		tag:          reflectedJSONTag,
 		decodeFuncs:  reflectedLastArgDecodeFuncs,
 		marshalFuncs: reflectedCodecFuncsWith(reflectedEncodeMarshalFuncs, "MarshalIndent"),
+	},
+	// v2 takes trailing options, so the value is not always the last argument.
+	"encoding/json/v2": {
+		tag: reflectedJSONTag,
+		decodeFuncs: map[string]reflectedCodecFunc{
+			reflectedUnmarshalFunc: {argIndex: reflectedSecondArgIndex},
+			"UnmarshalDecode":      {argIndex: reflectedSecondArgIndex},
+			"UnmarshalRead":        {argIndex: reflectedSecondArgIndex},
+		},
+		marshalFuncs: map[string]reflectedCodecFunc{
+			reflectedMarshalFunc: reflectedFirstArgCodecFunc,
+			"MarshalEncode":      {argIndex: reflectedSecondArgIndex},
+			"MarshalWrite":       {argIndex: reflectedSecondArgIndex},
+		},
 	},
 	reflectedGoccyJSON: {
 		tag: reflectedJSONTag,
@@ -234,6 +260,12 @@ var reflectedHookSignatureValidators = map[string]reflectedHookSignatureValidato
 	reflectedMarshalJSONHook:   reflectedNoParamBytesErrorSignature,
 	reflectedMarshalTextHook:   reflectedNoParamBytesErrorSignature,
 	reflectedUnmarshalJSONHook: reflectedBytesParamErrorSignature,
+	reflectedMarshalJSONToHook: func(sig *types.Signature) bool {
+		return reflectedJSONTextParamErrorSignature(sig, "Encoder")
+	},
+	reflectedUnmarshalJSONFromHook: func(sig *types.Signature) bool {
+		return reflectedJSONTextParamErrorSignature(sig, "Decoder")
+	},
 	reflectedUnmarshalTextHook: reflectedBytesParamErrorSignature,
 	reflectedMarshalYAMLHook: func(sig *types.Signature) bool {
 		return tupleLen(sig.Params()) == 0 &&
@@ -458,6 +490,17 @@ func reflectedGoccyJSONContextHookSignature(sig *types.Signature, name string) b
 	default:
 		return false
 	}
+}
+
+// reflectedJSONTextParamErrorSignature matches func(*jsontext.<name>) error.
+func reflectedJSONTextParamErrorSignature(sig *types.Signature, name string) bool {
+	if tupleLen(sig.Params()) != 1 || !reflectedErrorOnlyResultSignature(sig) {
+		return false
+	}
+
+	ptr, ok := types.Unalias(sig.Params().At(0).Type()).(*types.Pointer)
+
+	return ok && namedTypeMatches(ptr.Elem(), "encoding/json/jsontext", name)
 }
 
 func reflectedNoParamBytesErrorSignature(sig *types.Signature) bool {

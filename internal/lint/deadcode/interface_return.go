@@ -92,6 +92,12 @@ func (s ifaceScan) returnInterfaceMethodUses(
 		case *ast.FuncLit:
 			return false
 		case *ast.ReturnStmt:
+			if len(node.Results) == 1 && len(targets) > 1 {
+				s.addInterfaceMethodsForValueTargets(out, node.Results[0], targets)
+
+				return true
+			}
+
 			for index, result := range node.Results {
 				if index >= len(targets) {
 					continue

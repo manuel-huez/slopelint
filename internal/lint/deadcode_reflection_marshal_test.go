@@ -550,3 +550,50 @@ func Save() ([]byte, error) {
 		t.Fatalf("expected YAML default switch overwrite to leave field dead, got:\n%s", joined)
 	}
 }
+
+// encoding/json/v2 takes the value before its options and calls both the v1
+// and the streaming hooks of field types.
+func TestRepoDeadCodeKeepsJSONv2Hooks(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeTestMain(t, tmp, `	_, _ = lib.Load(nil)`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+)
+
+type Date string
+
+func (date *Date) UnmarshalJSON([]byte) error {
+	*date = "decoded"
+
+	return nil
+}
+
+type Ticks struct{}
+
+func (*Ticks) UnmarshalJSONFrom(*jsontext.Decoder) error { return nil }
+
+type Payload struct {
+	Day   Date
+	Ticks Ticks
+}
+
+func Load(data []byte) (Payload, error) {
+	var payload Payload
+	err := json.Unmarshal(data, &payload, json.MatchCaseInsensitiveNames(true))
+
+	return payload, err
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	for _, method := range []string{`"UnmarshalJSON"`, `"UnmarshalJSONFrom"`} {
+		if strings.Contains(joined, method) {
+			t.Fatalf("json/v2 hook %s reported dead:\n%s", method, joined)
+		}
+	}
+}

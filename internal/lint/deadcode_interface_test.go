@@ -72,3 +72,29 @@ func Live() error {
 		t.Fatalf("expected unused private method finding, got:\n%s", joined)
 	}
 }
+
+func TestRepoDeadCodeKeepsMethodsOfTupleReturnedInterface(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeTestMain(t, tmp, `	sink, _ := lib.Open()
+	sink.Write()`)
+	writeFile(t, filepath.Join(tmp, "lib", "lib.go"), `package lib
+
+type Sink interface{ Write() }
+
+type fileSink struct{}
+
+func newFileSink() (*fileSink, error) { return &fileSink{}, nil }
+
+func (*fileSink) Write() {}
+
+func Open() (Sink, error) {
+	return newFileSink()
+}
+`)
+
+	if joined := joinMessages(lintInDir(t, tmp)); strings.Contains(joined, `"Write"`) {
+		t.Fatalf("tuple-returned interface method reported dead:\n%s", joined)
+	}
+}

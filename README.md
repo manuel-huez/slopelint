@@ -95,7 +95,8 @@ than the typed Go rules.
 | Rules | Finds | Go | TS | Py |
 | --- | --- | :-: | :-: | :-: |
 | `control_flow_merge`, `boolean_ceremony`, `control_flow_pyramid`, `temp_alias` | Branches to merge, ifs that return `true`/`false`, nested final ifs, single-use aliases | ✅ | ✅ | ✅ |
-| `trivial_wrapper`, `abstraction_overkill`, `generic_naming` | Private helpers that only forward or have one tiny use, generic helper names | ✅ | ✅ | – |
+| `trivial_wrapper`, `generic_naming` | Private helpers that only forward, generic helper names | ✅ | ✅ | – |
+| `abstraction_overkill` | Private helpers with one tiny use (Go: see `helper_fragment`) | – | ✅ | – |
 | `redundant_condition`, `redundant_subexpression`, `unreachable_case`, `redundant_default` | Guards and cases that earlier checks already decide | ✅ | – | – |
 | `complexity_simplification`, `guard_complexity` | Complex conditions with a simpler equivalent | ✅ | – | – |
 | `append_ceremony`, `range_ceremony`, `normalization_ceremony`, `serialization_ceremony` | Needless guards around append, range, normalization, and encoding | ✅ | – | – |

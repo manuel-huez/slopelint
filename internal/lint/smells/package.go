@@ -67,7 +67,6 @@ func RunDefault(pkg *Package) []Finding {
 // RunPackage runs package-wide smell checks enabled by --package.
 func RunPackage(pkg *Package) []Finding {
 	env := newRuleEnv(pkg)
-	singleUseHelperCheck{env}.check()
 	singleImplCheck{env}.check()
 	optionsOverkillCheck{env}.check()
 	resultWrapperCheck{env}.check()

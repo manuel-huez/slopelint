@@ -32,12 +32,7 @@ func LintRepository(
 		return issues, nil
 	}
 
-	targets, byImportPath, err := resolvePackageMetadata(patterns, dir)
-	if err != nil {
-		return nil, err
-	}
-
-	scriptRoot, scripts, err := patternScriptFiles(patterns, dir)
+	scan, err := resolveRepoScan(patterns, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +45,7 @@ func LintRepository(
 	)
 
 	if similarity != nil && !similarity.CI {
-		similarityPkgs, filesErr := similarityPackagesForTargets(targets)
+		similarityPkgs, filesErr := similarityPackagesForTargets(scan.targets)
 		if filesErr != nil {
 			return nil, filesErr
 		}
@@ -65,15 +60,15 @@ func LintRepository(
 			issues, similarityErr = checkSemanticCode(
 				ctx,
 				similarityPkgs,
-				scripts,
+				scan.scripts,
 				*similarity,
 				candidates,
 			)
 		})
 	}
 
-	packageIssues, err := lintPackageTargets(targets, byImportPath, opts)
-	scriptIssues, scriptErr := lintScriptFiles(scripts, scriptRoot, opts)
+	packageIssues, err := lintPackageTargets(scan.targets, scan.byImportPath, opts)
+	scriptIssues, scriptErr := lintScriptFiles(scan.scripts, scan.scriptRoot, opts)
 	err = errors.Join(err, scriptErr)
 	packageIssues, found := splitCodeReviewCandidates(append(packageIssues, scriptIssues...))
 
@@ -97,6 +92,38 @@ func LintRepository(
 	persistRepoAnalysisResult(patterns, dir, opts, similarity, issues)
 
 	return issues, nil
+}
+
+// repoScan is what the patterns match: Go packages, and the TypeScript and
+// Python files under them.
+type repoScan struct {
+	targets      []*packageMeta
+	byImportPath map[string]*packageMeta
+	scriptRoot   string
+	scripts      []string
+}
+
+func resolveRepoScan(patterns []string, dir string) (repoScan, error) {
+	var (
+		scan repoScan
+		err  error
+	)
+
+	scan.targets, scan.byImportPath, err = resolvePackageMetadata(patterns, dir)
+	if err != nil {
+		return repoScan{}, err
+	}
+
+	scan.scriptRoot, scan.scripts, err = patternScriptFiles(patterns, dir)
+	if err != nil {
+		return repoScan{}, err
+	}
+
+	if len(scan.targets) == 0 && len(scan.scripts) == 0 {
+		return repoScan{}, errors.New("no Go packages or script files matched")
+	}
+
+	return scan, nil
 }
 
 func persistRepoAnalysisResult(

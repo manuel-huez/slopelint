@@ -191,3 +191,39 @@ func TestCodeReviewKeysFollowOwnFamily(t *testing.T) {
 		}
 	}
 }
+
+// A folder fenced off with its own go.mod holds no Go package of the module,
+// so linting only it must not need the Go code to compile.
+func TestScriptOnlyPatternSkipsGoPackages(t *testing.T) {
+	t.Parallel()
+
+	dir := newTestModule(t)
+	writeFile(
+		t,
+		filepath.Join(dir, "broken", "broken.go"),
+		"package broken\n\nfunc broken() { undefined() }\n",
+	)
+	writeFile(t, filepath.Join(dir, "web", "go.mod"), "module example.com/sample/web\n\ngo 1.22\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "web", "app.ts"),
+		"export function long(): number {\n  let total = 0\n"+
+			strings.Repeat("  total += 1\n", 41)+"  return total\n}\n",
+	)
+	initTestGitRepository(t, dir)
+
+	issues, err := LintRepository(
+		t.Context(),
+		[]string{"./web/..."},
+		dir,
+		Options{MaxStates: 32},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasIssueKind(issues, "long_function") {
+		t.Fatalf("script-only scan missed long_function:\n%s", joinMessages(issues))
+	}
+}

@@ -11,10 +11,12 @@ import (
 	"go/types"
 	"go/version"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -57,6 +59,16 @@ func resolvePackageMetadata(
 		patterns = []string{allPackagesPattern}
 	}
 
+	// go list fails on a folder outside the main module, such as a
+	// TypeScript project fenced off with its own go.mod, so a scan of only
+	// scripts never reaches it.
+	patterns = slices.DeleteFunc(slices.Clone(patterns), func(pattern string) bool {
+		return !patternHasGoFiles(pattern, dir)
+	})
+	if len(patterns) == 0 {
+		return nil, nil, nil
+	}
+
 	if err := requireReadableExportData(dir); err != nil {
 		return nil, nil, err
 	}
@@ -93,6 +105,51 @@ func resolvePackageMetadata(
 	classifyTestOnlyPackages(targets, byImportPath, patterns, absoluteDir)
 
 	return targets, byImportPath, nil
+}
+
+// patternHasGoFiles reports whether a directory pattern such as ./web/...
+// holds a Go file of the main module. Import-path patterns are kept.
+func patternHasGoFiles(pattern, dir string) bool {
+	root, recursive := strings.CutSuffix(pattern, "/...")
+	if root == "." || !filepath.IsAbs(root) && !strings.HasPrefix(root, ".") {
+		return true
+	}
+
+	root = filepath.Join(dir, root)
+
+	// A go.mod below the module root starts another module, which go list
+	// leaves out.
+	if root != filepath.Clean(dir) && fileExists(filepath.Join(root, "go.mod")) {
+		return false
+	}
+
+	return dirHasGoFiles(root, recursive)
+}
+
+func dirHasGoFiles(root string, recursive bool) bool {
+	found := false
+
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		switch {
+		case err != nil || found:
+			return filepath.SkipAll
+		case !entry.IsDir():
+			found = strings.HasSuffix(path, ".go")
+		case path != root && (!recursive || strings.HasPrefix(entry.Name(), ".") ||
+			entry.Name() == "node_modules" || fileExists(filepath.Join(path, "go.mod"))):
+			return filepath.SkipDir
+		}
+
+		return nil
+	})
+
+	return found
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+
+	return err == nil
 }
 
 // requireReadableExportData rejects toolchains whose export data this binary's

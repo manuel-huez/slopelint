@@ -33,7 +33,7 @@ func f(items []string, allowed []string) {
 
 	if !strings.Contains(
 		joined,
-		`slices.Contains scans invariant collection allowed inside loop; build a set before the loop`,
+		`slices.Contains scans invariant collection allowed inside loop`,
 	) {
 		t.Fatalf("expected explicit generic membership scan finding, got:\n%s", joined)
 	}
@@ -269,7 +269,7 @@ func f(items []string, allowed []string) {
 	}
 }
 `,
-			want:     `slices.Contains scans invariant collection allowed inside loop; build a set before the loop`,
+			want:     `slices.Contains scans invariant collection allowed inside loop`,
 			failure:  "expected membership scan finding, got:\n%s",
 			kind:     "loop_membership_scan",
 			failure2: "expected loop_membership_scan kind, got %#v",
@@ -287,7 +287,7 @@ func f(items []string, keys []int) {
 	}
 }
 `,
-			want:     `slices.Sort orders keys inside loop; sort once outside or maintain order incrementally`,
+			want:     `slices.Sort orders keys inside loop`,
 			failure:  "expected sort-in-loop finding, got:\n%s",
 			kind:     "loop_sort",
 			failure2: "expected loop_sort kind, got %#v",
@@ -307,7 +307,7 @@ func f(items []string) {
 	}
 }
 `,
-			want:     `regexp.MustCompile is recomputed inside loop without loop inputs; compute it before the loop`,
+			want:     `regexp.MustCompile is recomputed inside loop without loop inputs`,
 			failure:  "expected loop-invariant regexp finding, got:\n%s",
 			kind:     "loop_invariant_work",
 			failure2: "expected loop_invariant_work kind, got %#v",
@@ -336,7 +336,7 @@ func f(orders []order, customers []customer) {
 	}
 }
 `,
-			want:     `nested range scans customers for each orders item; build a lookup map before the outer loop`,
+			want:     `nested range scans customers for each orders item`,
 			failure:  "expected nested lookup finding, got:\n%s",
 			kind:     "nested_lookup_loop",
 			failure2: "expected nested_lookup_loop kind, got %#v",
@@ -360,7 +360,7 @@ func f(spans []span) {
 	}
 }
 `,
-			want:     `nested range compares pairs from spans; consider sort/two-pointer, sweep line, or bucketing for growing inputs`,
+			want:     `nested range compares pairs from spans`,
 			failure:  "expected pairwise comparison finding, got:\n%s",
 			kind:     "pairwise_comparison_loop",
 			failure2: "expected pairwise_comparison_loop kind, got %#v",
@@ -384,7 +384,7 @@ func f(urls []string) {
 	}
 }
 `,
-			want:     `network call http.Get inside loop can become N+1 work; batch fetch or move request outside loop`,
+			want:     `network call http.Get inside loop can become N+1 work`,
 			failure:  "expected network call loop finding, got:\n%s",
 			kind:     loopExternalCallKind,
 			failure2: "expected loop_external_call kind, got %#v",
@@ -402,7 +402,7 @@ func f(ids []string, baseURL string) {
 	}
 }
 `,
-			want:     `network call http.Get inside loop can become N+1 work; batch fetch or move request outside loop`,
+			want:     `network call http.Get inside loop can become N+1 work`,
 			failure:  "expected network call loop finding through temp, got:\n%s",
 			kind:     loopExternalCallKind,
 			failure2: "expected loop_external_call kind, got %#v",

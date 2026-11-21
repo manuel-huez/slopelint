@@ -35,7 +35,7 @@ func (l testSupportCheck) checkGlobalFuncStubs() {
 			decl.pos,
 			"test_global_func_stub",
 			fmt.Sprintf(
-				`package-level function variable %q is reassigned in tests at %s; pass dependency through the owning API instead`,
+				`package-level function variable %q is reassigned in tests at %s`,
 				decl.name,
 				l.positionText(assignPos),
 			),
@@ -137,7 +137,7 @@ func (l testSupportCheck) checkFatalPanics() {
 				l.report(
 					panicCall.Pos(),
 					"test_fatal_panic",
-					`panic after testing fatal call is unreachable test ceremony; return the required zero value instead`,
+					`panic after testing fatal call is unreachable test ceremony`,
 				)
 			}
 
@@ -187,7 +187,7 @@ func (l testSupportCheck) checkSleeps() {
 				l.report(
 					call.Pos(),
 					"test_sleep",
-					`time.Sleep in test code; wait on a channel, condition, or fake clock instead`,
+					`time.Sleep in test code`,
 				)
 			}
 
@@ -211,7 +211,7 @@ func (l testSupportCheck) checkFilenames() {
 		l.report(
 			file.Package,
 			"test_support_filename",
-			"shared test-only source must use a test_support filename marker (for example helpers_test_support.go); keep .go so other packages' tests can import it",
+			"shared test-only source lacks the test_support filename marker",
 		)
 	}
 }

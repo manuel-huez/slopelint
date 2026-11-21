@@ -102,7 +102,7 @@ func (w *walker) tsTestCall(call *ts.Node) {
 		w.file.Smells = append(w.file.Smells, Smell{
 			Pos:     w.pos(call),
 			Kind:    "test_focused",
-			Message: "focused test skips every other test in its file; remove .only, fit, or fdescribe",
+			Message: "focused test skips every other test in its file",
 		})
 	}
 
@@ -429,7 +429,7 @@ func (w *walker) finishTests() {
 		w.file.Smells = append(w.file.Smells, Smell{
 			Pos:     each.pos,
 			Kind:    "test_sleep",
-			Message: "real sleep in test code; wait on the event, promise, or condition, or use fake timers instead",
+			Message: "real sleep in test code",
 		})
 	}
 }

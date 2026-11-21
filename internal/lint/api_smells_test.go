@@ -135,7 +135,7 @@ func run() {
 	emit(true)
 }
 `,
-			want:     `private function "emit" has bool mode parameter "final" called with boolean literals; split named operations or use a typed mode`,
+			want:     `private function "emit" has bool mode parameter "final" called with boolean literals`,
 			failure:  "expected bool-mode-param finding, got:\n%s",
 			kind:     "bool_mode_param",
 			failure2: "expected bool_mode_param kind, got %#v",
@@ -177,7 +177,7 @@ func coverageContainsDate(coverage Coverage, date string) bool {
 	return coverage.IsZero() || coverage.ContainsDate(date)
 }
 `,
-			want:     `private function "encodeInCoverage" parameter "coverage" is always called with zero value "Coverage{}"; remove the parameter or pass real variation`,
+			want:     `private function "encodeInCoverage" parameter "coverage" is always called with zero value "Coverage{}"`,
 			failure:  "expected zero-value-arg finding, got:\n%s",
 			kind:     "api_overkill",
 			failure2: "expected api_overkill kind, got %#v",
@@ -194,7 +194,7 @@ func decode(value string) (string, bool, error) {
 	return value, true, nil
 }
 `,
-			want:     `private function "decode" returns (value, ok, error); make absence part of the error/zero-value contract or return a named state type`,
+			want:     `private function "decode" returns (value, ok, error)`,
 			failure:  "expected optional-result-triple finding, got:\n%s",
 			kind:     "optional_result_triple",
 			failure2: "expected optional_result_triple kind, got %#v",
@@ -221,7 +221,7 @@ func mustValue() string {
 	return "ok"
 }
 `,
-			want:     `production function "mustValue" panics with error "err"; return error or prove the invariant before this call`,
+			want:     `production function "mustValue" panics with error "err"`,
 			failure:  "expected production-error-panic finding, got:\n%s",
 			kind:     "prod_must_panic",
 			failure2: "expected prod_must_panic kind, got %#v",
@@ -378,7 +378,7 @@ func first() error {
 
 	if !strings.Contains(
 		joined,
-		`callback returns sentinel error "io.EOF" for control flow and caller suppresses it; use an explicit stop signal instead`,
+		`callback returns sentinel error "io.EOF" for control flow and caller suppresses it`,
 	) {
 		t.Fatalf("expected sentinel-error-break finding, got:\n%s", joined)
 	}

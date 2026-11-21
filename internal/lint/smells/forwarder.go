@@ -61,7 +61,7 @@ func (l forwarderCheck) checkFunc(fn *ast.FuncDecl, useCounts map[string]int) {
 		fn.Name.Pos(),
 		"trivial_wrapper",
 		fmt.Sprintf(
-			`%s %q only forwards to %q%s; inline or merge names`,
+			`%s %q only forwards to %q%s`,
 			trivialForwarderSubject(fn),
 			fn.Name.Name,
 			l.render(call.Fun),

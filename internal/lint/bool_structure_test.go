@@ -72,7 +72,7 @@ func f(err error) error {
 	return nil
 }
 `,
-			want:    `1 guard return(s) duplicate following return "return nil"; drop redundant branch checks`,
+			want:    `1 guard return(s) duplicate following return "return nil"`,
 			failure: "expected redundant return guard finding, got:\n%s",
 		},
 		{
@@ -90,7 +90,7 @@ func f(first bool, second bool) int {
 	return 0
 }
 `,
-			want:    `2 guard return(s) duplicate following return "return 0"; drop redundant branch checks`,
+			want:    `2 guard return(s) duplicate following return "return 0"`,
 			failure: "expected redundant return guard set finding, got:\n%s",
 		},
 		{
@@ -105,7 +105,7 @@ func f(ok bool, ready bool) {
 	}
 }
 `,
-			want:    `nested if pyramid has 2 levels at function end; invert conditions into guard clauses`,
+			want:    `nested if pyramid has 2 levels at function end`,
 			failure: "expected nested if pyramid finding, got:\n%s",
 		},
 		{

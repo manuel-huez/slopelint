@@ -59,7 +59,7 @@ func (l constValueTestCheck) check() {
 					fn.Name.Pos(),
 					"test_no_assertion",
 					fmt.Sprintf(
-						`test %q has no failing path; assert on the result or remove the test`,
+						`test %q has no failing path`,
 						fn.Name.Name,
 					),
 				)
@@ -86,7 +86,7 @@ func (l constValueTestCheck) check() {
 				fn.Name.Pos(),
 				"const_value_test",
 				fmt.Sprintf(
-					`test %q only checks fixed package values against fixed expectations; remove it or test behavior that consumes the value`,
+					`test %q only checks fixed package values against fixed expectations`,
 					fn.Name.Name,
 				),
 			)

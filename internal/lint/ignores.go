@@ -16,6 +16,7 @@ const (
 	staleIgnoreKind   = "stale_ignore"
 	invalidIgnoreKind = "invalid_ignore"
 	ownerFileRule     = "oversized_owner_file"
+	parseErrorKind    = "parse_error"
 )
 
 // IgnoreHint tells agents when they may add an ignore. It is printed once
@@ -237,7 +238,7 @@ func (set *ignoreSet) add(dir *ignoreDirective) {
 // rules that police ignores themselves.
 func ignorableRule(rule string) bool {
 	switch rule {
-	case staleIgnoreKind, invalidIgnoreKind, "parse_error":
+	case staleIgnoreKind, invalidIgnoreKind, parseErrorKind:
 		return false
 	}
 
@@ -295,7 +296,7 @@ func (set *ignoreSet) stale(covers func(rule string) bool) []Issue {
 		issues = append(issues, Issue{
 			Kind: staleIgnoreKind,
 			Message: fmt.Sprintf(
-				"nothing reports %s %s anymore; delete this slopelint:ignore",
+				"nothing reports %s %s anymore",
 				dir.rule,
 				where,
 			),

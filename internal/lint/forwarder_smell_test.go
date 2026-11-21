@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const wantRunForwardsToExecute = `private helper "run" only forwards to "execute" at one production use; inline or merge names`
+const wantRunForwardsToExecute = `private helper "run" only forwards to "execute" at one production use`
 
 const wantForwardsToExecute = `only forwards to "execute"`
 
@@ -58,7 +58,7 @@ func validateUser(name string) bool {
 	return name != ""
 }
 `,
-			want:     `comment only restates private declaration "validateUser"; remove or explain intent`,
+			want:     `comment only restates private declaration "validateUser"`,
 			failure:  "expected restatement-comment finding, got:\n%s",
 			kind:     "comment_noise",
 			failure2: "expected comment_noise kind, got %#v",
@@ -170,7 +170,7 @@ func use(value string) error {
 	return err
 }
 `,
-			want:    `private helper "parseCount" only forwards to "strconv.Atoi" at one production use; inline or merge names`,
+			want:    `private helper "parseCount" only forwards to "strconv.Atoi" at one production use`,
 			failure: "expected imported trivial forwarder finding, got:\n%s",
 		},
 		{
@@ -194,7 +194,7 @@ func use(scope CacheScope) error {
 	return err
 }
 `,
-			want:    `private helper "fxCacheScopeCurrencies" only forwards to "fxScopeCurrencies" at one production use; inline or merge names`,
+			want:    `private helper "fxCacheScopeCurrencies" only forwards to "fxScopeCurrencies" at one production use`,
 			failure: "expected trivial adapter forwarder finding, got:\n%s",
 		},
 	})
@@ -227,7 +227,7 @@ func use(req request, code CurrencyCode) error {
 	return err
 }
 `,
-			want:    `private helper "convertRequest" only forwards to "convertScope" at one production use; inline or merge names`,
+			want:    `private helper "convertRequest" only forwards to "convertScope" at one production use`,
 			failure: "expected trivial field/conversion adapter forwarder finding, got:\n%s",
 		},
 	})
@@ -435,7 +435,7 @@ func run(name string) bool {
 func a(name string) bool { return run(name) }
 func b(name string) bool { return run(name) }
 `,
-			want:    `private helper "run" only forwards to "execute" in a body of 3 lines or less; inline or merge names`,
+			want:    `private helper "run" only forwards to "execute" in a body of 3 lines or less`,
 			failure: "expected short trivial forwarder finding with multiple callsites, got:\n%s",
 		},
 		{
@@ -472,7 +472,7 @@ func (r Runner) Run(name string) bool {
 func a(r Runner) bool { return r.Run("a") }
 func b(r Runner) bool { return r.Run("b") }
 `,
-			want:    `exported method "Run" only forwards to "execute" in a body of 3 lines or less; inline or merge names`,
+			want:    `exported method "Run" only forwards to "execute" in a body of 3 lines or less`,
 			failure: "expected exported method trivial forwarder finding, got:\n%s",
 		},
 		{
@@ -491,7 +491,7 @@ func (r Runner) Run(name string) bool {
 func a(r Runner) bool { return r.Run("a") }
 func b(r Runner) bool { return r.Run("b") }
 `,
-			want:    `exported method "Run" only forwards to "execute" in a body of 3 lines or less; inline or merge names`,
+			want:    `exported method "Run" only forwards to "execute" in a body of 3 lines or less`,
 			failure: "expected documented exported method trivial forwarder finding, got:\n%s",
 		},
 	} {

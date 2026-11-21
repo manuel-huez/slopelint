@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"runtime"
@@ -256,19 +257,41 @@ func reportStandaloneError(stderr io.Writer, err error) int {
 	return exitFailure
 }
 
+// writeStandaloneIssues prints findings grouped by rule. Each group states
+// once what the rule finds and how to fix it; its lines carry only what
+// differs per finding, and keep the path:line:col prefix editors open.
 func writeStandaloneIssues(stderr io.Writer, issues []lint.Issue) error {
+	byKind := make(map[string][]lint.Issue)
 	for _, issue := range issues {
-		if _, err := fmt.Fprintf(
-			stderr,
-			"%s: %s\n",
-			lint.FormatIssuePosition(issue),
-			issue.Message,
-		); err != nil {
-			return err
-		}
+		byKind[issue.Kind] = append(byKind[issue.Kind], issue)
 	}
 
-	return nil
+	var out strings.Builder
+
+	for _, kind := range slices.Sorted(maps.Keys(byKind)) {
+		finds, fix := lint.RuleGuide(kind)
+		group := byKind[kind]
+
+		if finds != "" {
+			kind += ": " + finds
+		}
+
+		fmt.Fprintf(&out, "%s (%d)\n", kind, len(group))
+
+		if fix != "" {
+			fmt.Fprintf(&out, "  Fix: %s\n", fix)
+		}
+
+		for _, issue := range group {
+			fmt.Fprintf(&out, "  %s: %s\n", lint.FormatIssuePosition(issue), issue.Message)
+		}
+
+		out.WriteString("\n")
+	}
+
+	_, err := io.WriteString(stderr, out.String())
+
+	return err
 }
 
 func similarityModeFromEnv() (similarityMode, error) {
@@ -307,11 +330,20 @@ type standaloneJSONIssue struct {
 	Message  string `json:"message"`
 }
 
+type standaloneJSONRule struct {
+	Finds string `json:"finds"`
+	Fix   string `json:"fix,omitempty"`
+}
+
+// writeJSONIssues adds the guide of each reported rule once, as text output
+// does.
 func writeJSONIssues(out io.Writer, issues []lint.Issue) error {
 	encoded := struct {
-		Issues []standaloneJSONIssue `json:"issues"`
+		Issues []standaloneJSONIssue         `json:"issues"`
+		Rules  map[string]standaloneJSONRule `json:"rules"`
 	}{
 		Issues: make([]standaloneJSONIssue, 0, len(issues)),
+		Rules:  make(map[string]standaloneJSONRule),
 	}
 
 	for _, issue := range issues {
@@ -320,6 +352,9 @@ func writeJSONIssues(out io.Writer, issues []lint.Issue) error {
 			Kind:     issue.Kind,
 			Message:  issue.Message,
 		})
+
+		finds, fix := lint.RuleGuide(issue.Kind)
+		encoded.Rules[issue.Kind] = standaloneJSONRule{Finds: finds, Fix: fix}
 	}
 
 	return json.NewEncoder(out).Encode(encoded)

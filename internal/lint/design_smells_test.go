@@ -8,7 +8,6 @@ import (
 
 const (
 	oversizedOwnerFixtureLines = 1000
-	sizeLimitDeleteFirst       = "; first check what each part is for and who calls it, and delete what nothing needs (legacy paths, code only tests use, redundant checks, defensive code for cases that cannot happen), then "
 )
 
 func TestDetectsDuplicateValidationLadder(t *testing.T) {
@@ -57,7 +56,7 @@ var errBad error
 
 	if !strings.Contains(
 		joined,
-		`function "update" has same supported behavior as "create" (effects: reads); merge shared implementation`,
+		`function "update" has same supported behavior as "create" (effects: reads)`,
 	) {
 		t.Fatalf("expected behavior clone finding, got:\n%s", joined)
 	}
@@ -95,7 +94,7 @@ func run() {
 
 	if !strings.Contains(
 		joined,
-		`private interface "writer" has one in-package implementation "fileWriter"; use concrete type unless substitution is needed`,
+		`private interface "writer" has one in-package implementation "fileWriter"`,
 	) {
 		t.Fatalf("expected single-impl interface finding, got:\n%s", joined)
 	}
@@ -160,7 +159,7 @@ func run() int {
 
 	if !strings.Contains(
 		joined,
-		`private API "newThing" uses functional options for 1 production uses; pass config directly`,
+		`private API "newThing" uses functional options for 1 production uses`,
 	) {
 		t.Fatalf("expected options-overkill finding, got:\n%s", joined)
 	}
@@ -224,7 +223,7 @@ const (
 
 func use(state) {}
 `,
-			want:     `const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
+			want:     `const chunk has 12 consecutive items`,
 			failure:  "expected const-grouping finding, got:\n%s",
 			kind:     "const_grouping",
 			failure2: "expected const_grouping kind, got %#v",
@@ -250,7 +249,7 @@ const statePaused state = "paused"
 
 func use(state) {}
 `,
-			want:     `const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
+			want:     `const chunk has 12 consecutive items`,
 			failure:  "expected const-grouping finding, got:\n%s",
 			kind:     "const_grouping",
 			failure2: "expected const_grouping kind, got %#v",
@@ -274,7 +273,7 @@ var (
 	cacheL = 12
 )
 `,
-			want:     `var chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller var blocks`,
+			want:     `var chunk has 12 consecutive items`,
 			failure:  "expected var-grouping finding, got:\n%s",
 			kind:     "var_grouping",
 			failure2: "expected var_grouping kind, got %#v",
@@ -303,7 +302,7 @@ type reqJ struct{}
 type reqK struct{}
 type reqL struct{}
 `,
-			want:     `type chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller type blocks`,
+			want:     `type chunk has 12 consecutive items`,
 			failure:  "expected type-grouping finding, got:\n%s",
 			kind:     "type_grouping",
 			failure2: "expected type_grouping kind, got %#v",
@@ -379,7 +378,7 @@ const (
 
 	if !strings.Contains(
 		joined,
-		`const chunk has 12 consecutive items; split related declarations with blank lines, group comments, or smaller const blocks`,
+		`const chunk has 12 consecutive items`,
 	) {
 		t.Fatalf("expected const-grouping finding in test file, got:\n%s", joined)
 	}
@@ -406,7 +405,7 @@ const (
 
 	if !strings.Contains(
 		joined,
-		`const chunk mixes mode, phase, status prefixes without grouping; split unrelated const families with blank lines or group comments`,
+		`const chunk mixes mode, phase, status prefixes without grouping`,
 	) {
 		t.Fatalf("expected mixed-const-prefix finding, got:\n%s", joined)
 	}
@@ -549,7 +548,7 @@ func TestParse(t *testing.T) {
 
 	if !strings.Contains(
 		joined,
-		`table test has 11 cases without name/desc field; add case names so failures identify scenarios`,
+		`table test has 11 cases without name/desc field`,
 	) {
 		t.Fatalf("expected table-test-grouping finding, got:\n%s", joined)
 	}
@@ -621,7 +620,7 @@ func run() bool {
 
 	if !strings.Contains(
 		joined,
-		`private result wrapper "parseResult" only carries value plus status; return ordinary Go results`,
+		`private result wrapper "parseResult" only carries value plus status`,
 	) {
 		t.Fatalf("expected result-wrapper finding, got:\n%s", joined)
 	}

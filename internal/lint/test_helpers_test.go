@@ -19,8 +19,8 @@ const (
 	wantMethodUnmarshalJSON     = `method "UnmarshalJSON"`
 	wantMethodUnmarshalText     = `method "UnmarshalText"`
 	wantMethodUnmarshalYAML     = `method "UnmarshalYAML"`
-	wantRemoveFieldPayloadName  = wantFieldPayloadName + ` is unreachable from repo entrypoints; remove it`
-	wantRemoveMethodMarshalJSON = wantMethodMarshalJSON + ` is unreachable from repo entrypoints; remove it`
+	wantRemoveFieldPayloadName  = wantFieldPayloadName + ` is unreachable from repo entrypoints`
+	wantRemoveMethodMarshalJSON = wantMethodMarshalJSON + ` is unreachable from repo entrypoints`
 )
 
 func lintInDir(t *testing.T, dir string) []Issue {

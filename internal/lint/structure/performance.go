@@ -145,7 +145,7 @@ func (r loopRules) appendLoopCallFindings(
 			Pos:  call.Pos(),
 			Kind: "loop_membership_scan",
 			Message: fmt.Sprintf(
-				`%s scans invariant collection %s inside loop; build a set before the loop`,
+				`%s scans invariant collection %s inside loop`,
 				helper,
 				r.q.render(collection),
 			),
@@ -158,7 +158,7 @@ func (r loopRules) appendLoopCallFindings(
 			Pos:  call.Pos(),
 			Kind: "loop_sort",
 			Message: fmt.Sprintf(
-				`%s orders %s inside loop; sort once outside or maintain order incrementally`,
+				`%s orders %s inside loop`,
 				helper,
 				r.q.render(target),
 			),
@@ -172,7 +172,7 @@ func (r loopRules) appendLoopCallFindings(
 			Kind: "loop_external_call",
 			Message: kind + " " + r.q.render(
 				call.Fun,
-			) + ` inside loop can become N+1 work; batch fetch or move request outside loop`,
+			) + ` inside loop can become N+1 work`,
 		})
 	}
 
@@ -180,7 +180,7 @@ func (r loopRules) appendLoopCallFindings(
 		out = append(out, Finding{
 			Pos:     call.Pos(),
 			Kind:    "loop_invariant_work",
-			Message: label + ` is recomputed inside loop without loop inputs; compute it before the loop`,
+			Message: label + ` is recomputed inside loop without loop inputs`,
 		})
 	}
 
@@ -293,7 +293,7 @@ func (r loopRules) nestedLookupLoops(scope loopScope) []Finding {
 			Pos:  inner.For,
 			Kind: "nested_lookup_loop",
 			Message: fmt.Sprintf(
-				`nested range scans %s for each %s item; build a lookup map before the outer loop`,
+				`nested range scans %s for each %s item`,
 				r.q.render(inner.X),
 				r.q.render(scope.source),
 			),
@@ -313,12 +313,9 @@ func (r loopRules) pairwiseComparisonLoops(scope loopScope) []Finding {
 		}
 
 		out = append(out, Finding{
-			Pos:  inner.For,
-			Kind: "pairwise_comparison_loop",
-			Message: fmt.Sprintf(
-				`nested range compares pairs from %s; consider sort/two-pointer, sweep line, or bucketing for growing inputs`,
-				r.q.render(scope.source),
-			),
+			Pos:     inner.For,
+			Kind:    "pairwise_comparison_loop",
+			Message: "nested range compares pairs from " + r.q.render(scope.source),
 		})
 	}
 

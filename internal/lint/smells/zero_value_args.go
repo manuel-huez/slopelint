@@ -54,7 +54,7 @@ func (l zeroValueArgCheck) check() {
 				param.pos,
 				"api_overkill",
 				fmt.Sprintf(
-					`private function %q parameter %q is always called with zero value %q; remove the parameter or pass real variation`,
+					`private function %q parameter %q is always called with zero value %q`,
 					fn.fn.Name.Name,
 					zeroValueArgParamName(param.name, idx),
 					state.display,

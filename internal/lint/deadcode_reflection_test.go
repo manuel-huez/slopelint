@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const wantRemoveFieldPayloadIgnored = `exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`
+const wantRemoveFieldPayloadIgnored = `exported field "Payload.Ignored" is unreachable from repo entrypoints`
 
 func TestRepoDeadCodeKeepsFieldsSetByJSONDecoder(t *testing.T) {
 	t.Parallel()
@@ -95,7 +95,7 @@ func Load(body []byte) error {
 	requireDeadCode(t, tmp, []string{
 		`field "Payload.Keep"`,
 	}, []string{
-		`exported field "Payload.Skip" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Skip" is unreachable from repo entrypoints`,
 	})
 }
 
@@ -127,7 +127,7 @@ func Load(body []byte) error {
 	requireDeadCode(t, tmp, []string{
 		`field "Payload.Keep"`,
 	}, []string{
-		`exported field "Payload.Skip" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Skip" is unreachable from repo entrypoints`,
 	})
 }
 
@@ -157,7 +157,7 @@ func Run() {
 	requireDeadCode(t, tmp, []string{
 		`field "Payload.Live"`,
 	}, []string{
-		`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Dead" is unreachable from repo entrypoints`,
 	})
 }
 
@@ -201,7 +201,7 @@ func Live(body []byte) error {
 	requireDeadCode(t, tmp, []string{
 		`field "Result.HeadlineMetrics"`,
 	}, []string{
-		`exported field "Result.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "Result.Ignored" is unreachable from repo entrypoints`,
 	})
 }
 
@@ -319,7 +319,7 @@ func Live(body []byte) error {
 	requireDeadCode(t, tmp, []string{
 		`field "Payload.Live"`,
 	}, []string{
-		`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Dead" is unreachable from repo entrypoints`,
 	})
 }
 
@@ -357,7 +357,7 @@ func runRepoDeadCodeReportsExternalGenericDecodeFields(
 
 			if !strings.Contains(
 				joined,
-				`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
+				`exported field "Payload.Dead" is unreachable from repo entrypoints`,
 			) {
 				t.Fatalf(test.failure2, joined)
 			}
@@ -694,7 +694,7 @@ func Live(body []byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Result.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "Result.Ignored" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected ignored delegated generic JSON field finding, got:\n%s", joined)
 	}
@@ -779,7 +779,7 @@ func Load(body []byte) error {
 				wantMethodUnmarshalJSON,
 			},
 			failure:  "custom JSON unmarshal dependency reported dead for %q, got:\n%s",
-			want:     `exported field "Inner.Hidden" is unreachable from repo entrypoints; remove it`,
+			want:     `exported field "Inner.Hidden" is unreachable from repo entrypoints`,
 			failure2: "expected custom JSON unmarshal hidden field finding, got:\n%s",
 		},
 		{
@@ -865,7 +865,7 @@ func Load(body []byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Dead" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Dead" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected original field finding despite decoded wire alias, got:\n%s", joined)
 	}
@@ -911,7 +911,7 @@ func Live() error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Result.HeadlineMetrics" is unreachable from repo entrypoints; remove it`,
+		`exported field "Result.HeadlineMetrics" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected non-decoded generic JSON field finding, got:\n%s", joined)
 	}

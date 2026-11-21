@@ -31,7 +31,7 @@ func (l resultWrapperCheck) check() {
 			typeSpec.Name.Pos(),
 			"result_wrapper",
 			fmt.Sprintf(
-				`private result wrapper %q only carries value plus status; return ordinary Go results`,
+				`private result wrapper %q only carries value plus status`,
 				typeSpec.Name.Name,
 			),
 		)

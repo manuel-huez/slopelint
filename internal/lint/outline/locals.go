@@ -218,7 +218,7 @@ func (c localRules) tempAlias(list *ts.Node, stmts []*ts.Node, index int) {
 	}
 
 	c.report(name, "temp_alias", fmt.Sprintf(
-		`local %q only renames cheap expression %q for one use; inline expression`,
+		`local %q only renames cheap expression %q for one use`,
 		c.text(name), c.oneLine(source),
 	))
 }
@@ -537,7 +537,7 @@ func (c localRules) reportForwardingHelper(fn localFunc, calls int) bool {
 	}
 
 	c.report(fn.name, "trivial_wrapper", fmt.Sprintf(
-		`private helper %q only forwards to %q%s; inline or merge names`, name, callee, reason,
+		`private helper %q only forwards to %q%s`, name, callee, reason,
 	))
 	c.genericName(fn.name, "only forwards")
 
@@ -602,7 +602,7 @@ func topLevel(node *ts.Node) *ts.Node {
 func (c localRules) genericName(name *ts.Node, reason string) {
 	if GenericName(c.text(name)) {
 		c.report(name, "generic_naming", fmt.Sprintf(
-			`private helper %q has generic name and %s; rename or inline`, c.text(name), reason,
+			`private helper %q has generic name and %s`, c.text(name), reason,
 		))
 	}
 }

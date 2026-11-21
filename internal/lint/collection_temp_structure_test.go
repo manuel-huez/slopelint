@@ -23,7 +23,7 @@ func f(req Req) {
 	if name == "" { println("bad") }
 }
 `,
-			want:     `local "name" only renames cheap expression "req.Name" for one use; inline expression`,
+			want:     `local "name" only renames cheap expression "req.Name" for one use`,
 			failure:  "expected temp alias finding, got:\n%s",
 			kind:     "temp_alias",
 			failure2: "expected temp_alias kind, got %#v",
@@ -342,7 +342,7 @@ func f(values []string) {
 	joined := joinMessages(issues)
 
 	if !strings.Contains(joined, `behavior block in "f" duplicates block in "f" at sample.go:`) ||
-		!strings.Contains(joined, `(effects: calls); extract shared behavior`) {
+		!strings.Contains(joined, `(effects: calls)`) {
 		t.Fatalf("expected behavior clone finding, got:\n%s", joined)
 	}
 

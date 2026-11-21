@@ -41,7 +41,7 @@ func (l tableTestCheck) checkUnnamedLargeTables() {
 				lit.Pos(),
 				"table_test_grouping",
 				fmt.Sprintf(
-					"table test has %d cases without name/desc field; add case names so failures identify scenarios",
+					"table test has %d cases without name/desc field",
 					len(lit.Elts),
 				),
 			)
@@ -111,7 +111,7 @@ func (l tableTestCheck) checkRepeatedFixtures() {
 					call.Args[2].Pos(),
 					RepeatedTestFixture,
 					fmt.Sprintf(
-						"test fixture content is repeated %d times; centralize it in the owning test builder",
+						"test fixture content is repeated %d times",
 						reportCount,
 					),
 				)

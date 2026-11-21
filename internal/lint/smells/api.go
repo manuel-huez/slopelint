@@ -176,7 +176,7 @@ func (l apiCheck) reportBoolModeParam(fnName string, param boolModeParam) {
 		param.pos,
 		"bool_mode_param",
 		fmt.Sprintf(
-			`private function %q has bool mode parameter %q called with boolean literals; split named operations or use a typed mode`,
+			`private function %q has bool mode parameter %q called with boolean literals`,
 			fnName,
 			name,
 		),
@@ -224,7 +224,7 @@ func (l apiCheck) checkOptionalResultTriples() {
 			fn.Name.Pos(),
 			"optional_result_triple",
 			fmt.Sprintf(
-				`private function %q returns (value, ok, error); make absence part of the error/zero-value contract or return a named state type`,
+				`private function %q returns (value, ok, error)`,
 				fn.Name.Name,
 			),
 		)
@@ -263,7 +263,7 @@ func (l apiCheck) checkUnusedPrivateParams() {
 					name.Pos(),
 					"unused_private_param",
 					fmt.Sprintf(
-						`private function %q does not use parameter %q; remove it and update callers or name it _ when signature shape is required`,
+						`private function %q does not use parameter %q`,
 						fn.Name.Name,
 						name.Name,
 					),

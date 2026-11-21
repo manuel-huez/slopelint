@@ -57,7 +57,7 @@ func runVisit(body []byte, visit func([]byte) error) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Ignored" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected ignored JSON field finding, got:\n%s", joined)
 	}
@@ -115,7 +115,7 @@ func runVisit(body []byte, visit func([]byte) error) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Ignored" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected ignored JSON field finding, got:\n%s", joined)
 	}

@@ -35,7 +35,7 @@ func (l errorCheck) checkPanics() {
 					node.Pos(),
 					"prod_must_panic",
 					fmt.Sprintf(
-						`production function %q panics with error %q; return error or prove the invariant before this call`,
+						`production function %q panics with error %q`,
 						fn.Name.Name,
 						l.render(node.Args[0]),
 					),
@@ -346,7 +346,7 @@ func (l errorCheck) checkSentinelBreaks() {
 				returned.pos,
 				"sentinel_error_break",
 				fmt.Sprintf(
-					`callback returns sentinel error %q for control flow and caller suppresses it; use an explicit stop signal instead`,
+					`callback returns sentinel error %q for control flow and caller suppresses it`,
 					returned.text,
 				),
 			)

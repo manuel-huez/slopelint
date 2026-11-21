@@ -136,7 +136,7 @@ func (db *DuckDB) unusedPrivate() {}
 
 	if !strings.Contains(
 		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
+		`private method "unusedPrivate" is never used by production code`,
 	) {
 		t.Fatalf("expected unused private method finding, got:\n%s", joined)
 	}
@@ -236,7 +236,7 @@ func Load(body []byte) (State, error) {
 
 	if !strings.Contains(
 		joined,
-		`exported field "State.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "State.Ignored" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected ignored reflected field finding, got:\n%s", joined)
 	}
@@ -314,11 +314,11 @@ func Live() {
 	joined := joinMessages(issues)
 
 	for _, want := range []string{
-		`exported const "DeadConst" is unreachable from repo entrypoints; remove it`,
-		`exported var "DeadVar" is unreachable from repo entrypoints; remove it`,
-		`exported type "DeadType" is unreachable from repo entrypoints; remove it`,
-		`exported field "LiveType.UnusedExported" is unreachable from repo entrypoints; remove it`,
-		`private field "LiveType.unusedPrivate" is never used by production code; remove it`,
+		`exported const "DeadConst" is unreachable from repo entrypoints`,
+		`exported var "DeadVar" is unreachable from repo entrypoints`,
+		`exported type "DeadType" is unreachable from repo entrypoints`,
+		`exported field "LiveType.UnusedExported" is unreachable from repo entrypoints`,
+		`private field "LiveType.unusedPrivate" is never used by production code`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected repo dead-code finding %q, got:\n%s", want, joined)

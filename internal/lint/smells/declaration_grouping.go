@@ -168,10 +168,9 @@ func (l declGroupingCheck) reportDeclGroupRun(run declGroupRun) {
 			run.pos,
 			run.rule.kind,
 			fmt.Sprintf(
-				"%s chunk has %d consecutive items; split related declarations with blank lines, group comments, or smaller %s blocks",
+				"%s chunk has %d consecutive items",
 				run.rule.label,
 				run.count,
-				run.rule.label,
 			),
 		)
 	}
@@ -193,7 +192,7 @@ func (l declGroupingCheck) reportMixedConstPrefixes(run declGroupRun) {
 		run.pos,
 		"mixed_const_prefixes",
 		fmt.Sprintf(
-			"const chunk mixes %s prefixes without grouping; split unrelated const families with blank lines or group comments",
+			"const chunk mixes %s prefixes without grouping",
 			strings.Join(prefixes, ", "),
 		),
 	)

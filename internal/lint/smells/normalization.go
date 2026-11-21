@@ -107,7 +107,7 @@ func (l normalizationCheck) recordCall(
 			call.Pos(),
 			"normalization_ceremony",
 			fmt.Sprintf(
-				`%q is computed multiple times in this function; bind normalized value once`,
+				`%q is computed multiple times in this function`,
 				key,
 			),
 		)

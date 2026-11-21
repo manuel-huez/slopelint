@@ -168,7 +168,7 @@ func parseStreamTime([]byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Ignored" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected ignored JSON field finding, got:\n%s", joined)
 	}
@@ -304,7 +304,7 @@ func parseCustom([]byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Ignored" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected ignored JSON field finding, got:\n%s", joined)
 	}
@@ -585,7 +585,7 @@ func parseCustom(context.Context, []byte) error {
 
 	for _, expected := range []string{
 		wantRemoveMethodMarshalJSON,
-		`method "UnmarshalJSON" is unreachable from repo entrypoints; remove it`,
+		`method "UnmarshalJSON" is unreachable from repo entrypoints`,
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf(
@@ -648,7 +648,7 @@ func parseCustom([]byte) error {
 
 	for _, expected := range []string{
 		wantRemoveMethodMarshalJSON,
-		`method "UnmarshalJSON" is unreachable from repo entrypoints; remove it`,
+		`method "UnmarshalJSON" is unreachable from repo entrypoints`,
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected stdlib JSON context hook finding %q, got:\n%s", expected, joined)

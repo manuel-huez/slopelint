@@ -438,7 +438,7 @@ func (c branchRules) returnGuardRun(stmts []*ts.Node, index int) {
 		if key, ok := c.returnKey(stmts[scan]); ok {
 			if key == first {
 				c.report(stmts[index], kindControlFlowMerge, fmt.Sprintf(
-					`%d guard return(s) duplicate following return %q; drop redundant branch checks`,
+					`%d guard return(s) duplicate following return %q`,
 					scan-index,
 					strings.TrimSuffix(c.oneLine(stmts[scan]), ";"),
 				))
@@ -764,7 +764,7 @@ func (c branchRules) pyramid(list, last *ts.Node) {
 
 	if depth >= pyramidMinDepth {
 		c.report(last, "control_flow_pyramid", fmt.Sprintf(
-			`nested if pyramid has %d levels at function end; invert conditions into guard clauses`,
+			`nested if pyramid has %d levels at function end`,
 			depth,
 		))
 	}

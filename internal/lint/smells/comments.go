@@ -142,7 +142,7 @@ func (l commentCheck) reportRestatement(doc *ast.CommentGroup, name string) {
 	l.report(
 		doc.Pos(),
 		"comment_noise",
-		fmt.Sprintf(`comment only restates private declaration %q; remove or explain intent`, name),
+		fmt.Sprintf(`comment only restates private declaration %q`, name),
 	)
 }
 
@@ -258,7 +258,7 @@ func (l commentCheck) checkStaleComplexitySuppressions() {
 			fn.Pos(),
 			"stale_complexity_suppression",
 			fmt.Sprintf(
-				`function %q suppresses complexity checks but has no decision points; remove stale nolint directive`,
+				`function %q suppresses complexity checks but has no decision points`,
 				fn.Name.Name,
 			),
 		)

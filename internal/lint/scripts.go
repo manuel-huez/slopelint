@@ -185,9 +185,8 @@ func lintScriptFile(name, root string, opts Options) ([]Issue, error) {
 	file, err := outline.Parse(name, content)
 	if syntaxErr, ok := errors.AsType[*outline.SyntaxError](err); ok {
 		issues = append(issues, Issue{
-			Kind: "parse_error",
-			Message: "parser cannot read this file, so other rules skip it; " +
-				"if the code is valid, it is a tree-sitter parser bug",
+			Kind:     parseErrorKind,
+			Message:  "parser cannot read this file",
 			position: scriptPosition(name, syntaxErr.Pos),
 		})
 	} else if err != nil {

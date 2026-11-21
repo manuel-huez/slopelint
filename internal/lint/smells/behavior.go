@@ -344,7 +344,7 @@ func behaviorCloneMessage(match behaviorMatch) string {
 		match.source.kind == behaviorCandidateFunction {
 		if match.source.pkg != match.target.pkg {
 			return fmt.Sprintf(
-				"function %q has same supported behavior as %q in package %q at %s (effects: %s); merge shared implementation",
+				"function %q has same supported behavior as %q in package %q at %s (effects: %s)",
 				match.target.name,
 				match.source.name,
 				match.source.pkg.TypesPkg.Path(),
@@ -354,7 +354,7 @@ func behaviorCloneMessage(match behaviorMatch) string {
 		}
 
 		return fmt.Sprintf(
-			"function %q has same supported behavior as %q (effects: %s); merge shared implementation",
+			"function %q has same supported behavior as %q (effects: %s)",
 			match.target.name,
 			match.source.name,
 			effects,
@@ -363,7 +363,7 @@ func behaviorCloneMessage(match behaviorMatch) string {
 
 	if match.source.pkg != match.target.pkg {
 		return fmt.Sprintf(
-			"behavior block in %q duplicates block in %q in package %q at %s (effects: %s); extract shared behavior",
+			"behavior block in %q duplicates block in %q in package %q at %s (effects: %s)",
 			match.target.name,
 			match.source.name,
 			match.source.pkg.TypesPkg.Path(),
@@ -373,7 +373,7 @@ func behaviorCloneMessage(match behaviorMatch) string {
 	}
 
 	return fmt.Sprintf(
-		"behavior block in %q duplicates block in %q at %s (effects: %s); extract shared behavior",
+		"behavior block in %q duplicates block in %q at %s (effects: %s)",
 		match.target.name,
 		match.source.name,
 		behaviorPositionText(match.source),

@@ -22,7 +22,7 @@ import (
 
 const (
 	// Matching policy changes rescore findings without changing content-addressed vectors.
-	similaritySchema        = 15
+	similaritySchema        = 16
 	similarityMinimumBlocks = 2
 	// Immediate siblings and parent-child packages share refactor ownership.
 	// Deeper branches do not; skipping them bounds cold all-pairs work.
@@ -348,7 +348,7 @@ func analyzeChangedSimilarCode(
 
 	cachedBlocks := cacheSimilarityBlocks(blocks)
 
-	findings := similarityFindingsForMatches(matches, opts)
+	findings := similarityFindingsForMatches(matches)
 	if opts.CacheEnabled {
 		// Scan cache is an optimization only. Source digest and committed stamp
 		// remain the correctness boundary.
@@ -625,17 +625,13 @@ func similarityOutcome(
 	)
 }
 
-func similarityFindingsForMatches(
-	matches []similarityMatch,
-	opts SimilarityOptions,
-) []similarityFinding {
-	shift := opts.threshold() - similaritySameFileThreshold
+func similarityFindingsForMatches(matches []similarityMatch) []similarityFinding {
 	findings := make([]similarityFinding, 0, len(matches))
 
 	for _, match := range matches {
 		findings = append(findings, similarityFinding{
 			pair:  match.pair(),
-			issue: match.issue(shift),
+			issue: match.issue(),
 		})
 	}
 

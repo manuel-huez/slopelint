@@ -161,7 +161,7 @@ func Live() string {
 
 	if !strings.Contains(
 		joined,
-		`method "String" is unreachable from repo entrypoints; remove it`,
+		`method "String" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected dead package mutator String method to stay dead, got:\n%s", joined)
 	}
@@ -206,7 +206,7 @@ func dead() string {
 
 	if !strings.Contains(
 		joined,
-		`private function "dead" is never used by production code; remove it`,
+		`private function "dead" is never used by production code`,
 	) {
 		t.Fatalf("expected dead fmt caller subgraph root finding, got:\n%s", joined)
 	}

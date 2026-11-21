@@ -493,17 +493,16 @@ func similarityPairID(left, right *similarityBlock) string {
 	return "sim-" + hex.EncodeToString(sum[:8])
 }
 
-func (match similarityMatch) issue(shift float64) Issue {
-	chunkDetail := ""
-	if match.Left.VectorCount > 1 || match.Right.VectorCount > 1 {
-		chunkDetail = fmt.Sprintf(
-			" via chunks %d/%d",
-			match.LeftChunk+1,
-			match.RightChunk+1,
-		)
-	}
-
-	groupDetail := ""
+// issue names both sides and, for groups, every member. Description
+// details say what each side does, so an agent can tell one job from two.
+func (match similarityMatch) issue() Issue {
+	message := fmt.Sprintf(
+		"%s is similar to %s at %s:%d",
+		match.Left.Symbol,
+		match.Right.Symbol,
+		match.Right.RelativePath,
+		match.Right.Position.Line,
+	)
 
 	if len(match.Members) > similarityMinimumBlocks {
 		members := make([]string, len(match.Members))
@@ -516,60 +515,21 @@ func (match similarityMatch) issue(shift float64) Issue {
 			)
 		}
 
-		groupDetail = fmt.Sprintf(
-			"; group %d: %s",
-			len(members),
-			strings.Join(members, ", "),
-		)
-	}
-
-	scoreDetail := ""
-	behaviorDetail := ""
-
-	if match.DescriptionScore > 0 {
-		scoreDetail = fmt.Sprintf(
-			", description %.3f/%.3f",
-			match.DescriptionScore,
-			similarityDescriptionThreshold(
-				match.LocalityTier,
-				match.Left.IsTest && match.Right.IsTest,
-				shift,
-			),
-		)
+		message += fmt.Sprintf("; group of %d: %s", len(members), strings.Join(members, ", "))
 	}
 
 	if len(match.Members) > 0 && match.Members[0].DescriptionDetail != "" {
 		details := make([]string, 0, len(match.Members))
 		for _, member := range match.Members {
 			details = append(details, fmt.Sprintf(
-				"%s: %q",
-				member.Identity,
-				member.DescriptionDetail,
+				"%s: %s",
+				member.Symbol,
+				strings.ReplaceAll(member.DescriptionDetail, "\n", "; "),
 			))
 		}
 
-		behaviorDetail = "; behavior [" + strings.Join(details, ", ") + "]"
+		message += "; what each does: " + strings.Join(details, " | ")
 	}
-
-	message := fmt.Sprintf(
-		"%s appears similar to %s at %s:%d (source %.3f/%.3f%s%s, structure %.3f, locality tier %d%s%s)",
-		match.Left.Symbol,
-		match.Right.Symbol,
-		match.Right.RelativePath,
-		match.Right.Position.Line,
-		match.EmbeddingScore,
-		similarityEmbeddingThreshold(
-			match.LocalityTier,
-			match.Left.IsTest || match.Right.IsTest,
-			shift,
-		),
-		chunkDetail,
-		scoreDetail,
-		match.StructuralScore,
-		match.LocalityTier,
-		groupDetail,
-		behaviorDetail,
-	)
 
 	return Issue{
 		Kind:     similarityIssueKind,

@@ -29,7 +29,7 @@ func (l optionsOverkillCheck) check() {
 			fn.Name.Pos(),
 			"api_overkill",
 			fmt.Sprintf(
-				`private API %q uses functional options for %d production uses; pass config directly`,
+				`private API %q uses functional options for %d production uses`,
 				fn.Name.Name,
 				useCounts[FuncObjectKey(obj)],
 			),

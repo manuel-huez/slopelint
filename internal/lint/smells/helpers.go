@@ -15,7 +15,7 @@ func reportGenericNameForHelper(sink *findingSink, fn *ast.FuncDecl, reason stri
 		fn.Name.Pos(),
 		"generic_naming",
 		fmt.Sprintf(
-			`private helper %q has generic name and %s; rename or inline`,
+			`private helper %q has generic name and %s`,
 			fn.Name.Name,
 			reason,
 		),

@@ -38,7 +38,7 @@ func f(dst []int, src []int, items []string, ok bool) []int {
 
 	if !strings.Contains(
 		joined,
-		`function has 3 behavior-preserving simplification points; remove redundant branches/guards before adding more control flow`,
+		`function has 3 behavior-preserving simplification points`,
 	) {
 		t.Fatalf("expected complexity simplification cluster finding, got:\n%s", joined)
 	}
@@ -88,7 +88,7 @@ var errBad error
 
 	if !strings.Contains(
 		joined,
-		`2 of 3 input guard returns are interleaved with other work; keep validation guards together or split function`,
+		`2 of 3 input guard returns are interleaved with other work`,
 	) {
 		t.Fatalf("expected scattered input guard finding, got:\n%s", joined)
 	}

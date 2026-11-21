@@ -67,7 +67,7 @@ func Live() error {
 
 	if !strings.Contains(
 		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
+		`private method "unusedPrivate" is never used by production code`,
 	) {
 		t.Fatalf("expected unused private method finding, got:\n%s", joined)
 	}

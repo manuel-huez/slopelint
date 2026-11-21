@@ -125,7 +125,7 @@ func Save() ([]byte, error) {
 		wantFieldPayloadName,
 		`field "Wrapper.Value"`,
 	}, []string{
-		`method "MarshalYAML" is unreachable from repo entrypoints; remove it`,
+		`method "MarshalYAML" is unreachable from repo entrypoints`,
 	})
 }
 

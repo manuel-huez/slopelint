@@ -109,10 +109,10 @@ function m(a) {
 }
 `,
 			want: []string{
-				`2 control_flow_merge 2 guard return(s) duplicate following return "return null"; drop redundant branch checks`,
-				`11 control_flow_merge 1 guard return(s) duplicate following return "return"; drop redundant branch checks`,
-				`16 control_flow_merge 1 guard return(s) duplicate following return "return 2"; drop redundant branch checks`,
-				`20 control_flow_merge 1 guard return(s) duplicate following return "return \"x\""; drop redundant branch checks`,
+				`2 control_flow_merge 2 guard return(s) duplicate following return "return null"`,
+				`11 control_flow_merge 1 guard return(s) duplicate following return "return"`,
+				`16 control_flow_merge 1 guard return(s) duplicate following return "return 2"`,
+				`20 control_flow_merge 1 guard return(s) duplicate following return "return \"x\""`,
 			},
 		},
 		{
@@ -143,8 +143,8 @@ def g(a, b):
     return None
 `,
 			want: []string{
-				`2 control_flow_merge 2 guard return(s) duplicate following return "return None"; drop redundant branch checks`,
-				`12 control_flow_merge 1 guard return(s) duplicate following return "return None"; drop redundant branch checks`,
+				`2 control_flow_merge 2 guard return(s) duplicate following return "return None"`,
+				`12 control_flow_merge 1 guard return(s) duplicate following return "return None"`,
 			},
 		},
 		{
@@ -230,7 +230,7 @@ const c = (a, b) => {
 };
 `,
 			want: []string{
-				"3 control_flow_pyramid nested if pyramid has 2 levels at function end; invert conditions into guard clauses",
+				"3 control_flow_pyramid nested if pyramid has 2 levels at function end",
 			},
 		},
 		{
@@ -247,7 +247,7 @@ def g(a, b):
             yield 1
 `,
 			want: []string{
-				"2 control_flow_pyramid nested if pyramid has 2 levels at function end; invert conditions into guard clauses",
+				"2 control_flow_pyramid nested if pyramid has 2 levels at function end",
 			},
 		},
 		{
@@ -294,9 +294,9 @@ function r(a) {
 }
 `,
 			want: []string{
-				`2 temp_alias local "name" only renames cheap expression "user.name" for one use; inline expression`,
-				`14 temp_alias local "items" only renames cheap expression "user.items" for one use; inline expression`,
-				`38 temp_alias local "items" only renames cheap expression "a?.items" for one use; inline expression`,
+				`2 temp_alias local "name" only renames cheap expression "user.name" for one use`,
+				`14 temp_alias local "items" only renames cheap expression "user.items" for one use`,
+				`38 temp_alias local "items" only renames cheap expression "a?.items" for one use`,
 			},
 		},
 		{
@@ -311,7 +311,7 @@ def g(self):
     return [x for x in items if x in items]
 `,
 			want: []string{
-				`2 temp_alias local "items" only renames cheap expression "self.items" for one use; inline expression`,
+				`2 temp_alias local "items" only renames cheap expression "self.items" for one use`,
 			},
 		},
 		{
@@ -335,8 +335,8 @@ export function useAll(x) {
 }
 `,
 			want: []string{
-				`1 trivial_wrapper private helper "wrapperFor" only forwards to "target.run" at one production use; inline or merge names`,
-				`1 generic_naming private helper "wrapperFor" has generic name and only forwards; rename or inline`,
+				`1 trivial_wrapper private helper "wrapperFor" only forwards to "target.run" at one production use`,
+				`1 generic_naming private helper "wrapperFor" has generic name and only forwards`,
 			},
 		},
 		{

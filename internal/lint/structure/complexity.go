@@ -41,7 +41,7 @@ func (l *Runner) simplificationScore(body *ast.BlockStmt, ctx blockContext) (Fin
 		Pos:  body.Lbrace,
 		Kind: "complexity_simplification",
 		Message: fmt.Sprintf(
-			`function has %d behavior-preserving simplification points; remove redundant branches/guards before adding more control flow`,
+			`function has %d behavior-preserving simplification points`,
 			score,
 		),
 	}, true
@@ -96,7 +96,7 @@ func (s inputGuardScan) scattered(body *ast.BlockStmt) (Finding, bool) {
 		Pos:  pos,
 		Kind: "guard_complexity",
 		Message: fmt.Sprintf(
-			`%d of %d input guard returns are interleaved with other work; keep validation guards together or split function`,
+			`%d of %d input guard returns are interleaved with other work`,
 			late,
 			total,
 		),

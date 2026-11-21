@@ -99,7 +99,7 @@ func update(req request) error {
 	if !strings.Contains(
 		joined,
 		`behavior block in "update" duplicates block in "create" at sample.go:`,
-	) || !strings.Contains(joined, `(effects: none); extract shared behavior`) {
+	) || !strings.Contains(joined, `(effects: none)`) {
 		t.Fatalf("expected shared validation block, got:\n%s", joined)
 	}
 

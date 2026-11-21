@@ -40,7 +40,7 @@ func (l singleImplCheck) check() {
 			ifaceDecl.pos,
 			"abstraction_overkill",
 			fmt.Sprintf(
-				`private interface %q has one in-package implementation %q; use concrete type unless substitution is needed`,
+				`private interface %q has one in-package implementation %q`,
 				ifaceDecl.name,
 				implName,
 			),

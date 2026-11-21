@@ -17,7 +17,7 @@ func TestDetectsOversizedOwnerFile(t *testing.T) {
 	joined := joinMessages(lintInDir(t, tmp))
 	if !strings.Contains(
 		joined,
-		"source file has 1002 lines"+sizeLimitDeleteFirst+"split the rest by responsibility so whole-file review stays tractable",
+		"source file has 1002 lines",
 	) {
 		t.Fatalf("expected oversized-owner-file finding, got:\n%s", joined)
 	}
@@ -68,12 +68,10 @@ func TestDetectsFunctionSizeLimits(t *testing.T) {
 
 	joined := joinMessages(lintInDir(t, tmp))
 	for _, want := range []string{
-		`function "long" has 41 statements, counting nested blocks and closures; the largest statement is at line 4 (21); ` +
-			"the closure at line 4 (20) uses nothing from the function, so it can move out" +
-			sizeLimitDeleteFirst +
-			"split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
-		`function "params" has 7 parameters` + sizeLimitDeleteFirst + "group related parameters into a struct or split the function",
-		`function "results" returns 4 results` + sizeLimitDeleteFirst + "return a named struct",
+		`function "long" has 41 statements; the largest statement is at line 4 (21); ` +
+			"the closure at line 4 (20) uses nothing from the function, so it can move out",
+		`function "params" has 7 parameters`,
+		`function "results" returns 4 results`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %q, got:\n%s", want, joined)
@@ -153,9 +151,8 @@ func TestDetectsGodReceiver(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`type "big" has 41 methods across 2 files, counting functions that take a pointer to it first; list what each method is for`,
-		`type "wide" has 41 methods: 21 of its own across 1 files, counting functions that take a pointer to it first, and part 20 from embedded types; `,
-		"moving methods into an embedded type or into functions that take the type is not a fix",
+		`type "big" has 41 methods in 2 files`,
+		`type "wide" has 41 methods: 21 of its own in 1 file, plus embedded part 20`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %q, got:\n%s", want, joined)

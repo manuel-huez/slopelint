@@ -125,7 +125,7 @@ func defaultName(name string) string {
 
 	if !strings.Contains(
 		joined,
-		`"strings.TrimSpace(name)" is computed multiple times in this function; bind normalized value once`,
+		`"strings.TrimSpace(name)" is computed multiple times in this function`,
 	) {
 		t.Fatalf("expected redundant trim-space finding, got:\n%s", joined)
 	}
@@ -209,7 +209,7 @@ func complete(value string, candidates []string) []string {
 
 	if !strings.Contains(
 		joined,
-		`"strings.ToLower(strings.TrimSpace(value))" is computed multiple times in this function; bind normalized value once`,
+		`"strings.ToLower(strings.TrimSpace(value))" is computed multiple times in this function`,
 	) {
 		t.Fatalf("expected repeated nested normalization finding, got:\n%s", joined)
 	}
@@ -239,7 +239,7 @@ func build(name string) func() string {
 
 	if !strings.Contains(
 		joined,
-		`"strings.TrimSpace(name)" is computed multiple times in this function; bind normalized value once`,
+		`"strings.TrimSpace(name)" is computed multiple times in this function`,
 	) {
 		t.Fatalf("expected func literal normalization finding, got:\n%s", joined)
 	}

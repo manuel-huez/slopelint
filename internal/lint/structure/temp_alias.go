@@ -61,7 +61,7 @@ func (r tempAliasRules) singleUseAt(stmts []ast.Stmt, idx int) (Finding, bool) {
 		Pos:  decl.name.Pos(),
 		Kind: "temp_alias",
 		Message: fmt.Sprintf(
-			`local %q only renames cheap expression %q for one use; inline expression`,
+			`local %q only renames cheap expression %q for one use`,
 			decl.name.Name,
 			r.q.render(decl.rhs),
 		),

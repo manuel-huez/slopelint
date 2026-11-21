@@ -107,7 +107,7 @@ func (r branchRules) returnGuardRunAt(stmts []ast.Stmt, idx int) (Finding, int, 
 				Pos:  first.pos,
 				Kind: kindControlFlowMerge,
 				Message: fmt.Sprintf(
-					`%d guard return(s) duplicate following return %q; drop redundant branch checks`,
+					`%d guard return(s) duplicate following return %q`,
 					guards,
 					result,
 				),
@@ -173,7 +173,7 @@ func (r branchRules) finalIfPyramidAt(stmts []ast.Stmt, idx int, ctx blockContex
 		Pos:  ifStmt.If,
 		Kind: "control_flow_pyramid",
 		Message: fmt.Sprintf(
-			`nested if pyramid has %d levels at function end; invert conditions into guard clauses`,
+			`nested if pyramid has %d levels at function end`,
 			depth,
 		),
 	}, true

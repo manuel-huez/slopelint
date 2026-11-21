@@ -60,7 +60,7 @@ func Load(body []byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Key.ID" is unreachable from repo entrypoints; remove it`,
+		`exported field "Key.ID" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected unused YAML map key field finding, got:\n%s", joined)
 	}
@@ -326,7 +326,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Payload.Ignored" is unreachable from repo entrypoints; remove it`,
+		`exported field "Payload.Ignored" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected ignored marshal alias field finding, got:\n%s", joined)
 	}
@@ -728,7 +728,7 @@ func Save() ([]byte, error) {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Key.ID" is unreachable from repo entrypoints; remove it`,
+		`exported field "Key.ID" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected unused generic map key field finding, got:\n%s", joined)
 	}
@@ -775,7 +775,7 @@ func Load(body []byte) error {
 
 	if !strings.Contains(
 		joined,
-		`exported field "Key.ID" is unreachable from repo entrypoints; remove it`,
+		`exported field "Key.ID" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected unused generic map key field finding, got:\n%s", joined)
 	}

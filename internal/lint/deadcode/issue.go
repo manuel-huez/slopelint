@@ -202,14 +202,14 @@ func deadCodeSourceComponents(
 
 func (decl deadCodeDecl) issue() Finding {
 	message := fmt.Sprintf(
-		`private %s %q is never used by production code; remove it`,
+		`private %s %q is never used by production code`,
 		decl.kind,
 		decl.name,
 	)
 
 	if decl.exported {
 		message = fmt.Sprintf(
-			`exported %s %q is unreachable from repo entrypoints; remove it`,
+			`exported %s %q is unreachable from repo entrypoints`,
 			decl.kind,
 			decl.name,
 		)

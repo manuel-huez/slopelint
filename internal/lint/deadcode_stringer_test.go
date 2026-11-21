@@ -41,7 +41,7 @@ func Live() string {
 
 	if !strings.Contains(
 		joined,
-		`private method "unusedPrivate" is never used by production code; remove it`,
+		`private method "unusedPrivate" is never used by production code`,
 	) {
 		t.Fatalf("expected unused private method finding, got:\n%s", joined)
 	}
@@ -100,7 +100,7 @@ func Live(value any) string {
 	return fmt.Sprintf("%v", value)
 }
 `,
-			want:    `exported method "String" is unreachable from repo entrypoints; remove it`,
+			want:    `exported method "String" is unreachable from repo entrypoints`,
 			failure: "expected unused String method finding, got:\n%s",
 		},
 		{
@@ -126,7 +126,7 @@ func Live() string {
 	return fmt.Sprint(value)
 }
 `,
-			want:    `method "String" is unreachable from repo entrypoints; remove it`,
+			want:    `method "String" is unreachable from repo entrypoints`,
 			failure: "expected default switch overwrite to leave Stringer dead, got:\n%s",
 		},
 		{
@@ -161,7 +161,7 @@ func Live() string {
 	return fmt.Sprint(live)
 }
 `,
-			want:    `method "String" is unreachable from repo entrypoints; remove it`,
+			want:    `method "String" is unreachable from repo entrypoints`,
 			failure: "expected tuple sibling String method to stay dead, got:\n%s",
 		},
 	})

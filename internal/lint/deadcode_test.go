@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const wantUnusedPrivateMethod = `private method "unusedPrivate" is never used by production code; remove it`
+const wantUnusedPrivateMethod = `private method "unusedPrivate" is never used by production code`
 
 func TestDetectsDeadPrivateDecls(t *testing.T) {
 	t.Parallel()
@@ -33,7 +33,7 @@ func Live() {}
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	want := `private function "unusedHelper" is never used by production code; remove it`
+	want := `private function "unusedHelper" is never used by production code`
 	if !strings.Contains(joined, want) {
 		t.Fatalf("expected dead-code subgraph root finding %q, got:\n%s", want, joined)
 	}
@@ -103,7 +103,7 @@ func TestHelper(t *testing.T) {
 
 	if !strings.Contains(
 		joined,
-		`private function "helperOnlyUsedByTest" is never used by production code; remove it`,
+		`private function "helperOnlyUsedByTest" is never used by production code`,
 	) {
 		t.Fatalf("expected test-only use to remain dead production code, got:\n%s", joined)
 	}
@@ -144,7 +144,7 @@ func TestTestOnlyEntry(t *testing.T) {
 	joined := joinMessages(lintInDir(t, tmp))
 	if !strings.Contains(
 		joined,
-		`private function "testOnlyEntry" is never used by production code; remove it`,
+		`private function "testOnlyEntry" is never used by production code`,
 	) {
 		t.Fatalf("expected internal-test-only subgraph root finding, got:\n%s", joined)
 	}
@@ -195,7 +195,7 @@ func TestTestOnlyEntry(t *testing.T) {
 	joined := joinMessages(lintInDir(t, tmp))
 	if !strings.Contains(
 		joined,
-		`exported function "TestOnlyEntry" is unreachable from repo entrypoints; remove it`,
+		`exported function "TestOnlyEntry" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected external-test-only subgraph root finding, got:\n%s", joined)
 	}
@@ -242,7 +242,7 @@ func TestTaggedTestOnlyEntry(t *testing.T) {
 	joined := joinMessages(lintInDir(t, tmp))
 	if !strings.Contains(
 		joined,
-		`private function "taggedTestOnlyEntry" is never used by production code; remove it`,
+		`private function "taggedTestOnlyEntry" is never used by production code`,
 	) {
 		t.Fatalf("expected active tagged test-only subgraph root finding, got:\n%s", joined)
 	}
@@ -298,7 +298,7 @@ func Live() {
 
 	if !strings.Contains(
 		joined,
-		`private var "unusedValue" is never used by production code; remove it`,
+		`private var "unusedValue" is never used by production code`,
 	) {
 		t.Fatalf("expected package var shadowed by local var to stay dead, got:\n%s", joined)
 	}
@@ -327,7 +327,7 @@ func deadPrivate() {}
 	issues := lintInDir(t, tmp)
 	joined := joinMessages(issues)
 
-	want := `exported function "UnusedExported" is unreachable from repo entrypoints; remove it`
+	want := `exported function "UnusedExported" is unreachable from repo entrypoints`
 	if !strings.Contains(joined, want) {
 		t.Fatalf("expected repo dead-code subgraph root finding %q, got:\n%s", want, joined)
 	}
@@ -381,7 +381,7 @@ func EasyjsonExported() {
 		}
 	}
 
-	want := `private function "deadPrivate" is never used by production code; remove it`
+	want := `private function "deadPrivate" is never used by production code`
 	if !strings.Contains(joined, want) {
 		t.Fatalf("expected hand-written finding %q, got:\n%s", want, joined)
 	}
@@ -411,7 +411,7 @@ func (Service) unusedPrivate() {}
 	joined := joinMessages(issues)
 
 	for _, want := range []string{
-		`exported method "UnusedExported" is unreachable from repo entrypoints; remove it`,
+		`exported method "UnusedExported" is unreachable from repo entrypoints`,
 		wantUnusedPrivateMethod,
 	} {
 		if !strings.Contains(joined, want) {
@@ -715,7 +715,7 @@ func Live() {
 
 	if !strings.Contains(
 		joined,
-		`exported method "Is" is unreachable from repo entrypoints; remove it`,
+		`exported method "Is" is unreachable from repo entrypoints`,
 	) {
 		t.Fatalf("expected non-error Is method finding, got:\n%s", joined)
 	}

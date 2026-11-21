@@ -20,10 +20,6 @@ const (
 	typeMethodLimit    = 40
 )
 
-// sizeLimitDeleteFirst leads size advice: removing unneeded code often fixes
-// the size, and splitting first would spread dead code across new owners.
-const sizeLimitDeleteFirst = "first check what each part is for and who calls it, and delete what nothing needs (legacy paths, code only tests use, redundant checks, defensive code for cases that cannot happen)"
-
 // OutlineFinding is one finding in files[File] of a CheckSizes call.
 type OutlineFinding struct {
 	File    int
@@ -52,7 +48,7 @@ func CheckSizes(files []outline.File) []OutlineFinding {
 				Pos:  file.Start,
 				Kind: "oversized_owner_file",
 				Message: fmt.Sprintf(
-					"source file has %d lines; "+sizeLimitDeleteFirst+", then split the rest by responsibility so whole-file review stays tractable",
+					"source file has %d lines",
 					file.Lines,
 				),
 			})
@@ -167,31 +163,23 @@ func promotedFrom(
 }
 
 func godReceiverMessage(name string, own, total, fileCount int, embedded map[string]int) string {
-	source := fmt.Sprintf(
-		"%d methods across %d files, counting functions that take a pointer to it first",
-		total,
-		fileCount,
-	)
+	files := fmt.Sprintf("%d files", fileCount)
+	if fileCount == 1 {
+		files = "1 file"
+	}
 
-	if len(embedded) > 0 {
-		parts := make([]string, 0, len(embedded))
-		for _, embed := range slices.Sorted(maps.Keys(embedded)) {
-			parts = append(parts, fmt.Sprintf("%s %d", embed, embedded[embed]))
-		}
+	if len(embedded) == 0 {
+		return fmt.Sprintf("type %q has %d methods in %s", name, total, files)
+	}
 
-		source = fmt.Sprintf(
-			"%d methods: %d of its own across %d files, counting functions that take a pointer to it first, and %s from embedded types",
-			total,
-			own,
-			fileCount,
-			strings.Join(parts, ", "),
-		)
+	parts := make([]string, 0, len(embedded))
+	for _, embed := range slices.Sorted(maps.Keys(embedded)) {
+		parts = append(parts, fmt.Sprintf("%s %d", embed, embedded[embed]))
 	}
 
 	return fmt.Sprintf(
-		"type %q has %s; list what each method is for and who calls it, delete what nothing needs, simplify methods more complex than their job, merge methods that differ without need into one, move methods another type owns, then split the rest by responsibility so each new type owns its own state; moving methods into an embedded type or into functions that take the type is not a fix",
-		name,
-		source,
+		"type %q has %d methods: %d of its own in %s, plus embedded %s",
+		name, total, own, files, strings.Join(parts, ", "),
 	)
 }
 
@@ -213,7 +201,7 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 	if fn.Params > funcParamLimit && !fn.Callback {
 		report(
 			"long_param_list",
-			"function %q has %d parameters; "+sizeLimitDeleteFirst+", then group related parameters into a struct or split the function",
+			"function %q has %d parameters",
 			fn.Name,
 			fn.Params,
 		)
@@ -221,7 +209,7 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 
 	if fn.Results > funcResultLimit {
 		report("long_result_list",
-			"function %q returns %d results; "+sizeLimitDeleteFirst+", then return a named struct",
+			"function %q returns %d results",
 			fn.Name, fn.Results,
 		)
 	}
@@ -229,7 +217,7 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 	if fn.Body && fn.Statements > funcStatementLimit {
 		report(
 			"long_function",
-			"function %q has %d statements, counting nested blocks and closures%s%s; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
+			"function %q has %d statements%s%s",
 			fn.Name,
 			fn.Statements,
 			largestStatementsText(fn.Largest),

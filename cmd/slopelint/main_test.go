@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -222,5 +224,57 @@ func TestSimilarityOptionsReadModelAndThreshold(t *testing.T) {
 				t.Fatalf("exit = %d, stderr = %q", code, stderr.String())
 			}
 		})
+	}
+}
+
+// TestRunStandaloneGroupsFindingsByRule checks that a rule's guide prints
+// once above its findings, in text and JSON output.
+func TestRunStandaloneGroupsFindingsByRule(t *testing.T) {
+	t.Setenv("SLOPELINT_SIMILARITY", "off")
+
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"go.mod": "module example.com/sample\n\ngo 1.22\n",
+		"sample.go": `package sample
+
+func First(a, b, c, d, e, f, g int) int { return a + b + c + d + e + f + g }
+
+func Second(a, b, c, d, e, f, g int) int { return a * b * c * d * e * f * g }
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Chdir(dir)
+
+	var stdout, stderr strings.Builder
+
+	if code := runStandalone(
+		t.Context(),
+		[]string{cacheDisabled, "./..."},
+		&stdout,
+		&stderr,
+	); code != exitIssues {
+		t.Fatalf("exit = %d, want %d:\n%s", code, exitIssues, stderr.String())
+	}
+
+	text := stderr.String()
+	if strings.Count(text, "long_param_list: Functions with over 6 parameters (2)\n  Fix: ") != 1 ||
+		!strings.Contains(text, `sample.go:3:6: function "First" has 7 parameters`) ||
+		!strings.Contains(text, `sample.go:5:6: function "Second" has 7 parameters`) {
+		t.Fatalf("grouped output:\n%s", text)
+	}
+
+	stdout.Reset()
+	_ = runStandalone(t.Context(), []string{cacheDisabled, jsonFlag, "./..."}, &stdout, io.Discard)
+
+	var output struct {
+		Rules map[string]standaloneJSONRule `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &output); err != nil ||
+		output.Rules["long_param_list"].Fix == "" {
+		t.Fatalf("JSON rules = %v, err = %v", output.Rules, err)
 	}
 }

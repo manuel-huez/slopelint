@@ -85,6 +85,7 @@ func g(req *guard.Req) {
 	for _, want := range []string{
 		`condition "req == nil" is always false here`,
 		`condition "req.Name == \"\"" is always false here`,
+		"[redundant_condition] Fix: Delete the redundant code",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing diagnostic %q in:\n%s", want, joined)

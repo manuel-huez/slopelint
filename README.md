@@ -38,7 +38,8 @@ finds, and how to fix it once; each finding line keeps `path:line:col:`.
 Exit codes: `0` clean, `1` failure, `2` usage error, `3` findings.
 
 `go vet -vettool="$(command -v slopelint)" ./...` also works, per package and
-without model checks or repo-wide dead code.
+without model checks or repo-wide dead code. go vet prints each finding alone,
+so each one ends with its rule and fix.
 
 ## CI
 

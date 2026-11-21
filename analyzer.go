@@ -42,10 +42,17 @@ func run(pass *analysis.Pass) (any, error) {
 		return nil, err
 	}
 
+	// The vet driver prints each diagnostic alone, so each one carries its
+	// rule and fix; the standalone command prints them once per rule.
 	for _, issue := range issues {
+		message := issue.Message + " [" + issue.Kind + "]"
+		if _, fix := lint.RuleGuide(issue.Kind); fix != "" {
+			message += " Fix: " + fix
+		}
+
 		pass.Report(analysis.Diagnostic{
 			Pos:      issue.Pos,
-			Message:  issue.Message,
+			Message:  message,
 			Category: issue.Kind,
 		})
 	}

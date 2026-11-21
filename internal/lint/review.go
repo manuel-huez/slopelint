@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
@@ -243,6 +244,7 @@ func (review codeReview) run(
 		requested:    make(map[string]codeReviewRequest),
 		records:      make(map[string]codeReviewRecord, len(keys)),
 		firstVotes:   make(map[string]codeReviewRecord),
+		started:      time.Now(),
 		cacheRoot:    review.cacheRoot,
 		cacheEnabled: review.cacheEnabled,
 	}
@@ -406,6 +408,7 @@ type codeReviewCollector struct {
 	records      map[string]codeReviewRecord
 	firstVotes   map[string]codeReviewRecord
 	secondVotes  []codeReviewRequest
+	started      time.Time
 	cacheRoot    string
 	cacheEnabled bool
 	accepted     int
@@ -475,9 +478,10 @@ func (collector *codeReviewCollector) accept(records []codeReviewRecord) error {
 
 	_, _ = fmt.Fprintf(
 		os.Stderr,
-		"slopelint: reviewed %d/%d declarations\n",
+		"slopelint: reviewed %d/%d declarations%s\n",
 		collector.accepted,
 		collector.total,
+		finishedIn(collector.accepted, collector.total, collector.started),
 	)
 
 	return nil

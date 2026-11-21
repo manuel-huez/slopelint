@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -214,6 +215,8 @@ func (runtime *similarityEmbeddingRuntime) populateInputs(inputs []*similarityVe
 			return err
 		}
 
+		started := time.Now()
+
 		for start := 0; start < len(missing); {
 			end := start
 			bytes := 0
@@ -239,6 +242,14 @@ func (runtime *similarityEmbeddingRuntime) populateInputs(inputs []*similarityVe
 
 			start = end
 		}
+
+		_, _ = fmt.Fprintf(
+			os.Stderr,
+			"slopelint: embedded %d code blocks with %s%s\n",
+			len(missing),
+			runtime.model,
+			finishedIn(len(missing), len(missing), started),
+		)
 	}
 
 	return nil

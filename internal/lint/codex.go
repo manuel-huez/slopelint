@@ -48,6 +48,16 @@ type codexTask[Req, Res any] struct {
 	done func(Req) bool
 }
 
+// finishedIn returns " in 12m3s" once done reaches total, so the last
+// progress line of a step says how long it took.
+func finishedIn(done, total int, started time.Time) string {
+	if done < total {
+		return ""
+	}
+
+	return " in " + time.Since(started).Round(time.Second).String()
+}
+
 // codexEnabledFromEnv reports whether SLOPELINT_CODEX_DESCRIPTIONS allows the
 // Codex channel. It does not check whether the CLI is installed.
 func codexEnabledFromEnv() (bool, error) {

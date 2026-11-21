@@ -73,12 +73,12 @@ func (s syntax) promiseCatch(call *ts.Node) (*ts.Node, *ts.Node, bool) {
 }
 
 var tsFunctionKinds = map[string]bool{
-	tsFuncDeclNode:       true,
-	tsGeneratorNode:      true,
-	tsMethodNode:         true,
-	tsArrowNode:          true,
-	tsFuncExprNode:       true,
-	"generator_function": true,
+	tsFuncDeclNode:  true,
+	tsGeneratorNode: true,
+	tsMethodNode:    true,
+	tsArrowNode:     true,
+	tsFuncExprNode:  true,
+	tsGeneratorExpr: true,
 }
 
 // unitWrappers are statements that only bind or export the function they

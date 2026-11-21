@@ -145,34 +145,59 @@ func funcOutlineFindings(fn outline.Func) []OutlineFinding {
 	if fn.Body && fn.Statements > funcStatementLimit {
 		report(
 			"long_function",
-			"function %q has %d statements, counting nested blocks and closures%s; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
+			"function %q has %d statements, counting nested blocks and closures%s%s; "+sizeLimitDeleteFirst+", then split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
 			fn.Name,
 			fn.Statements,
 			largestStatementsText(fn.Largest),
+			movableClosuresText(fn.Movable),
 		)
 	}
 
 	return findings
 }
 
-func largestStatementsText(blocks []outline.StatementBlock) string {
-	if len(blocks) == 0 {
+func movableClosuresText(closures []outline.StatementBlock) string {
+	switch len(closures) {
+	case 0:
 		return ""
+	case 1:
+		return fmt.Sprintf(
+			"; the closure at %s uses nothing from the function, so it can move out",
+			blockText(closures[0]),
+		)
+	default:
+		return "; the closures at " + blockList(
+			closures,
+		) + " use nothing from the function, so they can move out"
 	}
+}
 
+func blockText(block outline.StatementBlock) string {
+	return fmt.Sprintf("line %d (%d)", block.Line, block.Statements)
+}
+
+func blockList(blocks []outline.StatementBlock) string {
 	parts := make([]string, len(blocks))
 	for index, block := range blocks {
-		parts[index] = fmt.Sprintf("line %d (%d)", block.Line, block.Statements)
+		parts[index] = blockText(block)
 	}
 
 	if len(parts) == 1 {
-		return "; the largest statement is at " + parts[0]
+		return parts[0]
 	}
 
-	return "; the largest are at " + strings.Join(
-		parts[:len(parts)-1],
-		", ",
-	) + " and " + parts[len(parts)-1]
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
+
+func largestStatementsText(blocks []outline.StatementBlock) string {
+	switch len(blocks) {
+	case 0:
+		return ""
+	case 1:
+		return "; the largest statement is at " + blockText(blocks[0])
+	default:
+		return "; the largest are at " + blockList(blocks)
+	}
 }
 
 type sizeLimitCheck struct {
@@ -240,6 +265,7 @@ func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {
 		Pos:        l.outlinePos(fn.Name.Pos()),
 		Statements: statementCount(fn.Body),
 		Largest:    l.largestStatements(fn.Body),
+		Movable:    l.movableClosures(fn),
 		Params:     funcParamCount(fn.Type.Params),
 		Results:    funcParamCount(fn.Type.Results),
 		Body:       fn.Body != nil,
@@ -276,46 +302,6 @@ func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {
 	}
 
 	return out
-}
-
-// statementCount counts the statements in body, nested literals included.
-// Blocks and case clauses only group statements, as in the TypeScript and
-// Python counts, so they do not count.
-func statementCount(body *ast.BlockStmt) int {
-	if body == nil {
-		return 0
-	}
-
-	count := 0
-
-	ast.Inspect(body, func(node ast.Node) bool {
-		switch node.(type) {
-		case *ast.BlockStmt, *ast.EmptyStmt, *ast.CaseClause, *ast.CommClause:
-		case ast.Stmt:
-			count++
-		}
-
-		return true
-	})
-
-	return count
-}
-
-func (l sizeLimitCheck) largestStatements(body *ast.BlockStmt) []outline.StatementBlock {
-	if body == nil {
-		return nil
-	}
-
-	blocks := make([]outline.StatementBlock, 0, len(body.List))
-
-	for _, stmt := range body.List {
-		blocks = append(blocks, outline.StatementBlock{
-			Line:       l.pkg.FSet.Position(stmt.Pos()).Line,
-			Statements: statementCount(&ast.BlockStmt{List: []ast.Stmt{stmt}}),
-		})
-	}
-
-	return outline.LargestStatements(blocks)
 }
 
 func (l sizeLimitCheck) outlinePos(pos token.Pos) outline.Pos {

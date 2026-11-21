@@ -251,7 +251,7 @@ var (
 	// would move or repeat.
 	deferringKinds = map[string]bool{
 		pyLambdaNode: true, tsClassNode: true, pyClassNode: true,
-		"for_statement": true, "for_in_statement": true, "while_statement": true,
+		forNode: true, tsForInNode: true, "while_statement": true,
 		"do_statement": true, "list_comprehension": true, "set_comprehension": true,
 		"dictionary_comprehension": true, "generator_expression": true,
 	}
@@ -673,8 +673,8 @@ func (c localRules) bodyCall(stmts []*ts.Node) *ts.Node {
 // Conditional expressions count as control flow: Go spells them with an
 // if, which the Go rule's tiny body excludes.
 var complexKinds = map[string]bool{
-	ifNode: true, "for_statement": true, "for_in_statement": true, "while_statement": true,
-	"do_statement": true, "switch_statement": true, "try_statement": true, withNode: true,
+	ifNode: true, forNode: true, tsForInNode: true, "while_statement": true,
+	"do_statement": true, tsSwitchNode: true, "try_statement": true, withNode: true,
 	tsClassNode: true, "class": true, tsYieldNode: true, tsThisNode: true,
 	"ternary_expression": true, "optional_chain": true,
 }

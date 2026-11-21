@@ -64,7 +64,7 @@ func (c *checker) walk(node *ts.Node) {
 		}
 	case ifNode:
 		branchRules{c}.ifChain(node)
-	case "switch_statement":
+	case tsSwitchNode:
 		branchRules{c}.switchCases(node)
 	}
 

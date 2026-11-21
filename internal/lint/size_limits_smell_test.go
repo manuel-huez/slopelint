@@ -68,7 +68,8 @@ func TestDetectsFunctionSizeLimits(t *testing.T) {
 
 	joined := joinMessages(lintInDir(t, tmp))
 	for _, want := range []string{
-		`function "long" has 41 statements, counting nested blocks and closures; the largest statement is at line 4 (21)` +
+		`function "long" has 41 statements, counting nested blocks and closures; the largest statement is at line 4 (21); ` +
+			"the closure at line 4 (20) uses nothing from the function, so it can move out" +
 			sizeLimitDeleteFirst +
 			"split the rest by responsibility; cutting it into steps that each have one caller only moves the code",
 		`function "params" has 7 parameters` + sizeLimitDeleteFirst + "group related parameters into a struct or split the function",
@@ -155,5 +156,43 @@ func TestSkipsGodReceiverAtLimitTestAndGenerated(t *testing.T) {
 	issues := lintInDir(t, tmp)
 	if hasIssueKind(issues, "god_receiver") {
 		t.Fatalf("unexpected god_receiver finding, got:\n%s", joinMessages(issues))
+	}
+}
+
+// A switch counts one per case plus its longest case, and only closures
+// that use nothing from their function are named as movable.
+func TestLongFunctionCountsSwitchCasesAndMovableClosures(t *testing.T) {
+	t.Parallel()
+
+	shortCase := func(index int) string {
+		return fmt.Sprintf("\tcase %d:\n\t\t_ = 0\n\t\t_ = 1\n", index)
+	}
+
+	var table, long strings.Builder
+
+	for index := range 25 {
+		table.WriteString(shortCase(index))
+	}
+
+	for index := range 3 {
+		fmt.Fprintf(&long, "\tcase %d:\n%s", index, strings.Repeat("\t\t_ = 0\n", 40))
+	}
+
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), "package sample\n\n"+
+		"func Table(kind int) {\n\tswitch kind {\n"+table.String()+"\t}\n}\n\n"+
+		"func Long(kind int) {\n\tcount := 0\n\tadd := func() { count++ }\n\tadd()\n\tswitch kind {\n"+long.String()+"\t}\n}\n")
+
+	var got []string
+
+	for _, issue := range lintInDir(t, tmp) {
+		if issue.Kind == "long_function" {
+			got = append(got, issue.Message)
+		}
+	}
+
+	if len(got) != 1 || !strings.Contains(got[0], `function "Long" has 48 statements`) ||
+		strings.Contains(got[0], "move out") {
+		t.Fatalf("long_function findings = %q, want only Long, with no movable closure", got)
 	}
 }

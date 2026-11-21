@@ -134,16 +134,21 @@ func firstSyntaxError(node *ts.Node) *ts.Node {
 	return node
 }
 
-// Node types both grammars share.
+// Statement node types both grammars share.
+const (
+	statementNode = "expression_statement"
+	ifNode        = "if_statement"
+	elseNode      = "else_clause"
+	returnNode    = "return_statement"
+	withNode      = "with_statement"
+	forNode       = "for_statement"
+)
+
+// Other node types both grammars share.
 const (
 	commentNode    = "comment"
-	statementNode  = "expression_statement"
 	identifierNode = "identifier"
-	ifNode         = "if_statement"
-	returnNode     = "return_statement"
-	elseNode       = "else_clause"
 	stringNode     = "string"
-	withNode       = "with_statement"
 	trueNode       = "true"
 	falseNode      = "false"
 )
@@ -154,18 +159,29 @@ const (
 	tsLexicalNode    = "lexical_declaration"
 	tsVarNode        = "variable_declaration"
 	tsDeclaratorNode = "variable_declarator"
-	tsFuncDeclNode   = "function_declaration"
-	tsGeneratorNode  = "generator_function_declaration"
 	tsClassNode      = "class_declaration"
 	tsMethodNode     = "method_definition"
-	tsArrowNode      = "arrow_function"
-	tsFuncExprNode   = "function_expression"
 )
 
-// TypeScript statement and expression node types.
+// TypeScript function node types.
+const (
+	tsFuncDeclNode  = "function_declaration"
+	tsGeneratorNode = "generator_function_declaration"
+	tsArrowNode     = "arrow_function"
+	tsFuncExprNode  = "function_expression"
+	tsGeneratorExpr = "generator_function"
+)
+
+// TypeScript statement node types.
 const (
 	tsBlockNode  = "statement_block"
+	tsSwitchNode = "switch_statement"
+	tsForInNode  = "for_in_statement"
 	tsCatchNode  = "catch_clause"
+)
+
+// TypeScript expression node types.
+const (
 	tsCallNode   = "call_expression"
 	tsAwaitNode  = "await_expression"
 	tsMemberNode = "member_expression"
@@ -288,7 +304,7 @@ func (w *walker) walkTypeScript(node *ts.Node, kind, receiver string) {
 	case tsFuncDeclNode, tsGeneratorNode, tsMethodNode:
 		name := w.field(node, nameField)
 		w.function(node, w.text(name), name, receiver)
-	case tsArrowNode, tsFuncExprNode, "generator_function":
+	case tsArrowNode, tsFuncExprNode, tsGeneratorExpr:
 		name, anchor, owner := w.boundName(node)
 		w.function(node, name, anchor, owner)
 	case tsCallNode, tsAwaitNode, tsCatchNode:
@@ -424,6 +440,7 @@ func (w *walker) function(node *ts.Node, name string, anchor *ts.Node, receiver 
 		StartLine:  int(node.StartPoint().Row) + 1,
 		Statements: w.statements(node),
 		Largest:    w.largestStatements(node),
+		Movable:    w.movableClosures(node, anchor),
 		Params:     w.params(node, receiver),
 		Body:       true,
 		Literal:    anchor == nil,
@@ -442,47 +459,6 @@ func (w *walker) function(node *ts.Node, name string, anchor *ts.Node, receiver 
 	}
 
 	w.file.Funcs = append(w.file.Funcs, fn)
-}
-
-// statements counts the statements under node: every node directly in a
-// block, and *_statement nodes outside one, such as an unbraced if body or
-// a switch case. The Python grammar puts bare expressions such as
-// assignments in blocks, so node types alone would miss them.
-func (w *walker) statements(node *ts.Node) int {
-	count := 0
-	inBlock := node.Type(w.grammar) == "block" || node.Type(w.grammar) == "statement_block"
-
-	for index := range node.NamedChildCount() {
-		child := node.NamedChild(index)
-		if kind := child.Type(w.grammar); kind != commentNode &&
-			(inBlock || strings.HasSuffix(kind, "_statement")) {
-			count++
-		}
-
-		count += w.statements(child)
-	}
-
-	return count
-}
-
-func (w *walker) largestStatements(node *ts.Node) []StatementBlock {
-	body := w.field(node, "body")
-	if body == nil {
-		return nil
-	}
-
-	var blocks []StatementBlock
-
-	for index := range body.NamedChildCount() {
-		if child := body.NamedChild(index); child.Type(w.grammar) != commentNode {
-			blocks = append(blocks, StatementBlock{
-				Line:       int(child.StartPoint().Row) + 1,
-				Statements: 1 + w.statements(child),
-			})
-		}
-	}
-
-	return LargestStatements(blocks)
 }
 
 // params counts declared parameters. TypeScript `this` annotations and the

@@ -63,6 +63,9 @@ type Func struct {
 	// Largest are the top-level statements that hold the most statements,
 	// so a long function's report names where its size is.
 	Largest []StatementBlock
+	// Movable are closures that use nothing from their function, so they
+	// can move out of it.
+	Movable []StatementBlock
 	Params  int
 	Results int
 	Body    bool

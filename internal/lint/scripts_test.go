@@ -14,13 +14,20 @@ import (
 // TestScriptFilesLintAndReview runs the repository entrypoint on a module
 // with TypeScript and Python files: tracked files outside hidden, dependency,
 // and declaration paths get size findings and review, across a nested go.mod.
+// writeScriptModule writes a Go main and fences web off as its own module,
+// as a TypeScript project next to Go code is.
+func writeScriptModule(t *testing.T, dir string) {
+	t.Helper()
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {}\n")
+	writeFile(t, filepath.Join(dir, "web", "go.mod"), "module example.com/sample/web\n\ngo 1.22\n")
+}
+
 func TestScriptFilesLintAndReview(t *testing.T) {
 	dir := newTestModule(t)
 	longBody := "export function long(): number {\n  let total = 0\n" +
 		strings.Repeat("  total += 1\n", 100) + "  return total\n}\n"
 
-	writeFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {}\n")
-	writeFile(t, filepath.Join(dir, "web", "go.mod"), "module example.com/sample/web\n\ngo 1.22\n")
+	writeScriptModule(t, dir)
 	writeFile(
 		t,
 		filepath.Join(dir, "web", "app.ts"),
@@ -203,7 +210,7 @@ func TestScriptOnlyPatternSkipsGoPackages(t *testing.T) {
 		filepath.Join(dir, "broken", "broken.go"),
 		"package broken\n\nfunc broken() { undefined() }\n",
 	)
-	writeFile(t, filepath.Join(dir, "web", "go.mod"), "module example.com/sample/web\n\ngo 1.22\n")
+	writeScriptModule(t, dir)
 	writeFile(
 		t,
 		filepath.Join(dir, "web", "app.ts"),

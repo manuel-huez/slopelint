@@ -1,6 +1,7 @@
 package outline
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -81,5 +82,35 @@ func TestFunctionSizeCountsSwitchesAndFindsMovableClosures(t *testing.T) {
 					fn.Name, fn.Statements, fn.Movable, test.statements, test.movable)
 			}
 		})
+	}
+}
+
+func TestParseRecordsSplitHelpers(t *testing.T) {
+	t.Parallel()
+
+	file, err := Parse("app.ts", []byte(`const tiny = (a) => a + 1;
+function step(a, b) { return tiny(a) + b; }
+function shared(a) { return a; }
+export function run(x, y) {
+  const z = shared(x)
+  return step(x, z) + shared(y)
+}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for _, helper := range file.SplitHelpers {
+		got = append(
+			got,
+			fmt.Sprintf("%d %s passes %d", helper.Pos.Line, helper.CallerName, helper.Passed),
+		)
+	}
+
+	// tiny is called by step and step by run; shared has two calls.
+	want := []string{"1 step passes 1", "2 run passes 2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("split helpers = %q, want %q", got, want)
 	}
 }

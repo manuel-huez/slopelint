@@ -160,6 +160,7 @@ const (
 	tsVarNode        = "variable_declaration"
 	tsDeclaratorNode = "variable_declarator"
 	tsClassNode      = "class_declaration"
+	tsExportNode     = "export_statement"
 	tsMethodNode     = "method_definition"
 )
 
@@ -341,7 +342,7 @@ func (w *walker) boundName(node *ts.Node) (string, *ts.Node, string) {
 	kind := parent.Type(w.grammar)
 
 	switch kind {
-	case "export_statement":
+	case tsExportNode:
 		return "default", node, ""
 	case "arguments":
 		call := parent.Parent()

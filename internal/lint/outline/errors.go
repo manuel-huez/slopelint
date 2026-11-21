@@ -84,12 +84,12 @@ var tsFunctionKinds = map[string]bool{
 // unitWrappers are statements that only bind or export the function they
 // hold, so its unit grows to include them.
 var unitWrappers = map[string]bool{
-	tsDeclaratorNode:   true,
-	tsLexicalNode:      true,
-	tsVarNode:          true,
-	"export_statement": true,
-	tsFieldNode:        true,
-	pyDecoratedNode:    true,
+	tsDeclaratorNode: true,
+	tsLexicalNode:    true,
+	tsVarNode:        true,
+	tsExportNode:     true,
+	tsFieldNode:      true,
+	pyDecoratedNode:  true,
 }
 
 func (s syntax) outermostDecl(node *ts.Node) Decl {

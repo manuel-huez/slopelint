@@ -11,10 +11,8 @@ import (
 
 type localRules struct{ *checker }
 
-// The limits match the Go abstraction_overkill and trivial_wrapper rules.
+// The limits match the Go trivial_wrapper rule.
 const (
-	helperMaxStmts      = 3
-	helperMaxParams     = 2
 	forwarderShortLines = 3
 	forwarderAssignForm = 2
 )
@@ -445,8 +443,9 @@ func (c localRules) boundFunction(stmt *ts.Node) (*ts.Node, *ts.Node) {
 	return c.field(decl, nameField), c.field(decl, valueField)
 }
 
-// functions runs the Go trivial_wrapper, abstraction_overkill, and
-// generic_naming rules on file-local functions of a production file. Every
+// functions runs the Go trivial_wrapper and generic_naming rules on
+// file-local functions of a production file, and records single-use ones
+// for code review. Every
 // whole-word mention of the name in the file must be a direct call, apart
 // from the declaration: a name used as a value, exported, shadowed, or
 // mentioned in a string or comment is skipped. A call from the function's
@@ -465,8 +464,9 @@ func (c localRules) functions(root *ts.Node) {
 	for _, fn := range fns {
 		use := uses[c.text(fn.name)]
 		if use.fn == fn && !use.other && use.calls > 0 &&
-			occurrences(string(c.src), c.text(fn.name)) == use.calls+1 {
-			c.localFunction(fn, use.calls)
+			occurrences(string(c.src), c.text(fn.name)) == use.calls+1 &&
+			!c.localFunction(fn, use.calls) && use.calls == 1 {
+			c.splitHelper(fn, use.call)
 		}
 	}
 }
@@ -474,6 +474,7 @@ func (c localRules) functions(root *ts.Node) {
 type funcUse struct {
 	fn    localFunc
 	calls int
+	call  *ts.Node
 	other bool
 }
 
@@ -503,6 +504,7 @@ func (c localRules) funcUses(root *ts.Node, fns []localFunc) map[string]*funcUse
 
 		if outside && parent.Type(c.grammar) == tsCallNode && c.field(parent, "function") == node {
 			use.calls++
+			use.call = parent
 		} else {
 			use.other = true
 		}
@@ -511,43 +513,92 @@ func (c localRules) funcUses(root *ts.Node, fns []localFunc) map[string]*funcUse
 	return uses
 }
 
-func (c localRules) localFunction(fn localFunc, calls int) {
+// localFunction reports a helper that only forwards, and whether it did.
+func (c localRules) localFunction(fn localFunc, calls int) bool {
 	stmts := c.bodyStatements(fn.body)
 	name := c.text(fn.name)
 
 	if len(stmts) == 0 || c.commentIn(fn.body) {
-		return
+		return false
 	}
 
-	if callee, ok := c.forwardedCall(fn, stmts); ok {
-		reason := " at one production use"
+	callee, ok := c.forwardedCall(fn, stmts)
+	if !ok {
+		return false
+	}
 
-		if calls > 1 {
-			if c.endLine(stmts[len(stmts)-1])-c.pos(stmts[0]).Line+1 > forwarderShortLines {
-				return
-			}
+	reason := " at one production use"
 
-			reason = " in a body of 3 lines or less"
+	if calls > 1 {
+		if c.endLine(stmts[len(stmts)-1])-c.pos(stmts[0]).Line+1 > forwarderShortLines {
+			return false
 		}
 
-		c.report(fn.name, "trivial_wrapper", fmt.Sprintf(
-			`private helper %q only forwards to %q%s; inline or merge names`, name, callee, reason,
-		))
-		c.genericName(fn.name, "only forwards")
-
-		return
+		reason = " in a body of 3 lines or less"
 	}
 
-	if calls != 1 || len(stmts) > helperMaxStmts || c.paramCount(fn.params) > helperMaxParams ||
-		slices.ContainsFunc(stmts, func(stmt *ts.Node) bool { return !c.tinyStatement(stmt) }) {
-		return
-	}
-
-	c.report(fn.name, "abstraction_overkill", fmt.Sprintf(
-		`private helper %q has one production use and a tiny body; inline or give it a stronger role`,
-		name,
+	c.report(fn.name, "trivial_wrapper", fmt.Sprintf(
+		`private helper %q only forwards to %q%s; inline or merge names`, name, callee, reason,
 	))
-	c.genericName(fn.name, "one tiny use")
+	c.genericName(fn.name, "only forwards")
+
+	return true
+}
+
+// splitHelper records fn for code review when call sits in another
+// top-level function of the file.
+func (c localRules) splitHelper(fn localFunc, call *ts.Node) {
+	callerTop, helperTop := topLevel(call), topLevel(fn.node)
+	if callerTop == nil || callerTop == helperTop {
+		return
+	}
+
+	declaration := callerTop
+	if declaration.Type(c.grammar) == tsExportNode {
+		declaration = c.field(declaration, "declaration")
+	}
+
+	if declaration == nil {
+		return
+	}
+
+	callerName, callerFn := c.boundFunction(declaration)
+	if callerName == nil || callerFn == nil ||
+		!c.closureNode(callerFn) && callerFn.Type(c.grammar) != tsFuncDeclNode {
+		return
+	}
+
+	names := make(map[string]bool)
+	c.declaredNames(callerFn, names)
+
+	passed := make(map[string]bool)
+
+	if args := c.field(call, "arguments"); args != nil {
+		c.identifiers(args, func(each *ts.Node) {
+			if names[c.text(each)] {
+				passed[c.text(each)] = true
+			}
+		})
+	}
+
+	c.helpers = append(c.helpers, SplitHelper{
+		Pos:        c.pos(fn.name),
+		Helper:     Decl{StartLine: c.pos(helperTop).Line, EndLine: c.endLine(helperTop)},
+		Caller:     Decl{StartLine: c.pos(callerTop).Line, EndLine: c.endLine(callerTop)},
+		CallerName: c.text(callerName),
+		Passed:     len(passed),
+	})
+}
+
+// topLevel returns the top-level statement that holds node.
+func topLevel(node *ts.Node) *ts.Node {
+	for current := node; current != nil; current = current.Parent() {
+		if parent := current.Parent(); parent != nil && parent.Parent() == nil {
+			return current
+		}
+	}
+
+	return nil
 }
 
 func (c localRules) genericName(name *ts.Node, reason string) {
@@ -571,17 +622,6 @@ func (c localRules) commentIn(body *ts.Node) bool {
 	first := c.commentFrom(c.pos(body).Line)
 
 	return first < len(c.comments) && c.comments[first].pos.Line <= c.endLine(body)
-}
-
-func (c localRules) paramCount(params *ts.Node) int {
-	switch {
-	case params == nil:
-		return 0
-	case params.Type(c.grammar) == identifierNode:
-		return 1
-	default:
-		return len(c.statements(params))
-	}
 }
 
 // plainParams returns parameter names when every parameter is a bare name,
@@ -666,34 +706,4 @@ func (c localRules) bodyCall(stmts []*ts.Node) *ts.Node {
 	}
 
 	return nil
-}
-
-// complexKinds are control flow, or make an inlined body behave apart from
-// the original: `this` and yield depend on the function around them.
-// Conditional expressions count as control flow: Go spells them with an
-// if, which the Go rule's tiny body excludes.
-var complexKinds = map[string]bool{
-	ifNode: true, forNode: true, tsForInNode: true, "while_statement": true,
-	"do_statement": true, tsSwitchNode: true, "try_statement": true, withNode: true,
-	tsClassNode: true, "class": true, tsYieldNode: true, tsThisNode: true,
-	"ternary_expression": true, "optional_chain": true,
-}
-
-// tinyStatement matches an expression, declaration, or return with no
-// nested function or control flow, as the Go rule's tiny body does.
-func (c localRules) tinyStatement(stmt *ts.Node) bool {
-	switch stmt.Type(c.grammar) {
-	case statementNode, returnNode, tsLexicalNode, tsVarNode:
-	default:
-		if parent := stmt.Parent(); parent.Type(c.grammar) != tsArrowNode {
-			return false
-		}
-	}
-
-	return !c.contains(stmt, func(*ts.Node) bool { return false }, func(node *ts.Node) bool {
-		kind := node.Type(c.grammar)
-
-		return tsFunctionKinds[kind] || complexKinds[kind] ||
-			kind == tsBinaryNode && c.text(c.field(node, "operator")) == "??"
-	})
 }

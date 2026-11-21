@@ -337,7 +337,6 @@ export function useAll(x) {
 			want: []string{
 				`1 trivial_wrapper private helper "wrapperFor" only forwards to "target.run" at one production use; inline or merge names`,
 				`1 generic_naming private helper "wrapperFor" has generic name and only forwards; rename or inline`,
-				`7 abstraction_overkill private helper "twice" has one production use and a tiny body; inline or give it a stronger role`,
 			},
 		},
 		{

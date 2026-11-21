@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -64,5 +65,53 @@ func TestCodeReviewNeedsTwoFragmentVotes(t *testing.T) {
 
 	if hasIssueKind(issues, codeReviewFindingKinds[codeReviewFragment]) {
 		t.Fatalf("one fragment vote became a finding:\n%s", joinMessages(issues))
+	}
+}
+
+func TestCodeReviewJudgesTypeScriptSplitHelpers(t *testing.T) {
+	dir := newTestModule(t)
+	writeScriptModule(t, dir)
+	writeFile(
+		t,
+		filepath.Join(dir, "web", "totals.ts"),
+		`function totalsPart(values: number[], sum: number) {
+  for (const value of values) sum += value
+  return sum
+}
+
+export function totals(values: number[]) {
+  const start = 0
+  return totalsPart(values, start)
+}
+`,
+	)
+	initTestGitRepository(t, dir)
+
+	model := new(reviewTestModel)
+
+	issues, err := lintWithReviewForTest(t, dir, t.TempDir(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var facts []string
+
+	for _, request := range model.requests {
+		for _, item := range request.Items {
+			if item.Kind == codeReviewSplitHelperItem {
+				facts = append(facts, string(request.Language)+": "+item.Facts)
+			}
+		}
+	}
+
+	want := []string{"typescript: only totals calls it, once; the call passes 2 of totals's names"}
+	if !slices.Equal(facts, want) ||
+		!hasIssueKind(issues, codeReviewFindingKinds[codeReviewFragment]) {
+		t.Fatalf(
+			"split helper items = %q, want %q, and a fragment finding in:\n%s",
+			facts,
+			want,
+			joinMessages(issues),
+		)
 	}
 }

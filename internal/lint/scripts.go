@@ -307,7 +307,29 @@ func collectScriptCodeReviewDeclarations(
 		gap = "# ..."
 	}
 
-	for _, test := range file.Tests {
+	if err := addScriptTests(file.Tests, lines, add, gap, filename); err != nil {
+		return nil, err
+	}
+
+	if err := addSplitHelpers(file.SplitHelpers, lines, add, gap, filename); err != nil {
+		return nil, err
+	}
+
+	tests, helpers := scriptGroupedTests(filename, file, lines)
+	testGroups, err := testGroupDeclarations(filename, lines, tests, helpers, policy)
+
+	return append(declarations, testGroups...), err
+}
+
+// addScriptTests sends each test with its suite header.
+func addScriptTests(
+	tests []outline.Test,
+	lines []string,
+	add func(int, []string, []codeReviewPositionedItem) error,
+	gap string,
+	filename string,
+) error {
+	for _, test := range tests {
 		source, first := scriptTestSource(lines, test, gap)
 		item := codeReviewPositionedItem{
 			item: codeReviewItem{
@@ -318,14 +340,63 @@ func collectScriptCodeReviewDeclarations(
 		}
 
 		if err := add(test.StartLine, source, []codeReviewPositionedItem{item}); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	tests, helpers := scriptGroupedTests(filename, file, lines)
-	testGroups, err := testGroupDeclarations(filename, lines, tests, helpers, policy)
+	return nil
+}
 
-	return append(declarations, testGroups...), err
+// addSplitHelpers sends each caller with the single-use helpers it calls,
+// so review judges the pieces together.
+func addSplitHelpers(
+	helpers []outline.SplitHelper,
+	lines []string,
+	add func(int, []string, []codeReviewPositionedItem) error,
+	gap string,
+	filename string,
+) error {
+	byCaller := make(map[outline.Decl][]outline.SplitHelper)
+
+	var callers []outline.Decl
+
+	for _, helper := range helpers {
+		if byCaller[helper.Caller] == nil {
+			callers = append(callers, helper.Caller)
+		}
+
+		byCaller[helper.Caller] = append(byCaller[helper.Caller], helper)
+	}
+
+	for _, caller := range callers {
+		source := slices.Clone(lines[caller.StartLine-1 : caller.EndLine])
+		items := make([]codeReviewPositionedItem, 0, len(byCaller[caller]))
+
+		for _, helper := range byCaller[caller] {
+			source = append(source, gap)
+			first := len(source) + 1
+			source = append(source, lines[helper.Helper.StartLine-1:helper.Helper.EndLine]...)
+			items = append(items, codeReviewPositionedItem{
+				item: codeReviewItem{
+					Kind:  codeReviewSplitHelperItem,
+					Lines: codeReviewLines(first, len(source)),
+					Facts: fmt.Sprintf(
+						"only %s calls it, once; the call passes %d of %s's names",
+						helper.CallerName,
+						helper.Passed,
+						helper.CallerName,
+					),
+				},
+				position: scriptPosition(filename, helper.Pos),
+			})
+		}
+
+		if err := add(caller.StartLine, source, items); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // scriptGroupedTests returns the file's tests and the first lines of its

@@ -44,6 +44,22 @@ type File struct {
 	Tests  []Test
 	Blocks []Block
 	Smells []Smell
+	// SplitHelpers are file-local functions that one other top-level
+	// function calls once. TypeScript only: Python modules import and
+	// tests patch even underscore names.
+	SplitHelpers []SplitHelper
+}
+
+// SplitHelper is a single-use helper and its caller, for code review to
+// judge whether the helper is a piece of the caller.
+type SplitHelper struct {
+	// Pos is the helper's name.
+	Pos        Pos
+	Helper     Decl
+	Caller     Decl
+	CallerName string
+	// Passed counts the caller's names the call passes.
+	Passed int
 }
 
 // Func is one function, method, or function literal.

@@ -54,10 +54,12 @@ type codeReviewPolicy struct {
 	// GoTestGroups and ScriptTestGroups version the repeated-steps prompt.
 	GoTestGroups     int `json:"go_test_groups,omitempty"`
 	ScriptTestGroups int `json:"script_test_groups,omitempty"`
-	// GoSplitHelpers versions the prompt that judges single-use helpers.
-	GoSplitHelpers int    `json:"go_split_helpers,omitempty"`
-	Model          string `json:"model"`
-	Effort         string `json:"effort"`
+	// GoSplitHelpers and ScriptSplitHelpers version the prompt that judges
+	// single-use helpers.
+	GoSplitHelpers     int    `json:"go_split_helpers,omitempty"`
+	ScriptSplitHelpers int    `json:"script_split_helpers,omitempty"`
+	Model              string `json:"model"`
+	Effort             string `json:"effort"`
 }
 
 const (
@@ -74,14 +76,15 @@ const (
 )
 
 var codeReviewCurrentPolicy = codeReviewPolicy{
-	Go:               codeReviewLanguageVersion,
-	TypeScript:       codeReviewLanguageVersion,
-	Python:           codeReviewLanguageVersion,
-	GoTestGroups:     codeReviewTestGroupVersion,
-	ScriptTestGroups: codeReviewTestGroupVersion,
-	GoSplitHelpers:   codeReviewSplitHelperVersion,
-	Model:            "gpt-6.1-terra",
-	Effort:           "low",
+	Go:                 codeReviewLanguageVersion,
+	TypeScript:         codeReviewLanguageVersion,
+	Python:             codeReviewLanguageVersion,
+	GoTestGroups:       codeReviewTestGroupVersion,
+	ScriptTestGroups:   codeReviewTestGroupVersion,
+	GoSplitHelpers:     codeReviewSplitHelperVersion,
+	ScriptSplitHelpers: codeReviewSplitHelperVersion,
+	Model:              "gpt-6.1-terra",
+	Effort:             "low",
 }
 
 const (
@@ -813,8 +816,10 @@ func (policy codeReviewPolicy) forRequest(request codeReviewRequest) codeReviewP
 		family.GoTestGroups = policy.GoTestGroups
 	case request.Items[0].Kind == codeReviewTestGroupItem:
 		family.ScriptTestGroups = policy.ScriptTestGroups
-	case request.Items[0].Kind == codeReviewSplitHelperItem:
+	case request.Items[0].Kind == codeReviewSplitHelperItem && request.Language == outline.Go:
 		family.GoSplitHelpers = policy.GoSplitHelpers
+	case request.Items[0].Kind == codeReviewSplitHelperItem:
+		family.ScriptSplitHelpers = policy.ScriptSplitHelpers
 	case request.Language == outline.Go:
 		family.Go = policy.Go
 	case request.Language == outline.TypeScript:

@@ -133,8 +133,8 @@ func (w *walker) movableClosures(node, anchor *ts.Node) []StatementBlock {
 	return LargestStatements(closures)
 }
 
-func (w *walker) closureNode(node *ts.Node) bool {
-	switch node.Type(w.grammar) {
+func (s syntax) closureNode(node *ts.Node) bool {
+	switch node.Type(s.grammar) {
 	case tsArrowNode, tsFuncExprNode, tsGeneratorExpr, pyLambdaNode, pyFunctionNode:
 		return true
 	default:
@@ -144,9 +144,11 @@ func (w *walker) closureNode(node *ts.Node) bool {
 
 // declaredNames collects the parameter and local names of a function,
 // without those of the closures inside it.
-func (w *walker) declaredNames(node *ts.Node, names map[string]bool) {
-	if params := w.field(node, "parameters"); params != nil {
-		w.identifiers(params, names)
+func (s syntax) declaredNames(node *ts.Node, names map[string]bool) {
+	add := func(each *ts.Node) { names[s.text(each)] = true }
+
+	if params := s.field(node, "parameters"); params != nil {
+		s.identifiers(params, add)
 	}
 
 	var visit func(*ts.Node)
@@ -155,34 +157,24 @@ func (w *walker) declaredNames(node *ts.Node, names map[string]bool) {
 		for index := range current.NamedChildCount() {
 			child := current.NamedChild(index)
 
-			switch child.Type(w.grammar) {
+			switch child.Type(s.grammar) {
 			case tsDeclaratorNode, pyFunctionNode, tsFuncDeclNode, pyClassNode:
-				if name := w.field(child, nameField); name != nil {
-					w.identifiers(name, names)
+				if name := s.field(child, nameField); name != nil {
+					s.identifiers(name, add)
 				}
 			case pyAssignNode, "augmented_assignment", forNode, tsForInNode:
-				if left := w.field(child, "left"); left != nil {
-					w.identifiers(left, names)
+				if left := s.field(child, "left"); left != nil {
+					s.identifiers(left, add)
 				}
 			}
 
-			if !w.closureNode(child) {
+			if !s.closureNode(child) {
 				visit(child)
 			}
 		}
 	}
 
-	visit(w.field(node, "body"))
-}
-
-func (w *walker) identifiers(node *ts.Node, names map[string]bool) {
-	if node.Type(w.grammar) == identifierNode {
-		names[w.text(node)] = true
-	}
-
-	for index := range node.NamedChildCount() {
-		w.identifiers(node.NamedChild(index), names)
-	}
+	visit(s.field(node, "body"))
 }
 
 // usesAny reports whether node uses one of names, outside skip, the name of

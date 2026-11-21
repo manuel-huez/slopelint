@@ -96,7 +96,7 @@ than the typed Go rules.
 | --- | --- | :-: | :-: | :-: |
 | `control_flow_merge`, `boolean_ceremony`, `control_flow_pyramid`, `temp_alias` | Branches to merge, ifs that return `true`/`false`, nested final ifs, single-use aliases | ✅ | ✅ | ✅ |
 | `trivial_wrapper`, `generic_naming` | Private helpers that only forward, generic helper names | ✅ | ✅ | – |
-| `abstraction_overkill` | Private helpers with one tiny use (Go: see `helper_fragment`) | – | ✅ | – |
+| `abstraction_overkill` | Private interfaces with one implementation | ✅ | – | – |
 | `redundant_condition`, `redundant_subexpression`, `unreachable_case`, `redundant_default` | Guards and cases that earlier checks already decide | ✅ | – | – |
 | `complexity_simplification`, `guard_complexity` | Complex conditions with a simpler equivalent | ✅ | – | – |
 | `append_ceremony`, `range_ceremony`, `normalization_ceremony`, `serialization_ceremony` | Needless guards around append, range, normalization, and encoding | ✅ | – | – |
@@ -144,7 +144,7 @@ it, or accept its pair ID with `SLOPELINT_SIMILARITY_ACCEPT`.
 | `test_trivial`, `test_mock_only`, `test_wasteful` | Tests that check nothing real, only mocks, or waste time | ✅ | ✅ | ✅ |
 | `test_repeated_steps` | Tests that should share a table or fixture | ✅ | ✅ | ✅ |
 | `test_serial_excuse` | Weak `//slopelint:serial` reasons | ✅ | – | – |
-| `helper_fragment` | Private functions with one caller that are a piece of it, not a job of their own | ✅ | – | – |
+| `helper_fragment` | Private functions with one caller that are a piece of it, not a job of their own | ✅ | ✅ | – |
 
 Codex (`gpt-6.1-terra`) judges each declaration; each finding is its advice.
 It accepts an item when unsure, and a test group must be flagged by two

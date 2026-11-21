@@ -33,6 +33,7 @@ type checker struct {
 	language Language
 	comments []rawComment
 	smells   []Smell
+	helpers  []SplitHelper
 }
 
 type branchRules struct{ *checker }
@@ -48,6 +49,7 @@ func (w *walker) finishSmells(root *ts.Node) {
 	}
 
 	w.file.Smells = append(w.file.Smells, c.smells...)
+	w.file.SplitHelpers = c.helpers
 }
 
 func (c *checker) walk(node *ts.Node) {

@@ -171,7 +171,7 @@ cached per declaration, so unchanged code causes no model calls.
   `oversized_owner_file`. Agents add it only after the user approves; code
   review judges the reason. Code review findings cannot be ignored.
   `stale_ignore` reports an ignore that no finding uses, on full `./...` scans
-  from the module root.
+  from the module root, or the Git root without `go.mod`.
 - `serial` goes in the doc comment of a test that cannot call `t.Parallel()`;
   code review judges the reason.
 - `ensures` states a helper's guarantee for its callers:
@@ -182,6 +182,9 @@ cached per declaration, so unchanged code causes no model calls.
 ## Limits
 
 - Reports only; no autofix.
+- Without `go.mod`, slopelint lints the Git-tracked TypeScript and Python
+  files and keeps `.slopelint.json` at the Git root. JavaScript (`.js`,
+  `.mjs`) is not linted.
 - Results cover the active `GOOS`, `GOARCH`, and build tags.
 - Path analysis skips functions with `goto` and is conservative around unknown
   calls, loops, closures, and concurrency.

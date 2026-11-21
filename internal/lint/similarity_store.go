@@ -53,59 +53,74 @@ type similaritySourceFile struct {
 	SHA256  string `json:"sha256"`
 }
 
-func similarityModuleRoot(pkgs []*LoadedPackage) (string, error) {
-	var root string
+// similarityRoot is the one source root of the packages, or of the scripts
+// when no Go package is scanned. The stamp lives there.
+func similarityRoot(pkgs []*LoadedPackage, scripts []string) (string, error) {
+	var dirs []string
 
 	for _, pkg := range pkgs {
-		if pkg == nil || pkg.Dir == "" {
-			continue
+		if pkg != nil && pkg.Dir != "" {
+			dirs = append(dirs, pkg.Dir)
 		}
+	}
 
-		candidate, err := findGoModuleRoot(pkg.Dir)
+	if len(dirs) == 0 && len(scripts) > 0 {
+		dirs = append(dirs, filepath.Dir(scripts[0]))
+	}
+
+	var root string
+
+	for _, dir := range dirs {
+		candidate, err := findSourceRoot(dir)
 		if err != nil {
 			return "", err
 		}
 
-		if root == "" {
-			root = candidate
-			continue
-		}
-
-		if root != candidate {
+		if root != "" && root != candidate {
 			return "", fmt.Errorf(
 				"semantic similarity requires one Go module, found %s and %s",
 				root,
 				candidate,
 			)
 		}
+
+		root = candidate
 	}
 
 	if root == "" {
-		return "", errors.New("cannot find Go module for semantic similarity")
+		return "", errors.New("cannot find source root for semantic similarity")
 	}
 
 	return root, nil
 }
 
-func findGoModuleRoot(start string) (string, error) {
+// findSourceRoot returns the Go module root above start. A repository without
+// go.mod, such as a Python or TypeScript one, uses its Git root, or start
+// itself outside Git.
+func findSourceRoot(start string) (string, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return "", err
 	}
 
+	root, gitRoot := dir, ""
+
 	for {
-		_, err := os.Stat(filepath.Join(dir, "go.mod"))
-		if err == nil {
+		if fileExists(filepath.Join(dir, goModFilename)) {
 			return dir, nil
 		}
 
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
+		if gitRoot == "" && fileExists(filepath.Join(dir, ".git")) {
+			gitRoot = dir
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("cannot find go.mod above %s", start)
+			if gitRoot != "" {
+				return gitRoot, nil
+			}
+
+			return root, nil
 		}
 
 		dir = parent

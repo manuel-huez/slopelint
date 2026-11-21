@@ -40,7 +40,7 @@ func LintRepository(
 	}
 
 	ignores := loadIgnores(scan.files())
-	ignores.complete = scan.complete(patterns, dir)
+	ignores.complete = scansWholeRoot(patterns, dir)
 
 	var (
 		issues        []Issue
@@ -126,15 +126,18 @@ func (scan repoScan) files() []string {
 	return files
 }
 
-// complete reports whether the scan covers the whole module, so an ignore no
+// scansWholeRoot reports whether the scan covers the whole source root, so an ignore no
 // finding uses is stale rather than outside the scan. Duplicate and
 // dead-code findings depend on what else is scanned.
-func (scan repoScan) complete(patterns []string, dir string) bool {
+func scansWholeRoot(patterns []string, dir string) bool {
 	if len(patterns) > 0 && !slices.Equal(patterns, []string{allPackagesPattern}) {
 		return false
 	}
 
-	return len(scan.targets) == 0 || fileExists(filepath.Join(dir, "go.mod"))
+	absolute, err := filepath.Abs(dir)
+	root, rootErr := findSourceRoot(dir)
+
+	return err == nil && rootErr == nil && root == absolute
 }
 
 func resolveRepoScan(patterns []string, dir string) (repoScan, error) {
@@ -188,7 +191,7 @@ func preflightSimilarityCI(dir string, opts *SimilarityOptions) error {
 
 	// Validate semantic attestation before structural lint starts Go or reads its
 	// cache. CI never loads semantic models or recomputes duplicate analysis.
-	root, err := findGoModuleRoot(dir)
+	root, err := findSourceRoot(dir)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package lint
 
 import (
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -130,6 +131,48 @@ func TestScriptFilesLintAndReview(t *testing.T) {
 		want,
 	) {
 		t.Fatalf("review languages = %v, want %v", languages, want)
+	}
+}
+
+// TestScriptOnlyRepositoryWithoutGoModule checks a repository with no
+// go.mod: Go loading is skipped, scripts are linted and reviewed, and the
+// stamp lives at the Git root once findings are fixed.
+func TestScriptOnlyRepositoryWithoutGoModule(t *testing.T) {
+	dir := t.TempDir()
+	source := "def load(path):\n    try:\n        return open(path).read()\n" +
+		"    except OSError as lostErr:\n        return ''\n"
+	writeFile(t, filepath.Join(dir, "tools", "mod.py"), source)
+	initTestGitRepository(t, dir)
+
+	model := new(reviewTestModel)
+
+	issues, err := lintWithReviewForTest(t, dir, t.TempDir(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(issues) != 1 || issues[0].Kind != "swallowed_error" {
+		t.Fatalf("issues = %v, want one swallowed_error", issues)
+	}
+
+	writeFile(
+		t,
+		filepath.Join(dir, "tools", "mod.py"),
+		strings.Replace(source, "return ''", "raise", 1),
+	)
+
+	if issues, err = lintWithReviewForTest(
+		t,
+		dir,
+		t.TempDir(),
+		model,
+	); err != nil ||
+		len(issues) != 0 {
+		t.Fatalf("issues = %v, err = %v, want none", issues, err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, similarityStampName)); err != nil {
+		t.Fatalf("stamp at Git root: %v", err)
 	}
 }
 

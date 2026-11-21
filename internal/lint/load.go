@@ -59,6 +59,12 @@ func resolvePackageMetadata(
 		patterns = []string{allPackagesPattern}
 	}
 
+	// Without go.mod there is no Go to load; scripts are still linted.
+	root, err := findSourceRoot(dir)
+	if err != nil || !fileExists(filepath.Join(root, goModFilename)) {
+		return nil, nil, err
+	}
+
 	// go list fails on a folder outside the main module, such as a
 	// TypeScript project fenced off with its own go.mod, so a scan of only
 	// scripts never reaches it.

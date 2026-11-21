@@ -71,7 +71,7 @@ func patternScriptFiles(patterns []string, dir string) (string, []string, error)
 		return "", nil, err
 	}
 
-	root, err := findGoModuleRoot(absoluteDir)
+	root, err := findSourceRoot(absoluteDir)
 	if err != nil {
 		return "", nil, err
 	}

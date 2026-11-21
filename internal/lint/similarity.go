@@ -175,10 +175,6 @@ func checkSemanticCode(
 	candidates <-chan []Issue,
 	ignores *ignoreSet,
 ) ([]Issue, error) {
-	if len(pkgs) == 0 {
-		return nil, nil
-	}
-
 	check, err := loadSimilarityCheck(pkgs, scripts)
 	if err != nil {
 		return nil, err
@@ -405,7 +401,7 @@ type similarityCheck struct {
 }
 
 func loadSimilarityCheck(pkgs []*LoadedPackage, scripts []string) (similarityCheck, error) {
-	root, err := similarityModuleRoot(pkgs)
+	root, err := similarityRoot(pkgs, scripts)
 	if err != nil {
 		return similarityCheck{}, err
 	}

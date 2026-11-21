@@ -165,7 +165,7 @@ func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) 
 
 	location, gitErr := repoAnalysisGitLocation(resolvedDir)
 	if gitErr != nil {
-		sourceRoot, err := findGoModuleRoot(resolvedDir)
+		sourceRoot, err := findSourceRoot(resolvedDir)
 		if err != nil {
 			return repositoryCacheLocation{}, err
 		}
@@ -325,7 +325,7 @@ func repoAnalysisSourceDigest(
 			return "", err
 		}
 
-		moduleRoot, err := findGoModuleRoot(dir)
+		moduleRoot, err := findSourceRoot(dir)
 		if err != nil {
 			return "", err
 		}
@@ -817,7 +817,7 @@ func repoAnalysisExternalModuleCheck(dir, cacheRoot, goWork string) error {
 		return errAnalysisCacheDisabled
 	}
 
-	moduleRoot, err := findGoModuleRoot(dir)
+	moduleRoot, err := findSourceRoot(dir)
 	if err != nil {
 		return err
 	}
@@ -829,6 +829,10 @@ func repoAnalysisExternalModuleCheck(dir, cacheRoot, goWork string) error {
 
 func repoAnalysisReplacementRoots(moduleRoot, cacheRoot string) ([]string, error) {
 	data, err := os.ReadFile(filepath.Join(moduleRoot, goModFilename))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+
 	if err != nil {
 		return nil, err
 	}

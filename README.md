@@ -47,7 +47,7 @@ the stamp; another version rejects it.
 - uses: actions/setup-go@v6
   with:
     go-version-file: go.mod
-- run: go install github.com/manuel-huez/slopelint/cmd/slopelint@v0.4.3
+- run: go install github.com/manuel-huez/slopelint/cmd/slopelint@v0.5.0
 - run: slopelint ./...
 ```
 

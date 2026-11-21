@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
@@ -247,7 +246,7 @@ func (review codeReview) run(
 		requested:    make(map[string]codeReviewRequest),
 		records:      make(map[string]codeReviewRecord, len(keys)),
 		firstVotes:   make(map[string]codeReviewRecord),
-		started:      time.Now(),
+		progress:     newProgress("reviewed %d/%d declarations"),
 		cacheRoot:    review.cacheRoot,
 		cacheEnabled: review.cacheEnabled,
 	}
@@ -325,7 +324,14 @@ func (review codeReview) generate(
 		}
 	}
 
+	// A finding needs a second answer that agrees; see combineFindingVotes.
 	if second := collector.secondVotes; len(second) > 0 {
+		_, _ = fmt.Fprintf(
+			os.Stderr,
+			"slopelint: asking again about %d flagged declarations\n",
+			len(second),
+		)
+
 		collector.total += len(second)
 		if err := review.reviewer.review(ctx, second, done, collector.accept); err != nil {
 			return err
@@ -411,7 +417,7 @@ type codeReviewCollector struct {
 	records      map[string]codeReviewRecord
 	firstVotes   map[string]codeReviewRecord
 	secondVotes  []codeReviewRequest
-	started      time.Time
+	progress     progress
 	cacheRoot    string
 	cacheEnabled bool
 	accepted     int
@@ -479,13 +485,7 @@ func (collector *codeReviewCollector) accept(records []codeReviewRecord) error {
 		}
 	}
 
-	_, _ = fmt.Fprintf(
-		os.Stderr,
-		"slopelint: reviewed %d/%d declarations%s\n",
-		collector.accepted,
-		collector.total,
-		finishedIn(collector.accepted, collector.total, collector.started),
-	)
+	collector.progress.report(collector.accepted, collector.total)
 
 	return nil
 }

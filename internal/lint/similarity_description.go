@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
@@ -121,7 +120,7 @@ type similarityDescriptionCollector struct {
 	accepted     int
 	total        int
 	ready        func([]*similarityBlock)
-	started      time.Time
+	progress     progress
 }
 
 type similarityDescriptionListRule struct {
@@ -386,7 +385,7 @@ func generateSimilarityDescriptions(
 		cacheEnabled: cacheEnabled,
 		total:        len(missing),
 		ready:        runtime.ready,
-		started:      time.Now(),
+		progress:     newProgress("generated %d/%d code records"),
 	}
 	done := func(request similarityDescriptionRequest) bool {
 		if !cacheEnabled {
@@ -467,13 +466,7 @@ func (collector *similarityDescriptionCollector) accept(
 	}
 
 	collector.accepted += len(validated)
-	_, _ = fmt.Fprintf(
-		os.Stderr,
-		"slopelint: generated %d/%d code records%s\n",
-		collector.accepted,
-		collector.total,
-		finishedIn(collector.accepted, collector.total, collector.started),
-	)
+	collector.progress.report(collector.accepted, collector.total)
 
 	return nil
 }

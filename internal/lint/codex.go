@@ -48,14 +48,34 @@ type codexTask[Req, Res any] struct {
 	done func(Req) bool
 }
 
-// finishedIn returns " in 12m3s" once done reaches total, so the last
-// progress line of a step says how long it took.
-func finishedIn(done, total int, started time.Time) string {
-	if done < total {
-		return ""
+// progress prints a long step's count at each tenth and when it ends, the
+// last line with the time taken, instead of a line per batch.
+type progress struct {
+	format  string // takes done and total, as "reviewed %d/%d declarations"
+	started time.Time
+	tenths  int
+}
+
+func newProgress(format string) progress {
+	return progress{format: format, started: time.Now()}
+}
+
+const progressSteps = 10
+
+func (p *progress) report(done, total int) {
+	tenths := done * progressSteps / max(total, 1)
+	if done < total && tenths <= p.tenths {
+		return
 	}
 
-	return " in " + time.Since(started).Round(time.Second).String()
+	p.tenths = tenths
+
+	suffix := ""
+	if done >= total {
+		suffix = " in " + time.Since(p.started).Round(time.Second).String()
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "slopelint: "+p.format+"%s\n", done, total, suffix)
 }
 
 // codexEnabledFromEnv reports whether SLOPELINT_CODEX_DESCRIPTIONS allows the

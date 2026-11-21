@@ -248,7 +248,7 @@ func (runtime *similarityEmbeddingRuntime) populateInputs(inputs []*similarityVe
 			"slopelint: embedded %d code blocks with %s%s\n",
 			len(missing),
 			runtime.model,
-			finishedIn(len(missing), len(missing), started),
+			" in "+time.Since(started).Round(time.Second).String(),
 		)
 	}
 

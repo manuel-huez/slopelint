@@ -1,13 +1,13 @@
 {
   "schema": 16,
-  "source_digest": "6aff226ba88167684c510b161e198dd6bfc2c93ff0a7c53cb8e62bbb21e7a4c1",
-  "repository_digest": "bc12d1ef35ac0a7268bdca37d2c6f24309add22426e043160839913e648d4b10",
+  "source_digest": "e6aa490196ffc1eaa36128ddadc1648d9560b2ae6a2bc4da0e6d08d14321f393",
+  "repository_digest": "8491b28caf70b7833fc80dbfc8b6b299a3fce7aefc9cbc5e291726b7e7128870",
   "model": "jina-embeddings-v2-base-code",
   "threshold": 0.97,
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "6120edd8fec0ec3c302e841f9bfe6b64b821b4c33afd82a6fb0cca9ce6d31182",
+  "description_digest": "8d096c35057bf7d0a3a3052b50e3e5a5b0f69cc37ca6a9505c3f2b53f3a88e40",
   "review": {
     "go": 4,
     "typescript": 4,
@@ -19,5 +19,5 @@
     "model": "gpt-6.1-terra",
     "effort": "low"
   },
-  "checked_blocks": 1960
+  "checked_blocks": 1961
 }

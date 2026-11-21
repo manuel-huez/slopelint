@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,10 @@ type codexTask[Req, Res any] struct {
 	decode    func([]byte, []Req) ([]Res, error)
 	requestID func(Req) string
 	resultID  func(Res) string
+	// done reports whether another run already stored req's result, and then
+	// records it, so runs that overlap do not pay for the same request twice.
+	// It is checked before each batch, not only when a run starts.
+	done func(Req) bool
 }
 
 // codexEnabledFromEnv reports whether SLOPELINT_CODEX_DESCRIPTIONS allows the
@@ -116,7 +121,11 @@ func (task codexTask[Req, Res]) runBatch(
 
 	failedAttempts := 0
 
-	for len(remaining) > 0 && ctx.Err() == nil {
+	for ctx.Err() == nil {
+		if remaining = task.unfinished(remaining, nil); len(remaining) == 0 {
+			return nil
+		}
+
 		result, err := task.call(ctx, path, remaining)
 
 		// Persist every valid subset before retrying missing records. A slow or
@@ -133,36 +142,30 @@ func (task codexTask[Req, Res]) runBatch(
 
 		lastErr = err
 
-		if len(result) == 0 {
-			failedAttempts++
-			if failedAttempts == codexAttempts {
-				return lastErr
-			}
+		if len(result) > 0 {
+			failedAttempts = 0
+			remaining = task.unfinished(remaining, result)
 
 			continue
 		}
 
-		failedAttempts = 0
-
-		returned := make(map[string]struct{}, len(result))
-		for _, record := range result {
-			returned[task.resultID(record)] = struct{}{}
-		}
-
-		pending := make([]Req, 0, len(remaining)-len(result))
-		for _, request := range remaining {
-			if _, ok := returned[task.requestID(request)]; !ok {
-				pending = append(pending, request)
-			}
-		}
-
-		remaining = pending
-		if len(remaining) == 0 {
-			return nil
+		if failedAttempts++; failedAttempts == codexAttempts {
+			return lastErr
 		}
 	}
 
 	return lastErr
+}
+
+func (task codexTask[Req, Res]) unfinished(remaining []Req, result []Res) []Req {
+	returned := make(map[string]bool, len(result))
+	for _, record := range result {
+		returned[task.resultID(record)] = true
+	}
+
+	return slices.DeleteFunc(slices.Clone(remaining), func(request Req) bool {
+		return returned[task.requestID(request)] || task.done != nil && task.done(request)
+	})
 }
 
 func (task codexTask[Req, Res]) call(

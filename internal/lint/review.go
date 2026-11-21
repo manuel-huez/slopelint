@@ -144,9 +144,15 @@ var codeReviewVerdicts = map[string][]string{
 	codeReviewSplitHelperItem: {codeReviewOwnJob, codeReviewFragment},
 }
 
-// codeReviewer returns only records validated against their requests.
+// codeReviewer returns only records validated against their requests. done
+// reports requests another run has finished since this one started.
 type codeReviewer interface {
-	review(context.Context, []codeReviewRequest, func([]codeReviewRecord) error) error
+	review(
+		context.Context,
+		[]codeReviewRequest,
+		func(codeReviewRequest) bool,
+		func([]codeReviewRecord) error,
+	) error
 }
 
 // codeReviewItem is one judged comment group, dropped-error check, test
@@ -294,20 +300,29 @@ func (review codeReview) generate(
 		return request.Items[0].Kind != codeReviewTestGroupItem
 	})
 
+	done := func(request codeReviewRequest) bool {
+		record, ok := review.loadRecord(request)
+		if ok {
+			collector.reuse(request, record)
+		}
+
+		return ok
+	}
+
 	collector.total = len(missing) + len(groups)
 	for _, asked := range [][]codeReviewRequest{missing, groups} {
 		if len(asked) == 0 {
 			continue
 		}
 
-		if err := review.reviewer.review(ctx, asked, collector.accept); err != nil {
+		if err := review.reviewer.review(ctx, asked, done, collector.accept); err != nil {
 			return err
 		}
 	}
 
 	if second := collector.secondVotes; len(second) > 0 {
 		collector.total += len(second)
-		if err := review.reviewer.review(ctx, second, collector.accept); err != nil {
+		if err := review.reviewer.review(ctx, second, done, collector.accept); err != nil {
 			return err
 		}
 	}
@@ -395,6 +410,16 @@ type codeReviewCollector struct {
 	cacheEnabled bool
 	accepted     int
 	total        int
+}
+
+// reuse takes a record another run stored while this one ran. It is final:
+// its findings already had their second vote.
+func (collector *codeReviewCollector) reuse(request codeReviewRequest, record codeReviewRecord) {
+	collector.Lock()
+	defer collector.Unlock()
+
+	collector.records[request.ID] = record
+	collector.accepted++
 }
 
 // accept stores records the reviewer already validated against their

@@ -184,9 +184,13 @@ var similarityDescriptionTask = codexTask[similarityDescriptionRequest, similari
 func (cli *codexCLI) describe(
 	ctx context.Context,
 	requests []similarityDescriptionRequest,
+	done func(similarityDescriptionRequest) bool,
 	accept func([]similarityDescription) error,
 ) error {
-	return similarityDescriptionTask.run(ctx, cli, similarityDescriptionBatches(requests), accept)
+	task := similarityDescriptionTask
+	task.done = done
+
+	return task.run(ctx, cli, similarityDescriptionBatches(requests), accept)
 }
 
 // similarityDescriptionBatches groups requests by prompt shape, then balances

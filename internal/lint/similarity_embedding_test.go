@@ -535,6 +535,7 @@ type similarityStreamingTestDescriber struct {
 func (describer similarityStreamingTestDescriber) describe(
 	ctx context.Context,
 	requests []similarityDescriptionRequest,
+	_ func(similarityDescriptionRequest) bool,
 	accept func([]similarityDescription) error,
 ) error {
 	if describer.finished != nil {

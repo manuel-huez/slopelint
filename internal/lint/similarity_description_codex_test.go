@@ -505,7 +505,7 @@ func TestSimilarityCodexConcurrencyIndependentOfCPULimit(t *testing.T) {
 
 	go func() {
 		done <- describer.describe(
-			t.Context(), requests, func([]similarityDescription) error { return nil },
+			t.Context(), requests, nil, func([]similarityDescription) error { return nil },
 		)
 	}()
 
@@ -561,7 +561,7 @@ func TestSimilarityCodexStopsWhenCanceled(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		done <- describer.describe(ctx, requests, func([]similarityDescription) error { return nil })
+		done <- describer.describe(ctx, requests, nil, func([]similarityDescription) error { return nil })
 	}()
 
 	for range codexWorkers {

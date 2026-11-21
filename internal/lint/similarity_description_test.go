@@ -24,6 +24,7 @@ type similarityTestDescriber struct {
 func (describer *similarityTestDescriber) describe(
 	_ context.Context,
 	requests []similarityDescriptionRequest,
+	_ func(similarityDescriptionRequest) bool,
 	accept func([]similarityDescription) error,
 ) error {
 	describer.calls++
@@ -132,6 +133,7 @@ type similarityPartialTestDescriber struct{}
 func (*similarityPartialTestDescriber) describe(
 	_ context.Context,
 	requests []similarityDescriptionRequest,
+	_ func(similarityDescriptionRequest) bool,
 	accept func([]similarityDescription) error,
 ) error {
 	descriptions := []similarityDescription{similarityDescriptionForTest(requests[0])}

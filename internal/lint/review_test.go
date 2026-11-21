@@ -261,6 +261,7 @@ type reviewTestModel struct {
 func (model *reviewTestModel) review(
 	_ context.Context,
 	requests []codeReviewRequest,
+	_ func(codeReviewRequest) bool,
 	accept func([]codeReviewRecord) error,
 ) error {
 	// A second vote on a finding asks the same declaration again; tests count
@@ -655,7 +656,7 @@ func installReviewCodexForTest(t *testing.T, model *reviewTestModel) *atomic.Int
 
 		var response codeReviewCodexResponse
 
-		err := model.review(t.Context(), requests, func(records []codeReviewRecord) error {
+		err := model.review(t.Context(), requests, nil, func(records []codeReviewRecord) error {
 			response.Declarations = records
 			return nil
 		})
@@ -841,10 +842,15 @@ func TestCodeReviewCodexRetriesThenFailsOnInvalidBatch(t *testing.T) {
 		Items:    []codeReviewItem{{ID: "i1", Kind: codeReviewCommentItem, Lines: "1"}},
 	}
 
-	err := cli.review(t.Context(), []codeReviewRequest{request}, func([]codeReviewRecord) error {
-		t.Error("invalid record accepted")
-		return nil
-	})
+	err := cli.review(
+		t.Context(),
+		[]codeReviewRequest{request},
+		nil,
+		func([]codeReviewRecord) error {
+			t.Error("invalid record accepted")
+			return nil
+		},
+	)
 	if err == nil || attempts.Load() != codexAttempts ||
 		!strings.Contains(
 			err.Error(),

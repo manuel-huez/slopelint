@@ -58,10 +58,13 @@ type similarityDescriptionRequest struct {
 	Location string
 }
 
+// similarityDescriber's done reports requests another run has finished since
+// this one started.
 type similarityDescriber interface {
 	describe(
 		context.Context,
 		[]similarityDescriptionRequest,
+		func(similarityDescriptionRequest) bool,
 		func([]similarityDescription) error,
 	) error
 }
@@ -382,7 +385,29 @@ func generateSimilarityDescriptions(
 		total:        len(missing),
 		ready:        runtime.ready,
 	}
-	if err := runtime.describer.describe(ctx, missing, collector.accept); err != nil {
+	done := func(request similarityDescriptionRequest) bool {
+		if !cacheEnabled {
+			return false
+		}
+
+		input := inputs[request.ID]
+
+		description, ok := loadSimilarityDescription(
+			cacheRoot,
+			request.ID,
+			input.kind,
+			input.recordKind,
+		)
+		if !ok {
+			return false
+		}
+
+		description.ID = request.ID
+
+		return collector.accept([]similarityDescription{description}) == nil
+	}
+
+	if err := runtime.describer.describe(ctx, missing, done, collector.accept); err != nil {
 		return err
 	}
 

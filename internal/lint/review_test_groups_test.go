@@ -82,6 +82,7 @@ type testGroupDescriber struct{}
 func (testGroupDescriber) describe(
 	_ context.Context,
 	requests []similarityDescriptionRequest,
+	_ func(similarityDescriptionRequest) bool,
 	accept func([]similarityDescription) error,
 ) error {
 	out := make([]similarityDescription, len(requests))
@@ -104,6 +105,7 @@ type validatingTestReviewer struct {
 func (reviewer validatingTestReviewer) review(
 	ctx context.Context,
 	requests []codeReviewRequest,
+	_ func(codeReviewRequest) bool,
 	accept func([]codeReviewRecord) error,
 ) error {
 	byID := make(map[string]codeReviewRequest, len(requests))
@@ -111,7 +113,7 @@ func (reviewer validatingTestReviewer) review(
 		byID[request.ID] = request
 	}
 
-	return reviewer.model.review(ctx, requests, func(records []codeReviewRecord) error {
+	return reviewer.model.review(ctx, requests, nil, func(records []codeReviewRecord) error {
 		for index, record := range records {
 			validated, err := record.validated(byID[record.ID])
 			if err != nil {

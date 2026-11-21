@@ -405,6 +405,7 @@ var codeReviewTask = codexTask[codeReviewRequest, codeReviewRecord]{
 func (cli *codexCLI) review(
 	ctx context.Context,
 	requests []codeReviewRequest,
+	done func(codeReviewRequest) bool,
 	accept func([]codeReviewRecord) error,
 ) error {
 	// Each family has its own prompt, so batches never mix families.
@@ -430,7 +431,10 @@ func (cli *codexCLI) review(
 		})...)
 	}
 
-	return codeReviewTask.run(ctx, cli, batches, accept)
+	task := codeReviewTask
+	task.done = done
+
+	return task.run(ctx, cli, batches, accept)
 }
 
 func codeReviewPromptAndSchema(batch []codeReviewRequest) (string, string, error) {

@@ -89,6 +89,14 @@ func (inv invalidator) forExprSideEffectsOne(st state, expr ast.Expr) state {
 			return false
 		case *ast.CallExpr:
 			out = inv.forCallOne(out, n)
+		case *ast.UnaryExpr:
+			// An address stored in a value, such as &x in a map of any,
+			// lets a later call write x without naming it.
+			if n.Op == token.AND {
+				for root := range inv.q.rootsInExpr(n.X) {
+					out.invalidatePrefix(root)
+				}
+			}
 		}
 
 		return true

@@ -212,3 +212,38 @@ func TestStateHashIncludesAliasAndBindingsWithoutFacts(t *testing.T) {
 		t.Fatalf("binding-only state collapsed into empty hash %q", empty.hash())
 	}
 }
+
+// An address stored in a map of any lets the call in the loop write the
+// variable without naming it.
+func TestRangeLoopDropsFactsOfEscapedAddress(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+import "encoding/json"
+
+func Decode(raw map[string][]byte) *string {
+	var date *string
+
+	for key, target := range map[string]any{"date": &date} {
+		_ = json.Unmarshal(raw[key], target)
+	}
+
+	if date == nil {
+		return nil
+	}
+
+	return date
+}
+`)
+
+	if joined := joinMessages(
+		lintInDir(t, tmp),
+	); strings.Contains(
+		joined,
+		`condition "date == nil" is always true here`,
+	) {
+		t.Fatalf("escaped address kept its nil fact, got:\n%s", joined)
+	}
+}

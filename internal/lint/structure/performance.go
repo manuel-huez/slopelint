@@ -8,6 +8,8 @@ import (
 	"iter"
 	"slices"
 	"strings"
+
+	"github.com/manuel-huez/slopelint/internal/lint/astutil"
 )
 
 const (
@@ -414,10 +416,10 @@ func binaryComparesObjects(
 		return false
 	}
 
-	leftX := nodeUsesObject(expr.X, left, info)
-	rightX := nodeUsesObject(expr.X, right, info)
-	leftY := nodeUsesObject(expr.Y, left, info)
-	rightY := nodeUsesObject(expr.Y, right, info)
+	leftX := astutil.UsesObject(expr.X, left, info)
+	rightX := astutil.UsesObject(expr.X, right, info)
+	leftY := astutil.UsesObject(expr.Y, left, info)
+	rightY := astutil.UsesObject(expr.Y, right, info)
 
 	return leftX && rightY || rightX && leftY
 }

@@ -75,17 +75,17 @@ type similarityCachedFile struct {
 }
 
 type similarityCachedFinding struct {
-	Acceptance   similarityAcceptance `json:"acceptance"`
-	RelativePath string               `json:"relative_path"`
-	Offset       int                  `json:"offset"`
-	Line         int                  `json:"line"`
-	Column       int                  `json:"column"`
-	Message      string               `json:"message"`
+	Pair         similarityPair `json:"pair"`
+	RelativePath string         `json:"relative_path"`
+	Offset       int            `json:"offset"`
+	Line         int            `json:"line"`
+	Column       int            `json:"column"`
+	Message      string         `json:"message"`
 }
 
 type similarityFinding struct {
-	acceptance similarityAcceptance
-	issue      Issue
+	pair  similarityPair
+	issue Issue
 }
 
 type similarityScanPolicy struct {
@@ -243,7 +243,7 @@ func (cache similarityScanCache) valid() bool {
 			return false
 		}
 
-		seen[finding.Acceptance.ID] = struct{}{}
+		seen[finding.Pair.ID] = struct{}{}
 	}
 
 	return true
@@ -392,7 +392,7 @@ func storeSimilarityScanCache(
 		}
 
 		cache.Findings = append(cache.Findings, similarityCachedFinding{
-			Acceptance:   finding.acceptance,
+			Pair:         finding.pair,
 			RelativePath: filepath.ToSlash(relativePath),
 			Offset:       position.Offset,
 			Line:         position.Line,
@@ -432,10 +432,10 @@ func (cache similarityScanCache) replayFindings(moduleRoot string) ([]similarity
 			return nil, false
 		}
 
-		seen[cached.Acceptance.ID] = struct{}{}
+		seen[cached.Pair.ID] = struct{}{}
 
 		findings = append(findings, similarityFinding{
-			acceptance: cached.Acceptance,
+			pair: cached.Pair,
 			issue: Issue{
 				Kind:    similarityIssueKind,
 				Message: cached.Message,
@@ -484,11 +484,11 @@ func (cached similarityCachedFinding) valid(
 	seen map[string]struct{},
 ) bool {
 	if !similarityStringsPresent(
-		cached.Acceptance.ID,
-		cached.Acceptance.Left,
-		cached.Acceptance.LeftHash,
-		cached.Acceptance.Right,
-		cached.Acceptance.RightHash,
+		cached.Pair.ID,
+		cached.Pair.Left,
+		cached.Pair.LeftHash,
+		cached.Pair.Right,
+		cached.Pair.RightHash,
 		cached.RelativePath,
 		cached.Message,
 	) {
@@ -503,18 +503,18 @@ func (cached similarityCachedFinding) valid(
 		return false
 	}
 
-	match, ok := matches[cached.Acceptance.ID]
-	if !ok || cached.Acceptance.Left != match.Left ||
-		cached.Acceptance.Right != match.Right {
+	match, ok := matches[cached.Pair.ID]
+	if !ok || cached.Pair.Left != match.Left ||
+		cached.Pair.Right != match.Right {
 		return false
 	}
 
-	if blockHashes[match.Left] != cached.Acceptance.LeftHash ||
-		blockHashes[match.Right] != cached.Acceptance.RightHash {
+	if blockHashes[match.Left] != cached.Pair.LeftHash ||
+		blockHashes[match.Right] != cached.Pair.RightHash {
 		return false
 	}
 
-	if _, duplicate := seen[cached.Acceptance.ID]; duplicate {
+	if _, duplicate := seen[cached.Pair.ID]; duplicate {
 		return false
 	}
 

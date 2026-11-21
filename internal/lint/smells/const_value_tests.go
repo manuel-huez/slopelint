@@ -233,7 +233,7 @@ func (scan *constValueTestScan) collectStaticReturns() {
 
 		obj, ok := scan.pkg.TypesInfo.Defs[fn.Name].(*types.Func)
 		if ok {
-			candidates[funcObjectKey(obj)] = statement.Results[0]
+			candidates[FuncObjectKey(obj)] = statement.Results[0]
 		}
 	}
 
@@ -672,7 +672,7 @@ func compositeField(
 
 func (scan *constValueTestScan) fixedCallValue(call *ast.CallExpr) fixedTestValue {
 	if fn := funcObject(scan.pkg.TypesInfo, call.Fun); fn != nil {
-		if value, ok := scan.staticReturns[funcObjectKey(fn)]; ok {
+		if value, ok := scan.staticReturns[FuncObjectKey(fn)]; ok {
 			return value
 		}
 

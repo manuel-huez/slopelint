@@ -2,9 +2,10 @@ package smells
 
 import (
 	"fmt"
-	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 	"go/types"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 const optionsOverkillMaxUses = 2
@@ -30,7 +31,7 @@ func (l optionsOverkillCheck) check() {
 			fmt.Sprintf(
 				`private API %q uses functional options for %d production uses; pass config directly`,
 				fn.Name.Name,
-				useCounts[funcObjectKey(obj)],
+				useCounts[FuncObjectKey(obj)],
 			),
 		)
 	}
@@ -50,7 +51,7 @@ func privateFuncWithFunctionalOptions(
 		return nil, false
 	}
 
-	count := useCounts[funcObjectKey(obj)]
+	count := useCounts[FuncObjectKey(obj)]
 	if count == 0 || count > optionsOverkillMaxUses {
 		return nil, false
 	}

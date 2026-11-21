@@ -7,6 +7,8 @@ import (
 	"go/types"
 	"strconv"
 	"strings"
+
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
 
 const contractPrefix = "slopelint:ensures"
@@ -41,7 +43,7 @@ func collectContracts(pkg *LoadedPackage, sink *issueSink) map[string][]guardCon
 				continue
 			}
 
-			key := funcObjectKey(pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func))
+			key := smellcheck.FuncObjectKey(pkg.TypesInfo.ObjectOf(fn.Name).(*types.Func))
 			bindings := contractBindingsForFunc(fn)
 
 			for _, comment := range fn.Doc.List {
@@ -175,17 +177,6 @@ func parseContractScalar(text string) (scalar, bool) {
 	return scalar{}, false
 }
 
-func funcObjectKey(obj *types.Func) string {
-	obj = obj.Origin()
-
-	pkgPath := ""
-	if obj.Pkg() != nil {
-		pkgPath = obj.Pkg().Path()
-	}
-
-	return pkgPath + "|" + obj.FullName()
-}
-
 func (q *exprQuery) contractEvidenceText(
 	sym symbol,
 	contract guardContract,
@@ -213,11 +204,11 @@ func (q *exprQuery) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
 			return nil, "", false
 		}
 
-		return obj, funcObjectKey(obj), true
+		return obj, smellcheck.FuncObjectKey(obj), true
 	case *ast.SelectorExpr:
 		if sel := q.info.Selections[fun]; sel != nil {
 			if obj, ok := sel.Obj().(*types.Func); ok {
-				return obj, funcObjectKey(obj), true
+				return obj, smellcheck.FuncObjectKey(obj), true
 			}
 		}
 
@@ -226,7 +217,7 @@ func (q *exprQuery) calledFunc(call *ast.CallExpr) (*types.Func, string, bool) {
 			return nil, "", false
 		}
 
-		return obj, funcObjectKey(obj), true
+		return obj, smellcheck.FuncObjectKey(obj), true
 	default:
 		return nil, "", false
 	}

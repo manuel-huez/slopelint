@@ -4,6 +4,7 @@ import (
 	"go/types"
 	"sort"
 
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -38,7 +39,7 @@ func analysisCacheImportedFacts(
 		}
 
 		out = append(out, analysisCacheImportedFact{
-			FuncKey: funcObjectKey(fn),
+			FuncKey: smellcheck.FuncObjectKey(fn),
 			Present: true,
 			Fact:    *cloneCallSummaryFact(fact),
 		})

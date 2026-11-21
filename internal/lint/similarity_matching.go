@@ -552,7 +552,7 @@ func (match similarityMatch) issue(shift float64) Issue {
 	}
 
 	message := fmt.Sprintf(
-		"%s appears similar to %s at %s:%d (source %.3f/%.3f%s%s, structure %.3f, locality tier %d%s%s; id %s)",
+		"%s appears similar to %s at %s:%d (source %.3f/%.3f%s%s, structure %.3f, locality tier %d%s%s)",
 		match.Left.Symbol,
 		match.Right.Symbol,
 		match.Right.RelativePath,
@@ -569,7 +569,6 @@ func (match similarityMatch) issue(shift float64) Issue {
 		match.LocalityTier,
 		groupDetail,
 		behaviorDetail,
-		match.ID,
 	)
 
 	return Issue{
@@ -579,8 +578,8 @@ func (match similarityMatch) issue(shift float64) Issue {
 	}
 }
 
-func (match similarityMatch) acceptance() similarityAcceptance {
-	return similarityAcceptance{
+func (match similarityMatch) pair() similarityPair {
+	return similarityPair{
 		ID:        match.ID,
 		Left:      match.Left.Identity,
 		LeftHash:  match.Left.ContentHash,

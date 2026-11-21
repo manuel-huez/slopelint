@@ -164,7 +164,7 @@ func (q *pkgQuery) productionPackageFuncUseCounts() map[string]int {
 			}
 
 			if obj := funcObject(q.pkg.TypesInfo, expr); obj != nil {
-				counts[funcObjectKey(obj)]++
+				counts[FuncObjectKey(obj)]++
 			}
 
 			return true
@@ -206,7 +206,7 @@ func calledFunc(info *types.Info, call *ast.CallExpr) (*types.Func, string, bool
 		return nil, "", false
 	}
 
-	return obj, funcObjectKey(obj), true
+	return obj, FuncObjectKey(obj), true
 }
 
 func isBuiltinCall(info *types.Info, call *ast.CallExpr, name string) bool {
@@ -245,18 +245,17 @@ func funcObject(info *types.Info, expr ast.Expr) *types.Func {
 	}
 }
 
-func funcObjectKey(obj *types.Func) string {
-	origin := obj.Origin()
+// FuncObjectKey identifies a function across packages and type-checker
+// instances; generic instances map to their origin.
+func FuncObjectKey(obj *types.Func) string {
+	obj = obj.Origin()
 
-	var b strings.Builder
-	if pkg := origin.Pkg(); pkg != nil {
-		b.WriteString(pkg.Path())
+	pkgPath := ""
+	if obj.Pkg() != nil {
+		pkgPath = obj.Pkg().Path()
 	}
 
-	b.WriteByte('|')
-	b.WriteString(origin.FullName())
-
-	return b.String()
+	return pkgPath + "|" + obj.FullName()
 }
 
 func funcDeclObject(info *types.Info, fn *ast.FuncDecl) (*types.Func, bool) {

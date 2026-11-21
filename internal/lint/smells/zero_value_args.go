@@ -78,7 +78,7 @@ func (l zeroValueArgCheck) candidateFuncs() map[string]zeroValueArgFunc {
 		}
 
 		if params := zeroValueArgParams(l.pkg.TypesInfo, fn); len(params) != 0 {
-			out[funcObjectKey(obj)] = zeroValueArgFunc{fn: fn, params: params}
+			out[FuncObjectKey(obj)] = zeroValueArgFunc{fn: fn, params: params}
 		}
 	}
 
@@ -168,7 +168,7 @@ func countZeroValueArgFuncRef(
 		return
 	}
 
-	key := funcObjectKey(obj)
+	key := FuncObjectKey(obj)
 	if _, ok := funcs[key]; ok {
 		funcRefs[key]++
 	}

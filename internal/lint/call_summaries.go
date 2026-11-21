@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
 
 const (
@@ -106,7 +108,7 @@ func summarizableFuncs(pkg *LoadedPackage) []summarizableFunc {
 			out = append(out, summarizableFunc{
 				decl:        fn,
 				obj:         obj,
-				key:         funcObjectKey(obj),
+				key:         smellcheck.FuncObjectKey(obj),
 				bindings:    bindings,
 				resultCount: obj.Signature().Results().Len(),
 			})

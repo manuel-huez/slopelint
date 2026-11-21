@@ -33,12 +33,13 @@ type similarityStamp struct {
 	DescriptionEffort string  `json:"description_effort,omitempty"`
 	DescriptionDigest string  `json:"description_digest,omitempty"`
 	// Review attests that code review ran with this policy and found nothing.
-	Review        *codeReviewPolicy      `json:"review,omitempty"`
-	CheckedBlocks int                    `json:"checked_blocks"`
-	Accepted      []similarityAcceptance `json:"accepted,omitempty"`
+	Review        *codeReviewPolicy `json:"review,omitempty"`
+	CheckedBlocks int               `json:"checked_blocks"`
 }
 
-type similarityAcceptance struct {
+// similarityPair identifies a finding by both blocks and their content, so a
+// cached finding replays only while both are unchanged.
+type similarityPair struct {
 	ID        string `json:"id"`
 	Left      string `json:"left"`
 	LeftHash  string `json:"left_hash"`
@@ -235,7 +236,6 @@ func loadSimilarityStamp(root string) (similarityStamp, error) {
 func newSimilarityStamp(
 	sourceDigest string,
 	checkedBlocks int,
-	accepted []similarityAcceptance,
 	descriptionsEnabled bool,
 	descriptionDigest string,
 	opts SimilarityOptions,
@@ -246,7 +246,6 @@ func newSimilarityStamp(
 		Model:         opts.embeddingModel(),
 		Threshold:     opts.threshold(),
 		CheckedBlocks: checkedBlocks,
-		Accepted:      accepted,
 	}
 
 	if descriptionsEnabled {
@@ -486,32 +485,4 @@ func storeSimilarityVector(root, key string, vector []float32) error {
 
 func similarityVectorPath(root, key string) string {
 	return filepath.Join(root, "vectors", key[:2], key[2:]+".bin")
-}
-
-func carrySimilarityAcceptances(
-	stamp similarityStamp,
-	current map[string]string,
-) []similarityAcceptance {
-	if stamp.Schema == 0 {
-		return nil
-	}
-
-	out := make([]similarityAcceptance, 0, len(stamp.Accepted))
-	for _, accepted := range stamp.Accepted {
-		if current[accepted.Left] != accepted.LeftHash ||
-			current[accepted.Right] != accepted.RightHash {
-			continue
-		}
-
-		if accepted.ID != similarityPairID(
-			&similarityBlock{Identity: accepted.Left, ContentHash: accepted.LeftHash},
-			&similarityBlock{Identity: accepted.Right, ContentHash: accepted.RightHash},
-		) {
-			continue
-		}
-
-		out = append(out, accepted)
-	}
-
-	return out
 }

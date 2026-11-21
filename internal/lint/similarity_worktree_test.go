@@ -25,7 +25,7 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
 		embedder:     firstEmbedder,
-	}, nil)
+	}, nil, nil)
 
 	requireSingleSimilarityIssue(t, first, err)
 
@@ -43,7 +43,7 @@ func TestSimilarityScanCacheSharesLinkedWorktree(t *testing.T) {
 		CacheEnabled: true,
 		cacheDir:     cacheDir,
 		embedder:     linkedEmbedder,
-	}, nil)
+	}, nil, nil)
 
 	requireSingleSimilarityIssue(t, second, err)
 

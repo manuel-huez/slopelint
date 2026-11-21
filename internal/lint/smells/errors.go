@@ -7,6 +7,8 @@ import (
 	"go/types"
 	"slices"
 	"strings"
+
+	"github.com/manuel-huez/slopelint/internal/lint/astutil"
 )
 
 type errorCheck struct {
@@ -156,7 +158,7 @@ func errorEscapesScope(
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.FuncLit:
-			escapes = escapes || nodeUsesObject(node.Body, errObj, info)
+			escapes = escapes || astutil.UsesObject(node.Body, errObj, info)
 			return false
 		case *ast.UnaryExpr:
 			escapes = escapes || node.Op == token.AND && identObject(info, node.X) == errObj
@@ -204,7 +206,7 @@ func overwritesDroppedError(
 
 		return ok && slices.Contains(assign.Lhs, ast.Expr(first)) &&
 			!slices.ContainsFunc(assign.Rhs, func(rhs ast.Expr) bool {
-				return nodeUsesObject(rhs, errObj, info)
+				return astutil.UsesObject(rhs, errObj, info)
 			})
 	}
 

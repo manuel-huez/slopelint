@@ -19,12 +19,15 @@ func isErrorType(t types.Type) bool {
 	return errorType != nil && types.Identical(types.Unalias(t), errorType.Type())
 }
 
-func isIsPredicateName(name string) bool {
-	if strings.TrimPrefix(name, "Is") == name || len(name) == len("Is") {
+// IsPredicateName reports names such as IsReady: "Is" followed by an
+// uppercase letter, digit, or underscore.
+func IsPredicateName(name string) bool {
+	rest, ok := strings.CutPrefix(name, "Is")
+	if !ok || rest == "" {
 		return false
 	}
 
-	r, _ := utf8.DecodeRuneInString(name[len("Is"):])
+	r, _ := utf8.DecodeRuneInString(rest)
 
 	return r == '_' || unicode.IsUpper(r) || unicode.IsDigit(r)
 }

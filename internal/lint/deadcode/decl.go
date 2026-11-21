@@ -5,6 +5,8 @@ import (
 	"go/token"
 	"go/types"
 	"slices"
+
+	"github.com/manuel-huez/slopelint/internal/lint/astutil"
 )
 
 // declIndex adds each production declaration as a dead-code candidate or,
@@ -312,7 +314,7 @@ func (index declIndex) addValueSpec(
 	spec *ast.ValueSpec,
 	mode deadCodeMode,
 ) {
-	sideEffect := tok == token.VAR && slices.ContainsFunc(spec.Values, exprHasCalls)
+	sideEffect := tok == token.VAR && slices.ContainsFunc(spec.Values, astutil.HasCall)
 	rootSpec := false
 
 	for _, name := range spec.Names {

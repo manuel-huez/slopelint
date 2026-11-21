@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"go/types"
 	"maps"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -37,6 +39,9 @@ func LintRepository(
 		return nil, err
 	}
 
+	ignores := loadIgnores(scan.files())
+	ignores.complete = scan.complete(patterns, dir)
+
 	var (
 		issues        []Issue
 		candidates    chan []Issue
@@ -63,6 +68,7 @@ func LintRepository(
 				scan.scripts,
 				*similarity,
 				candidates,
+				ignores,
 			)
 		})
 	}
@@ -86,7 +92,11 @@ func LintRepository(
 		return nil, err
 	}
 
-	issues = append(issues, packageIssues...)
+	issues = append(issues, ignores.filter(packageIssues)...)
+	issues = append(issues, ignores.invalid...)
+	issues = append(issues, ignores.stale(func(rule string) bool {
+		return rule != similarityIssueKind
+	})...)
 	sortIssues(issues)
 
 	persistRepoAnalysisResult(patterns, dir, opts, similarity, issues)
@@ -101,6 +111,30 @@ type repoScan struct {
 	byImportPath map[string]*packageMeta
 	scriptRoot   string
 	scripts      []string
+}
+
+// files lists every scanned source file, test files included.
+func (scan repoScan) files() []string {
+	files := slices.Clone(scan.scripts)
+
+	for _, target := range scan.targets {
+		for _, name := range slices.Concat(target.GoFiles, target.CgoFiles) {
+			files = append(files, filepath.Join(target.Dir, name))
+		}
+	}
+
+	return files
+}
+
+// complete reports whether the scan covers the whole module, so an ignore no
+// finding uses is stale rather than outside the scan. Duplicate and
+// dead-code findings depend on what else is scanned.
+func (scan repoScan) complete(patterns []string, dir string) bool {
+	if len(patterns) > 0 && !slices.Equal(patterns, []string{allPackagesPattern}) {
+		return false
+	}
+
+	return len(scan.targets) == 0 || fileExists(filepath.Join(dir, "go.mod"))
 }
 
 func resolveRepoScan(patterns []string, dir string) (repoScan, error) {
@@ -653,7 +687,7 @@ func lintRepoPackage(
 			return callSummary{}, false
 		}
 
-		key := funcObjectKey(obj)
+		key := smellcheck.FuncObjectKey(obj)
 		summary, ok := summaries[key]
 
 		dependency := analysisCacheImportedFact{FuncKey: key, Present: ok}

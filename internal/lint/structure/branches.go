@@ -327,25 +327,3 @@ func switchClauseHasFallthrough(clause *ast.CaseClause) bool {
 
 	return ok && branch.Tok == token.FALLTHROUGH
 }
-
-func exprHasCalls(expr ast.Expr) bool {
-	hasCall := false
-
-	ast.Inspect(expr, func(n ast.Node) bool {
-		if hasCall {
-			return false
-		}
-
-		switch n.(type) {
-		case *ast.FuncLit:
-			return false
-		case *ast.CallExpr:
-			hasCall = true
-			return false
-		}
-
-		return true
-	})
-
-	return hasCall
-}

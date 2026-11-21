@@ -40,7 +40,7 @@ func (l forwarderCheck) checkFunc(fn *ast.FuncDecl, useCounts map[string]int) {
 		return
 	}
 
-	useCount := useCounts[funcObjectKey(obj)]
+	useCount := useCounts[FuncObjectKey(obj)]
 	reason := " at one production use"
 
 	switch {

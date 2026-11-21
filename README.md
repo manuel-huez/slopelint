@@ -62,7 +62,6 @@ A stale stamp fails CI: run slopelint locally and commit the new stamp.
 | `SLOPELINT_SIMILARITY_THRESHOLD` | Same-file source score gate, between 0 and 1; other gates move with it; default `0.970` |
 | `SLOPELINT_SIMILARITY` | `local`, `ci`, or `off` (no similarity or review); default `ci` when `CI`, `WORKERS_CI`, or `CF_PAGES` is set, else `local` |
 | `SLOPELINT_CODEX_DESCRIPTIONS` | `auto` or `off` (no Codex: no descriptions or review) |
-| `SLOPELINT_SIMILARITY_ACCEPT` | Reviewed `sim-...` pair IDs to accept, comma-separated, or `all` |
 | `SLOPELINT_CACHE` | `0` disables the cache in `os.UserCacheDir()/slopelint` |
 
 ## Embedding server
@@ -111,7 +110,7 @@ than the typed Go rules.
 
 | Rules | Finds | Go | TS | Py |
 | --- | --- | :-: | :-: | :-: |
-| `oversized_owner_file`, `long_function`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 40 statements (closures inside count; a switch counts one per case plus its longest case), over 6 params (TS and Python skip a function their file only passes as a callback), types or classes over 40 methods (Go also counts functions that take `*T` first) | ✅ | ✅ | ✅ |
+| `oversized_owner_file`, `long_function`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 40 statements (closures inside count; a switch counts one per case plus its longest case), over 6 params (TS and Python skip a function their file only passes as a callback), types or classes over 40 methods (Go also counts functions that take `*T` first and methods of package types only it embeds) | ✅ | ✅ | ✅ |
 | `long_result_list` | Over 3 results | ✅ | – | – |
 
 ### Tests
@@ -132,8 +131,8 @@ than the typed Go rules.
 The embedding server turns each function into a vector, and functions with
 close vectors in the same or a nearby package are reported. For Go, Codex
 (`gpt-6-luna`) also writes a short description of what each function does, and
-the descriptions are compared the same way. A match is a hint, not proof: fix
-it, or accept its pair ID with `SLOPELINT_SIMILARITY_ACCEPT`.
+the descriptions are compared the same way. A match is a hint, not proof: merge
+the code, or ignore the finding with the user's approval (see Directives).
 
 ### Model: code review
 
@@ -155,7 +154,8 @@ cached per declaration, so unchanged code causes no model calls.
 
 | Rules | Finds | Go | TS | Py |
 | --- | --- | :-: | :-: | :-: |
-| `invalid_contract`, `stale_complexity_suppression` | Malformed `ensures` directives, suppressions that no longer apply | ✅ | – | – |
+| `invalid_ignore`, `stale_ignore` | Malformed `slopelint:ignore` directives, ignores no finding uses | ✅ | ✅ | ✅ |
+| `invalid_contract`, `stale_complexity_suppression` | Malformed `ensures` directives, complexity `//nolint` that no longer applies | ✅ | – | – |
 | `parse_error` | Files the parser cannot read | – | ✅ | ✅ |
 
 ### Directives
@@ -166,8 +166,12 @@ cached per declaration, so unchanged code causes no model calls.
 //slopelint:ensures req != nil
 ```
 
-- `ignore behavior_clone` marks an intentional clone; code review judges the
-  reason.
+- `ignore <rule> -- <reason>` skips one finding: put it on the line above the
+  reported line (`#` in Python), or anywhere in the file for
+  `oversized_owner_file`. Agents add it only after the user approves; code
+  review judges the reason. Code review findings cannot be ignored.
+  `stale_ignore` reports an ignore that no finding uses, on full `./...` scans
+  from the module root.
 - `serial` goes in the doc comment of a test that cannot call `t.Parallel()`;
   code review judges the reason.
 - `ensures` states a helper's guarantee for its callers:

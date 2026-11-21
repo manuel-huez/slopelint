@@ -192,7 +192,6 @@ func repositoryCacheLocationForDir(dir string) (repositoryCacheLocation, error) 
 
 type repoAnalysisSimilarityFingerprint struct {
 	CI                bool              `json:"ci"`
-	AcceptedPairIDs   []string          `json:"accepted_pair_ids,omitempty"`
 	Schema            int               `json:"schema"`
 	Model             string            `json:"model"`
 	Threshold         float64           `json:"threshold"`
@@ -211,15 +210,11 @@ func repoAnalysisSimilarityKey(
 		return nil
 	}
 
-	accepted := append([]string(nil), opts.AcceptedPairIDs...)
-	sort.Strings(accepted)
-
 	fingerprint := &repoAnalysisSimilarityFingerprint{
-		CI:              opts.CI,
-		AcceptedPairIDs: accepted,
-		Schema:          similaritySchema,
-		Model:           opts.embeddingModel(),
-		Threshold:       opts.threshold(),
+		CI:        opts.CI,
+		Schema:    similaritySchema,
+		Model:     opts.embeddingModel(),
+		Threshold: opts.threshold(),
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv(codexEnv)))

@@ -66,7 +66,7 @@ func TestLlamaServerSimilarityIntegration(t *testing.T) {
 		SimilarityOptions{
 			CacheEnabled: true,
 			cacheDir:     t.TempDir(),
-		}, nil)
+		}, nil, nil)
 
 	requireSingleSimilarityIssue(t, issues, err)
 }

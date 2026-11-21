@@ -15,7 +15,6 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
@@ -23,13 +22,12 @@ import (
 
 const (
 	// Matching policy changes rescore findings without changing content-addressed vectors.
-	similaritySchema        = 14
+	similaritySchema        = 15
 	similarityMinimumBlocks = 2
 	// Immediate siblings and parent-child packages share refactor ownership.
 	// Deeper branches do not; skipping them bounds cold all-pairs work.
 	similarityMaximumLocalityTier = 2
 	similarityIssueKind           = "semantic_duplicate"
-	similarityAcceptAllID         = "all"
 
 	// Small functions produce common boilerplate matches already covered by structural rules.
 	similarityMinimumTokens = 50
@@ -73,15 +71,14 @@ const (
 // SimilarityOptions controls repo-wide semantic duplicate analysis. A zero
 // EmbeddingModel or Threshold selects the tuned default.
 type SimilarityOptions struct {
-	CI              bool
-	CacheEnabled    bool
-	cacheDir        string
-	AcceptedPairIDs []string
-	EmbeddingModel  string
-	Threshold       float64
-	embedder        similarityEmbedder
-	describer       similarityDescriber
-	reviewer        codeReviewer
+	CI             bool
+	CacheEnabled   bool
+	cacheDir       string
+	EmbeddingModel string
+	Threshold      float64
+	embedder       similarityEmbedder
+	describer      similarityDescriber
+	reviewer       codeReviewer
 }
 
 func (opts SimilarityOptions) embeddingModel() string {
@@ -169,12 +166,14 @@ const (
 // loaded packages, and code review for the script files. Local runs update
 // the stamp only when both are clean; CI runs only validate it. candidates
 // delivers dropped-error candidates from structural lint; nil means none.
+// ignores covers duplicates before the stamp decision.
 func checkSemanticCode(
 	ctx context.Context,
 	pkgs []*LoadedPackage,
 	scripts []string,
 	opts SimilarityOptions,
 	candidates <-chan []Issue,
+	ignores *ignoreSet,
 ) ([]Issue, error) {
 	if len(pkgs) == 0 {
 		return nil, nil
@@ -214,6 +213,10 @@ func checkSemanticCode(
 	)
 
 	issues, clean, err := checkSimilarCode(ctx, pkgs, check, runtime, opts)
+	issues = append(ignores.filter(issues), ignores.stale(func(rule string) bool {
+		return rule == similarityIssueKind
+	})...)
+
 	if err != nil {
 		cancel()
 	}
@@ -265,14 +268,16 @@ func checkSimilarCode(
 		if ok && cache.covers(opts, check.sourceDigest, runtime.enabled) {
 			findings, valid := cache.replayFindings(check.root)
 			if valid {
-				return acceptSimilarityFindings(
+				issues, stamp := similarityOutcome(
 					check,
 					cache.DescriptionDigest,
 					cache.Descriptions,
-					cache.Blocks,
+					len(cache.Blocks),
 					findings,
 					opts,
 				)
+
+				return issues, stamp, nil
 			}
 		}
 	}
@@ -363,14 +368,16 @@ func analyzeChangedSimilarCode(
 		}
 	}
 
-	return acceptSimilarityFindings(
+	issues, stamp := similarityOutcome(
 		check,
 		scan.descriptionDigest,
 		descriptionRuntime.enabled,
-		cachedBlocks,
+		len(cachedBlocks),
 		findings,
 		opts,
 	)
+
+	return issues, stamp, nil
 }
 
 func releaseSimilarityTypes(pkgs []*LoadedPackage) {
@@ -598,34 +605,28 @@ func incrementalSimilarityScanBlocks(
 	return selected
 }
 
-func acceptSimilarityFindings(
+// similarityOutcome returns the duplicate findings and the stamp to store if
+// none remain after ignores and code review.
+func similarityOutcome(
 	check similarityCheck,
 	descriptionDigest string,
 	descriptions bool,
-	blocks []similarityCachedBlock,
+	checkedBlocks int,
 	findings []similarityFinding,
 	opts SimilarityOptions,
-) ([]Issue, similarityStamp, error) {
-	acceptances, issues, err := reviewSimilarityFindings(
-		findings,
-		check.stamp,
-		similarityBlockHashes(blocks),
-		opts.AcceptedPairIDs,
-	)
-	if err != nil || len(issues) > 0 {
-		return issues, similarityStamp{}, err
+) ([]Issue, similarityStamp) {
+	issues := make([]Issue, len(findings))
+	for index, finding := range findings {
+		issues[index] = finding.issue
 	}
 
-	sort.Slice(acceptances, func(i, j int) bool { return acceptances[i].ID < acceptances[j].ID })
-
-	return nil, newSimilarityStamp(
+	return issues, newSimilarityStamp(
 		check.sourceDigest,
-		len(blocks),
-		acceptances,
+		checkedBlocks,
 		descriptions,
 		descriptionDigest,
 		opts,
-	), nil
+	)
 }
 
 func similarityFindingsForMatches(
@@ -637,68 +638,12 @@ func similarityFindingsForMatches(
 
 	for _, match := range matches {
 		findings = append(findings, similarityFinding{
-			acceptance: match.acceptance(),
-			issue:      match.issue(shift),
+			pair:  match.pair(),
+			issue: match.issue(shift),
 		})
 	}
 
 	return findings
-}
-
-func reviewSimilarityFindings(
-	findings []similarityFinding,
-	stamp similarityStamp,
-	blockHashes map[string]string,
-	requestedIDs []string,
-) ([]similarityAcceptance, []Issue, error) {
-	requested := make(map[string]struct{}, len(requestedIDs))
-	acceptAll := false
-
-	for _, id := range requestedIDs {
-		if id == similarityAcceptAllID {
-			acceptAll = true
-			continue
-		}
-
-		requested[id] = struct{}{}
-	}
-
-	current := make(map[string]similarityFinding, len(findings))
-	for _, finding := range findings {
-		current[finding.acceptance.ID] = finding
-	}
-
-	acceptances := carrySimilarityAcceptances(stamp, blockHashes)
-	carried := make(map[string]struct{}, len(acceptances))
-
-	for _, accepted := range acceptances {
-		carried[accepted.ID] = struct{}{}
-	}
-
-	for id := range requested {
-		_, currentFinding := current[id]
-
-		_, alreadyAccepted := carried[id]
-		if !currentFinding && !alreadyAccepted {
-			return nil, nil, fmt.Errorf("semantic similarity pair %q is not a current finding", id)
-		}
-	}
-
-	issues := make([]Issue, 0, len(findings))
-	for _, finding := range findings {
-		if _, ok := carried[finding.acceptance.ID]; ok {
-			continue
-		}
-
-		if _, ok := requested[finding.acceptance.ID]; ok || acceptAll {
-			acceptances = append(acceptances, finding.acceptance)
-			continue
-		}
-
-		issues = append(issues, finding.issue)
-	}
-
-	return acceptances, issues, nil
 }
 
 func collectSimilarityFileBlocks(

@@ -186,6 +186,8 @@ func runStandalone(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 
 	if len(issues) > 0 {
+		_, _ = fmt.Fprintln(stderr, lint.IgnoreHint)
+
 		return exitIssues
 	}
 
@@ -232,11 +234,10 @@ func similarityOptionsFromEnv(cacheActive bool) (*lint.SimilarityOptions, error)
 	}
 
 	return &lint.SimilarityOptions{
-		CI:              mode == similarityCI,
-		CacheEnabled:    cacheActive,
-		AcceptedPairIDs: similarityAcceptedPairIDs(),
-		EmbeddingModel:  strings.TrimSpace(os.Getenv("SLOPELINT_EMBEDDING_MODEL")),
-		Threshold:       threshold,
+		CI:             mode == similarityCI,
+		CacheEnabled:   cacheActive,
+		EmbeddingModel: strings.TrimSpace(os.Getenv("SLOPELINT_EMBEDDING_MODEL")),
+		Threshold:      threshold,
 	}, nil
 }
 
@@ -298,12 +299,6 @@ func similarityModeFromEnv() (similarityMode, error) {
 			value,
 		)
 	}
-}
-
-func similarityAcceptedPairIDs() []string {
-	return strings.FieldsFunc(os.Getenv("SLOPELINT_SIMILARITY_ACCEPT"), func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n'
-	})
 }
 
 type standaloneJSONIssue struct {

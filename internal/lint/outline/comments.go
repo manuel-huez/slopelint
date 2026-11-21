@@ -15,8 +15,16 @@ var suppressionPrefixes = map[Language][]string{
 		"eslint-disable",
 		"oxlint-disable",
 		"biome-ignore",
+		"slopelint:ignore",
 	},
-	Python: {"noqa", "type: ignore", "pylint: disable", "pyright: ignore", "pragma: no cover"},
+	Python: {
+		"noqa",
+		"type: ignore",
+		"pylint: disable",
+		"pyright: ignore",
+		"pragma: no cover",
+		"slopelint:ignore",
+	},
 }
 
 // directivePrefixes are tool instructions that are not prose: TypeScript

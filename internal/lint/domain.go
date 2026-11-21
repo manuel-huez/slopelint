@@ -10,7 +10,6 @@ import (
 	"maps"
 	"sort"
 	"strings"
-	"unicode"
 )
 
 type triState uint8
@@ -348,16 +347,4 @@ func isPointerLike(t types.Type) bool {
 	default:
 		return false
 	}
-}
-
-func isIsPredicateName(name string) bool {
-	if !strings.HasPrefix(name, "Is") || len(name) <= len("Is") {
-		return false
-	}
-
-	for _, ch := range name[len("Is"):] {
-		return ch == '_' || unicode.IsUpper(ch) || unicode.IsDigit(ch)
-	}
-
-	return false
 }

@@ -69,19 +69,3 @@ func (l *packageLinter) forEachProductionFunc(fn func(*ast.FuncDecl)) {
 		fn(decl)
 	}
 }
-
-func exprHasCalls(expr ast.Expr) bool {
-	hasCall := false
-
-	ast.Inspect(expr, func(n ast.Node) bool {
-		if _, ok := n.(*ast.CallExpr); ok {
-			hasCall = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return hasCall
-}

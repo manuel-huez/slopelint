@@ -630,12 +630,7 @@ func splitCodeReviewCandidates(issues []Issue) ([]Issue, []Issue) {
 			}
 		}
 
-		// Review matches candidates against the file itself, so it needs
-		// positions that ignore //line directives.
-		position := issuePosition(issue)
-		if issue.fset != nil {
-			position = issue.fset.PositionFor(issue.Pos, false)
-		}
+		position := issueFilePosition(issue)
 
 		key := position.Filename + "\x00" + strconv.Itoa(position.Offset)
 		if _, ok := seen[key]; ok {

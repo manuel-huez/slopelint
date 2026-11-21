@@ -305,7 +305,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
-	writeSimilarityTestSource(t, tmp)
+	writeFile(t, filepath.Join(tmp, similarityTestFilename), ignoredSimilarityTestSource)
 
 	describer := new(similarityTestDescriber)
 	embedder := &similarityTestEmbedder{vector: func(input string) []float32 {
@@ -320,14 +320,20 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		return []float32{0, 1}
 	}}
 	options := SimilarityOptions{
-		CacheEnabled:    true,
-		cacheDir:        cacheDir,
-		AcceptedPairIDs: []string{similarityAcceptAllID},
-		describer:       describer,
-		embedder:        embedder,
+		CacheEnabled: true,
+		cacheDir:     cacheDir,
+		describer:    describer,
+		embedder:     embedder,
 	}
 
-	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
+	issues, err := checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		options,
+		nil,
+		similarityTestIgnores(t, tmp),
+	)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "description calls", describer.calls, 2)
@@ -351,18 +357,31 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		t.Fatalf("enriched stamp = %#v", stamp)
 	}
 
-	options.AcceptedPairIDs = nil
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
+	issues, err = checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		options,
+		nil,
+		similarityTestIgnores(t, tmp),
+	)
 	requireNoSimilarityIssues(t, issues, err)
 
 	requireSimilarityCount(t, "hot description calls", describer.calls, 2)
 	requireSimilarityCount(t, "hot embedding batches", embedder.calls, 2)
 
 	// An old policy can omit a now-reportable pair. Rescore it from cached vectors
-	// and descriptions, preserving reviewed content-bound acceptances.
+	// and descriptions.
 	cacheRoot := storeSimilarityCacheWithOlderPolicy(t, cacheDir, tmp, stamp)
 
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
+	issues, err = checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		options,
+		nil,
+		similarityTestIgnores(t, tmp),
+	)
 	requireNoSimilarityIssues(t, issues, err)
 	requireSimilarityCount(t, "policy change description calls", describer.calls, 2)
 	requireSimilarityCount(t, "policy change embedding batches", embedder.calls, 2)
@@ -388,6 +407,7 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		nil,
 		withoutCodex,
 		nil,
+		similarityTestIgnores(t, tmp),
 	)
 	requireNoSimilarityIssues(t, issues, err)
 	t.Setenv(codexEnv, "auto")
@@ -402,11 +422,18 @@ func TestSimilarityDescriptionsEmbedAndStampThroughExistingLintPath(t *testing.T
 		t.Context(),
 		loadPackagesForTest(t, tmp),
 		nil,
-		SimilarityOptions{CI: true}, nil); err == nil {
+		SimilarityOptions{CI: true}, nil, similarityTestIgnores(t, tmp)); err == nil {
 		t.Fatal("CI accepted stale source attestation after rename")
 	}
 
-	issues, err = checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
+	issues, err = checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		options,
+		nil,
+		similarityTestIgnores(t, tmp),
+	)
 	requireSingleSimilarityIssue(t, issues, err)
 	requireSimilarityCount(t, "description requests after rename", describer.requests, 4)
 	requireSimilarityCount(t, "source embedding batches after rename", embedder.calls, 3)
@@ -436,12 +463,26 @@ func requireSimilaritySettingChanges(
 		env     string
 	}{{rescored, similarityThresholdEnv}, {otherModel, similarityEmbeddingModelEnv}} {
 		pkgs := loadPackagesForTest(t, tmp)
-		issues, err := checkSemanticCode(t.Context(), pkgs, nil, test.options, nil)
+		issues, err := checkSemanticCode(
+			t.Context(),
+			pkgs,
+			nil,
+			test.options,
+			nil,
+			similarityTestIgnores(t, tmp),
+		)
 		requireNoSimilarityIssues(t, issues, err)
 
 		pkgs = loadPackagesForTest(t, tmp)
 
-		_, err = checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{CI: true}, nil)
+		_, err = checkSemanticCode(
+			t.Context(),
+			pkgs,
+			nil,
+			SimilarityOptions{CI: true},
+			nil,
+			similarityTestIgnores(t, tmp),
+		)
 		if err == nil || !strings.Contains(err.Error(), test.env) {
 			t.Fatalf("CI error = %v, want %s", err, test.env)
 		}
@@ -454,7 +495,14 @@ func requireSimilaritySettingChanges(
 	}
 
 	// Restore the default scan cache that later rename checks reuse.
-	issues, err := checkSemanticCode(t.Context(), loadPackagesForTest(t, tmp), nil, options, nil)
+	issues, err := checkSemanticCode(
+		t.Context(),
+		loadPackagesForTest(t, tmp),
+		nil,
+		options,
+		nil,
+		similarityTestIgnores(t, tmp),
+	)
 	requireNoSimilarityIssues(t, issues, err)
 }
 
@@ -464,7 +512,7 @@ func TestSimilarityDescriptionsCoverAllBlocksIndependentlyOfSource(t *testing.T)
 
 	tmp := newTestModule(t)
 	cacheDir := t.TempDir()
-	writeFile(t, filepath.Join(tmp, similarityTestFilename), similarityTestSource+`
+	writeFile(t, filepath.Join(tmp, similarityTestFilename), ignoredSimilarityTestSource+`
 
 func third(values []int) int {
 	total := 7
@@ -502,13 +550,13 @@ func third(values []int) int {
 		loadPackagesForTest(t, tmp),
 		nil,
 		SimilarityOptions{
-			CacheEnabled:    true,
-			cacheDir:        cacheDir,
-			AcceptedPairIDs: []string{similarityAcceptAllID},
-			describer:       describer,
-			embedder:        embedder,
+			CacheEnabled: true,
+			cacheDir:     cacheDir,
+			describer:    describer,
+			embedder:     embedder,
 		},
 		nil,
+		similarityTestIgnores(t, tmp),
 	)
 
 	requireNoSimilarityIssues(t, issues, err)
@@ -545,6 +593,7 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 			embedder:     embedder,
 		},
 		nil,
+		nil,
 	)
 
 	requireNoSimilarityIssues(t, issues, err)
@@ -560,6 +609,7 @@ func TestSimilarityEnrichmentRescansUnchangedSourcePairs(t *testing.T) {
 			describer:    new(similarityTestDescriber),
 			embedder:     embedder,
 		},
+		nil,
 		nil,
 	)
 	if err != nil {
@@ -602,14 +652,14 @@ func TestSimilarityDescriptionStampPolicyTracksEnrichment(t *testing.T) {
 
 	var opts SimilarityOptions
 
-	enriched := newSimilarityStamp("source", 2, nil, true, digest, opts)
+	enriched := newSimilarityStamp("source", 2, true, digest, opts)
 	if !enriched.policyMatches(opts) || !enriched.covers(opts, "source", true, false) ||
 		!enriched.covers(opts, "source", false, false) ||
 		enriched.covers(opts, "source", true, true) {
 		t.Fatalf("enriched stamp = %#v", enriched)
 	}
 
-	sourceOnly := newSimilarityStamp("source", 2, nil, false, "", opts)
+	sourceOnly := newSimilarityStamp("source", 2, false, "", opts)
 	if !sourceOnly.policyMatches(opts) || !sourceOnly.covers(opts, "source", false, false) ||
 		sourceOnly.covers(opts, "source", true, false) {
 		t.Fatalf("source-only stamp = %#v", sourceOnly)
@@ -793,4 +843,18 @@ func TestSimilarityDescriptionsReuseRenames(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ignoredSimilarityTestSource ignores the duplicate reported at first, so a
+// run can stamp the source.
+const ignoredSimilarityTestSource = "package sample\n\n" +
+	"//slopelint:ignore semantic_duplicate -- test pair\n" + similarityTestSourceBody
+
+func similarityTestIgnores(t *testing.T, dir string) *ignoreSet {
+	t.Helper()
+
+	ignores := loadIgnores([]string{filepath.Join(dir, similarityTestFilename)})
+	ignores.complete = true
+
+	return ignores
 }

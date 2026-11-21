@@ -59,7 +59,7 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 				sortIssues(issues)
 				issues, _ = splitCodeReviewCandidates(issues)
 
-				return issues, nil
+				return analysisIgnores(pass).filter(issues), nil
 			}
 		}
 	} else if !errors.Is(err, errAnalysisCacheDisabled) {
@@ -92,7 +92,18 @@ func RunAnalysis(pass *analysis.Pass, opts Options) ([]Issue, error) {
 	// Vettool mode has no code review, so dropped-error candidates never report.
 	issues, _ := splitCodeReviewCandidates(l.sink.issues)
 
-	return issues, nil
+	return analysisIgnores(pass).filter(issues), nil
+}
+
+// analysisIgnores reads the package's directives. One package is never the
+// whole scan, so unused directives are not reported here.
+func analysisIgnores(pass *analysis.Pass) *ignoreSet {
+	files := make([]string, len(pass.Files))
+	for index, file := range pass.Files {
+		files[index] = pass.Fset.File(file.Pos()).Name()
+	}
+
+	return loadIgnores(files)
 }
 
 func callSummaryFactFromSummary(summary callSummary) *callSummaryFact {

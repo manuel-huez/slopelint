@@ -17,7 +17,7 @@ const (
 	similarityFileA           = "internal/a/a.go"
 )
 
-func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
+func TestSimilarityWithoutCacheWritesNoScanResult(t *testing.T) {
 	t.Setenv(codexEnv, offText)
 
 	tmp := newTestModule(t)
@@ -36,149 +36,10 @@ func TestSimilarityReportsThenRecordsAcceptedPair(t *testing.T) {
 	}
 
 	issues, err := checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
-		CacheEnabled: true,
-		cacheDir:     cacheDir,
-		embedder:     embedder,
-	}, nil)
-
-	firstIssue := requireSingleSimilarityIssue(t, issues, err)
-
-	if _, err := os.Stat(filepath.Join(tmp, similarityStampName)); !os.IsNotExist(err) {
-		t.Fatalf("stamp exists before review: %v", err)
-	}
-
-	cacheRoot, err := similarityVectorCacheRoot(cacheDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(
-		similarityScanCachePath(cacheRoot, tmp, false, sourceDigest),
-	); err != nil {
-		t.Fatalf("finding scan cache: %v", err)
-	}
-
-	pairID := similarityIssuePairID(t, firstIssue.Message)
-	cachedIssues, err := checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
-		CacheEnabled: true,
-		cacheDir:     cacheDir,
-		embedder:     embedder,
-	}, nil)
-
-	cachedIssue := requireSingleSimilarityIssue(t, cachedIssues, err)
-	if cachedIssue.Message != firstIssue.Message ||
-		FormatIssuePosition(cachedIssue) != FormatIssuePosition(firstIssue) {
-		t.Fatalf("cached issue = %#v, want exact replay", cachedIssue)
-	}
-
-	issues, err = checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
-		CacheEnabled:    true,
-		cacheDir:        cacheDir,
-		AcceptedPairIDs: []string{pairID},
-		embedder:        embedder,
-	}, nil)
-
-	requireNoSimilarityIssues(t, issues, err)
-	requireSimilarityCount(t, "cached acceptance embedding batches", embedder.calls, 1)
-
-	stamp, err := loadSimilarityStamp(tmp)
-	if err != nil || stamp.Schema == 0 {
-		t.Fatalf("load stamp: schema=%d err=%v", stamp.Schema, err)
-	}
-
-	if len(stamp.Accepted) != 1 || stamp.Accepted[0].ID != pairID {
-		t.Fatalf("accepted stamp = %#v", stamp.Accepted)
-	}
-}
-
-func TestSimilarityKeepsRepeatedAcceptedPair(t *testing.T) {
-	t.Setenv(codexEnv, offText)
-
-	tmp := newTestModule(t)
-	cacheDir := t.TempDir()
-	writeSimilarityTestSource(t, tmp)
-
-	embedder := &similarityTestEmbedder{vector: func(string) []float32 {
-		return []float32{1, 0}
-	}}
-
-	pkgs := loadPackagesForTest(t, tmp)
-
-	_, err := checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
-		CacheEnabled:    true,
-		cacheDir:        cacheDir,
-		AcceptedPairIDs: []string{similarityAcceptAllID},
-		embedder:        embedder,
-	}, nil)
-	if err != nil {
-		t.Fatalf("initial acceptance: %v", err)
-	}
-
-	stamp, err := loadSimilarityStamp(tmp)
-	if err != nil || len(stamp.Accepted) != 1 {
-		t.Fatalf("load accepted stamp: accepted=%d err=%v", len(stamp.Accepted), err)
-	}
-
-	writeFile(
-		t,
-		filepath.Join(tmp, similarityTestFilename),
-		similarityTestSource+"\n// unrelated change\n",
-	)
-	pkgs = loadPackagesForTest(t, tmp)
-
-	issues, err := checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
-		CacheEnabled:    true,
-		cacheDir:        cacheDir,
-		AcceptedPairIDs: []string{stamp.Accepted[0].ID},
-	}, nil)
-	if err != nil {
-		t.Fatalf("repeat accepted pair: %v", err)
-	}
-
-	if len(issues) != 0 {
-		t.Fatalf("repeat accepted issues: %v", issues)
-	}
-}
-
-func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
-	t.Setenv(codexEnv, offText)
-
-	tmp := newTestModule(t)
-	cacheDir := t.TempDir()
-	writeSimilarityTestSource(t, tmp)
-
-	embedder := &similarityTestEmbedder{vector: func(string) []float32 {
-		return []float32{1, 0}
-	}}
-
-	pkgs := loadPackagesForTest(t, tmp)
-
-	sourceDigest, err := similaritySourceDigest(pkgs, nil, tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	issues, err := checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
-		cacheDir:        cacheDir,
-		AcceptedPairIDs: []string{similarityAcceptAllID},
-		embedder:        embedder,
-	}, nil)
-	if err != nil {
-		t.Fatalf("accept all: %v", err)
-	}
-
-	if len(issues) != 0 {
-		t.Fatalf("issues: %v", issues)
-	}
-
-	stamp, err := loadSimilarityStamp(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(stamp.Accepted) != 1 {
-		t.Fatalf("accepted pairs = %d, want 1", len(stamp.Accepted))
-	}
+		cacheDir: cacheDir,
+		embedder: embedder,
+	}, nil, nil)
+	requireSingleSimilarityIssue(t, issues, err)
 
 	cacheRoot, err := similarityVectorCacheRoot(cacheDir)
 	if err != nil {
@@ -189,23 +50,6 @@ func TestSimilarityAcceptAllRecordsCurrentPairs(t *testing.T) {
 		similarityScanCachePath(cacheRoot, tmp, false, sourceDigest),
 	); !os.IsNotExist(err) {
 		t.Fatalf("cache-disabled scan result exists: %v", err)
-	}
-}
-
-func TestSimilarityRejectsUnknownAcceptance(t *testing.T) {
-	t.Setenv(codexEnv, offText)
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, similarityTestFilename), "package sample\n")
-
-	pkgs := loadPackagesForTest(t, tmp)
-
-	_, err := checkSemanticCode(t.Context(), pkgs, nil, SimilarityOptions{
-		AcceptedPairIDs: []string{"sim-unknown"},
-	}, nil)
-
-	if err == nil || !strings.Contains(err.Error(), "is not a current finding") {
-		t.Fatalf("unknown acceptance error = %v", err)
 	}
 }
 
@@ -659,7 +503,7 @@ func TestSimilarityScanCacheRejectsMismatchedFinding(t *testing.T) {
 			LocalityTier:    0,
 		}},
 		Findings: []similarityCachedFinding{{
-			Acceptance: similarityAcceptance{
+			Pair: similarityPair{
 				ID:        id,
 				Left:      left.Identity,
 				LeftHash:  left.ContentHash,
@@ -676,7 +520,7 @@ func TestSimilarityScanCacheRejectsMismatchedFinding(t *testing.T) {
 		t.Fatal("valid scan cache rejected")
 	}
 
-	cache.Findings[0].Acceptance.RightHash = left.ContentHash
+	cache.Findings[0].Pair.RightHash = left.ContentHash
 	if cache.valid() {
 		t.Fatal("mismatched finding hash accepted")
 	}
@@ -850,40 +694,6 @@ func similarityVectorMatrixForTest(
 	return similarityVectorMatrices{Source: matrix}
 }
 
-func TestSimilarityPolicyChangeKeepsContentBoundAcceptances(t *testing.T) {
-	t.Parallel()
-
-	left := &similarityBlock{Identity: "sample.go::first", ContentHash: "first"}
-	right := &similarityBlock{Identity: "sample.go::second", ContentHash: "second"}
-	stamp := newSimilarityStamp("source", 1, []similarityAcceptance{{
-		ID:        similarityPairID(left, right),
-		Left:      left.Identity,
-		LeftHash:  left.ContentHash,
-		Right:     right.Identity,
-		RightHash: right.ContentHash,
-	}}, false, "", SimilarityOptions{})
-	stamp.Schema--
-
-	got := carrySimilarityAcceptances(stamp, map[string]string{
-		left.Identity:  left.ContentHash,
-		right.Identity: right.ContentHash,
-	})
-	if len(got) != 1 || got[0].ID != stamp.Accepted[0].ID {
-		t.Fatalf("content-bound acceptances = %#v, want current pair", got)
-	}
-}
-
-func similarityIssuePairID(t *testing.T, message string) string {
-	t.Helper()
-
-	start := strings.LastIndex(message, "id ")
-	if start < 0 || !strings.HasSuffix(message, ")") {
-		t.Fatalf("finding has no pair id: %q", message)
-	}
-
-	return strings.TrimSuffix(message[start+3:], ")")
-}
-
 func requireSingleSimilarityIssue(t *testing.T, issues []Issue, err error) Issue {
 	t.Helper()
 
@@ -906,9 +716,9 @@ func writeSimilarityTestSource(t *testing.T, dir string) {
 
 const similarityTestFilename = "sample.go"
 
-const similarityTestSource = `package sample
+const similarityTestSource = "package sample\n\n" + similarityTestSourceBody
 
-func first(values []int) int {
+const similarityTestSourceBody = `func first(values []int) int {
 	total := 0
 	for index, value := range values {
 		if index%2 == 0 {

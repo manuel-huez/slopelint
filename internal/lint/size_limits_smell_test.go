@@ -129,14 +129,37 @@ func TestDetectsGodReceiver(t *testing.T) {
 	writeFile(t, filepath.Join(tmp, "big_more.go"), methodSource("", "b big[T]", "value", 19)+
 		"func moved[T any](b *big[T]) {}\nfunc byValue[T any](b big[T]) {}\n")
 
-	joined := joinMessages(lintInDir(t, tmp))
-	want := `type "big" has 41 methods across 2 files, counting functions that take a pointer to it first` +
-		sizeLimitDeleteFirst +
-		"split the rest by responsibility so each new type owns its own state; " +
-		"turning methods into functions that take the type is not a fix"
+	// Embedded package types add their methods; sync.Mutex, here behind an
+	// alias, is not counted.
+	writeFile(t, filepath.Join(tmp, "wide.go"), methodSource("", "w *wide", "own", 21)+
+		"\ntype wide struct{ part; mutex }\n")
+	writeFile(t, filepath.Join(tmp, "mutex.go"),
+		"package sample\n\nimport \"sync\"\n\ntype mutex = sync.Mutex\n")
+	writeFile(
+		t,
+		filepath.Join(tmp, "part.go"),
+		methodSource("", "p part", "part", 20)+"\ntype part struct{}\n",
+	)
 
-	if !strings.Contains(joined, want) {
-		t.Fatalf("expected %q, got:\n%s", want, joined)
+	// A helper embedded by two types is shared, so it adds to neither.
+	writeFile(t, filepath.Join(tmp, "shared.go"), methodSource("", "s shared", "shared", 20)+
+		"\ntype shared struct{}\ntype left struct{ shared }\ntype right struct{ shared }\n")
+	writeFile(t, filepath.Join(tmp, "sides.go"), methodSource("", "l left", "left", 21)+
+		methodSource("", "r right", "right", 21)[len("package sample\n\n"):])
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `type "left" has`) || strings.Contains(joined, `type "right" has`) {
+		t.Fatalf("shared embedded helper counted:\n%s", joined)
+	}
+
+	for _, want := range []string{
+		`type "big" has 41 methods across 2 files, counting functions that take a pointer to it first; list what each method is for`,
+		`type "wide" has 41 methods: 21 of its own across 1 files, counting functions that take a pointer to it first, and part 20 from embedded types; `,
+		"moving methods into an embedded type or into functions that take the type is not a fix",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q, got:\n%s", want, joined)
+		}
 	}
 }
 

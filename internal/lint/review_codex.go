@@ -29,7 +29,7 @@ Comment items are {comments}. They take one verdict:
 - excuse: justifies a shortcut, deferred work, a suppression, kept legacy or compatibility code, defensive code, or a test-only hook in production code, without naming a real constraint.
 - crutch: explains what unclear code does, where a rename or a small local restructure would make the comment unnecessary. A comment that documents a deliberate mutation, caller obligation, or performance tradeoff is keep. A comment that states {never}, is never restates. A comment that states what {returned} means, or what {absent} argument or another caller-visible parameter contract means when the signature does not show it, is restates only when a body of a few lines shows it directly; otherwise it is crutch when a rename would carry that meaning, with advice naming the rename, and keep when no name could.
 
-Suppression directives such as {suppressions} are always items, with or without a reason{reason}. A suppression is keep only when {justifier} shows a real constraint that justifies it, such as {justified}{test_justified}. A bare or weakly justified suppression is excuse; its advice says how to fix the code, or which constraint to name in the reason. When the code may no longer trigger the suppressed check, the advice says to delete the suppression if the check passes without it.
+Suppression directives such as {suppressions} are always items, with or without a reason{reason}. A suppression is keep only when {justifier} shows a real constraint that justifies it, such as {justified}{test_justified}. A bare or weakly justified suppression is excuse; its advice says how to fix the code, or which constraint to name in the reason. When the code may no longer trigger the suppressed check, the advice says to delete the suppression if the check passes without it. A slopelint:ignore reason must name the constraint that leaves no clean change, such as deleting, merging, simplifying, or moving code; a reason that only says what the code does, such as "rows are ordered before emission", is excuse.
 
 advice: empty for keep. Otherwise one concrete sentence of 6-30 words saying what to change in the code, naming identifiers: rename, restructure, or delete. Never suggest rewording a comment, except naming the constraint behind a bare suppression. Do not cite line numbers.
 
@@ -124,7 +124,7 @@ Serial advice: empty for serial_ok. Otherwise one concrete sentence of 6-30 word
 		"{public}",
 		"a declaration marked export, including the fields and public members of an exported class or interface",
 		"{suppressions}",
-		"// @ts-ignore, // @ts-expect-error, // @ts-nocheck, eslint-disable comments, oxlint-disable comments, and // biome-ignore",
+		"// @ts-ignore, // @ts-expect-error, // @ts-nocheck, eslint-disable comments, oxlint-disable comments, // biome-ignore, and // slopelint:ignore",
 		"{justified}",
 		"a @ts-expect-error over a named upstream type or library bug, a lint rule disabled where the code shows the flagged pattern is required, such as sequential awaits a rate limit or ordering needs, or a generated or vendored shape the code cannot change",
 		"{handlers}",
@@ -156,7 +156,7 @@ Serial advice: empty for serial_ok. Otherwise one concrete sentence of 6-30 word
 		"{public}",
 		"a module-level name without a leading underscore, including the fields and methods without a leading underscore of such a class",
 		"{suppressions}",
-		"# noqa, # type: ignore, # pylint: disable, # pyright: ignore, and # pragma: no cover",
+		"# noqa, # type: ignore, # pylint: disable, # pyright: ignore, # pragma: no cover, and # slopelint:ignore",
 		"{justified}",
 		"an unused-import noqa on an import that __init__.py re-exports or that only probes whether an optional package is installed, an import-position noqa (E402) on imports that must follow the sys.path change or setup code above them, a type: ignore over a named third-party package without type stubs or a named stub bug, a line-length noqa over a literal such as a URL, SQL, or message that cannot be split, or a no-cover pragma on a platform branch or an abstract stub",
 		"{handlers}",

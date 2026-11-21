@@ -54,10 +54,6 @@ func (b behaviorPackage) functionBehaviorCandidatesFrom(
 			continue
 		}
 
-		if b.behaviorCloneSuppressed(function.syntax) {
-			continue
-		}
-
 		if behaviorInterfaceForwarder(b.pkg.TypesInfo, function, analysis.interfaces) {
 			continue
 		}
@@ -151,7 +147,7 @@ func buildBehaviorSSAAnalysis(pkgs []*Package) *behaviorSSAAnalysis {
 
 		for _, root := range roots {
 			if root.obj != nil {
-				analysis.objectTargets[funcObjectKey(root.obj)] = root.fn
+				analysis.objectTargets[FuncObjectKey(root.obj)] = root.fn
 			}
 		}
 	}
@@ -170,7 +166,7 @@ func buildBehaviorSSAAnalysis(pkgs []*Package) *behaviorSSAAnalysis {
 			}
 
 			if obj, ok := callee.Object().(*types.Func); ok {
-				if target := analysis.objectTargets[funcObjectKey(obj)]; target != nil {
+				if target := analysis.objectTargets[FuncObjectKey(obj)]; target != nil {
 					analysis.aliases[callee] = target
 				}
 			}
@@ -887,7 +883,7 @@ func (e *behaviorSSAEncoder) callSummary(call *ssa.CallCommon) (behaviorSummary,
 	}
 
 	if call.IsInvoke() && call.Method != nil {
-		if target := e.objectTargets[funcObjectKey(call.Method)]; target != nil {
+		if target := e.objectTargets[FuncObjectKey(call.Method)]; target != nil {
 			return e.functionSummary(target)
 		}
 	}

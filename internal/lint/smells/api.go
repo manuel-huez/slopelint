@@ -2,11 +2,13 @@ package smells
 
 import (
 	"fmt"
-	"github.com/manuel-huez/slopelint/internal/lint/outline"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"strconv"
+
+	"github.com/manuel-huez/slopelint/internal/lint/astutil"
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 // apiCheck reports overbuilt function signatures: predicate names without
@@ -20,7 +22,7 @@ func (l apiCheck) checkPredicateSignatures() {
 	for _, file := range l.pkg.Files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || !isIsPredicateName(fn.Name.Name) {
+			if !ok || !IsPredicateName(fn.Name.Name) {
 				continue
 			}
 
@@ -120,7 +122,7 @@ func (l apiCheck) privateBoolModeParams() map[string][]boolModeParam {
 		}
 
 		if params := boolModeParams(l.pkg.TypesInfo, fn.Type.Params); len(params) != 0 {
-			out[funcObjectKey(obj)] = params
+			out[FuncObjectKey(obj)] = params
 		}
 	}
 
@@ -253,7 +255,7 @@ func (l apiCheck) checkUnusedPrivateParams() {
 				}
 
 				obj := l.pkg.TypesInfo.ObjectOf(name)
-				if obj == nil || nodeUsesObject(fn.Body, obj, l.pkg.TypesInfo) {
+				if obj == nil || astutil.UsesObject(fn.Body, obj, l.pkg.TypesInfo) {
 					continue
 				}
 
@@ -269,24 +271,4 @@ func (l apiCheck) checkUnusedPrivateParams() {
 			}
 		}
 	}
-}
-
-func nodeUsesObject(node ast.Node, target types.Object, info *types.Info) bool {
-	used := false
-
-	ast.Inspect(node, func(node ast.Node) bool {
-		if used {
-			return false
-		}
-
-		ident, ok := node.(*ast.Ident)
-		if ok && info.ObjectOf(ident) == target {
-			used = true
-			return false
-		}
-
-		return true
-	})
-
-	return used
 }

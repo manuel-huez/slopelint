@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+
+	"github.com/manuel-huez/slopelint/internal/lint/astutil"
 )
 
 const builtinLenName = "len"
@@ -175,7 +177,8 @@ func (r collectionRules) assignAppendsGuardedSlice(assign *ast.AssignStmt, sourc
 		return false
 	}
 
-	if exprHasCalls(assign.Lhs[0]) || exprHasCalls(call.Args[0]) || exprHasCalls(call.Args[1]) {
+	if astutil.HasCall(assign.Lhs[0]) || astutil.HasCall(call.Args[0]) ||
+		astutil.HasCall(call.Args[1]) {
 		return false
 	}
 

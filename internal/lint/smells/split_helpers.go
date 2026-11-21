@@ -23,7 +23,7 @@ func (l splitHelperCheck) check() {
 	helpers := make(map[*types.Func]*ast.FuncDecl)
 
 	l.forEachHandwrittenProductionFunc(func(fn *ast.FuncDecl) {
-		if obj, ok := privateFuncObject(info, fn); ok && useCounts[funcObjectKey(obj)] == 1 {
+		if obj, ok := privateFuncObject(info, fn); ok && useCounts[FuncObjectKey(obj)] == 1 {
 			helpers[obj.Origin()] = fn
 		}
 	})

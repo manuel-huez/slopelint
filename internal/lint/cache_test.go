@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -710,7 +711,7 @@ func newAnalysisTestPass(
 				return false
 			}
 
-			cached := imported[funcObjectKey(fn)]
+			cached := imported[smellcheck.FuncObjectKey(fn)]
 
 			dst, ok := fact.(*callSummaryFact)
 			if !ok || cached == nil {
@@ -732,7 +733,7 @@ func newAnalysisTestPass(
 				return
 			}
 
-			state.exported[funcObjectKey(fn)] = cloneCallSummaryFact(summary)
+			state.exported[smellcheck.FuncObjectKey(fn)] = cloneCallSummaryFact(summary)
 		},
 		AllObjectFacts: func() []analysis.ObjectFact {
 			if len(imported) == 0 {
@@ -802,7 +803,7 @@ func recordImportedFunc(
 		return
 	}
 
-	key := funcObjectKey(fn)
+	key := smellcheck.FuncObjectKey(fn)
 	if imported[key] == nil {
 		return
 	}

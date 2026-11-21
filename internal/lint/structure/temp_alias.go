@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/manuel-huez/slopelint/internal/lint/astutil"
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
@@ -51,7 +52,7 @@ func (r tempAliasRules) singleUseAt(stmts []ast.Stmt, idx int) (Finding, bool) {
 	}
 
 	for _, later := range stmts[idx+2:] {
-		if nodeUsesObject(later, decl.obj, info) {
+		if astutil.UsesObject(later, decl.obj, info) {
 			return Finding{}, false
 		}
 	}
@@ -236,7 +237,7 @@ func summarizeObjectUse(info *types.Info, node ast.Node, target types.Object) ob
 	inspectWithAncestors(node, func(n ast.Node, ancestors []ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
-			if nodeUsesObject(n.Body, target, info) {
+			if astutil.UsesObject(n.Body, target, info) {
 				out.unsafe = true
 			}
 
@@ -299,27 +300,6 @@ func inspectWithAncestors(node ast.Node, fn func(ast.Node, []ast.Node) bool) {
 
 		return keep
 	})
-}
-
-func nodeUsesObject(node ast.Node, target types.Object, info *types.Info) bool {
-	found := false
-
-	ast.Inspect(node, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-
-		ident, ok := n.(*ast.Ident)
-		if !ok {
-			return true
-		}
-
-		found = info.ObjectOf(ident) == target
-
-		return !found
-	})
-
-	return found
 }
 
 func nodeContainedInExprList(target ast.Node, exprs []ast.Expr) bool {

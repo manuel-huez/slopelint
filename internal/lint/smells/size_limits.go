@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/manuel-huez/slopelint/internal/lint/outline"
@@ -86,11 +88,38 @@ func godReceiverFindings(
 	methods map[string]int,
 	methodFiles map[string]map[int]struct{},
 ) []OutlineFinding {
+	// A type embedded by several types is a shared helper, not part of one
+	// type split up, so only types with a single embedder add methods.
+	embeds := make(map[string][]string)
+	embedders := make(map[string]int)
+
+	for _, file := range files {
+		for _, typ := range file.Types {
+			embeds[typ.Name] = typ.Embeds
+			for _, embedded := range typ.Embeds {
+				embedders[embedded]++
+			}
+		}
+	}
+
+	for name, embedded := range embeds {
+		embeds[name] = slices.DeleteFunc(slices.Clone(embedded), func(embedded string) bool {
+			return embedders[embedded] > 1
+		})
+	}
+
 	var findings []OutlineFinding
 
 	for index, file := range files {
 		for _, typ := range file.Types {
-			if file.Test || methods[typ.Name] <= typeMethodLimit {
+			own := methods[typ.Name]
+			total, embedded := own, promotedFrom(typ.Name, embeds, methods, map[string]bool{})
+
+			for _, count := range embedded {
+				total += count
+			}
+
+			if file.Test || total <= typeMethodLimit {
 				continue
 			}
 
@@ -98,17 +127,72 @@ func godReceiverFindings(
 				File: index,
 				Pos:  typ.Pos,
 				Kind: "god_receiver",
-				Message: fmt.Sprintf(
-					"type %q has %d methods across %d files, counting functions that take a pointer to it first; "+sizeLimitDeleteFirst+", then split the rest by responsibility so each new type owns its own state; turning methods into functions that take the type is not a fix",
+				Message: godReceiverMessage(
 					typ.Name,
-					methods[typ.Name],
+					own,
+					total,
 					len(methodFiles[typ.Name]),
+					embedded,
 				),
 			})
 		}
 	}
 
 	return findings
+}
+
+// promotedFrom counts the methods each embedded type adds to name, nested
+// embeds included. seen stops pointer-embedding cycles.
+func promotedFrom(
+	name string,
+	embeds map[string][]string,
+	methods map[string]int,
+	seen map[string]bool,
+) map[string]int {
+	seen[name] = true
+	counts := make(map[string]int)
+
+	for _, embedded := range embeds[name] {
+		if seen[embedded] {
+			continue
+		}
+
+		counts[embedded] += methods[embedded]
+		for nested, count := range promotedFrom(embedded, embeds, methods, seen) {
+			counts[nested] += count
+		}
+	}
+
+	return counts
+}
+
+func godReceiverMessage(name string, own, total, fileCount int, embedded map[string]int) string {
+	source := fmt.Sprintf(
+		"%d methods across %d files, counting functions that take a pointer to it first",
+		total,
+		fileCount,
+	)
+
+	if len(embedded) > 0 {
+		parts := make([]string, 0, len(embedded))
+		for _, embed := range slices.Sorted(maps.Keys(embedded)) {
+			parts = append(parts, fmt.Sprintf("%s %d", embed, embedded[embed]))
+		}
+
+		source = fmt.Sprintf(
+			"%d methods: %d of its own across %d files, counting functions that take a pointer to it first, and %s from embedded types",
+			total,
+			own,
+			fileCount,
+			strings.Join(parts, ", "),
+		)
+	}
+
+	return fmt.Sprintf(
+		"type %q has %s; list what each method is for and who calls it, delete what nothing needs, simplify methods more complex than their job, merge methods that differ without need into one, move methods another type owns, then split the rest by responsibility so each new type owns its own state; moving methods into an embedded type or into functions that take the type is not a fix",
+		name,
+		source,
+	)
 }
 
 func funcOutlineFindings(fn outline.Func) []OutlineFinding {
@@ -246,8 +330,9 @@ func (l sizeLimitCheck) outlineDecls(file *ast.File, out *outline.File) {
 			for _, spec := range decl.Specs {
 				if spec, ok := spec.(*ast.TypeSpec); ok {
 					out.Types = append(out.Types, outline.Type{
-						Name: spec.Name.Name,
-						Pos:  l.outlinePos(spec.Name.Pos()),
+						Name:   spec.Name.Name,
+						Pos:    l.outlinePos(spec.Name.Pos()),
+						Embeds: l.embeddedTypes(spec),
 					})
 				}
 			}
@@ -257,6 +342,34 @@ func (l sizeLimitCheck) outlineDecls(file *ast.File, out *outline.File) {
 			}
 		}
 	}
+}
+
+// embeddedTypes names the package types a struct embeds. Their methods are
+// promoted, so moving methods into a type only it embeds does not shrink it.
+func (l sizeLimitCheck) embeddedTypes(spec *ast.TypeSpec) []string {
+	st, ok := spec.Type.(*ast.StructType)
+	if !ok {
+		return nil
+	}
+
+	var names []string
+
+	for _, field := range st.Fields.List {
+		if len(field.Names) > 0 {
+			continue
+		}
+
+		typ := types.Unalias(l.pkg.TypesInfo.TypeOf(field.Type))
+		if ptr, ok := typ.(*types.Pointer); ok {
+			typ = types.Unalias(ptr.Elem())
+		}
+
+		if named, ok := typ.(*types.Named); ok && named.Obj().Pkg() == l.pkg.TypesPkg {
+			names = append(names, named.Origin().Obj().Name())
+		}
+	}
+
+	return names
 }
 
 func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {

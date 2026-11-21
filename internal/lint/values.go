@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/types"
 	"strings"
+
+	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
 
 func (q *exprQuery) symbolScalar(symExpr, scalarExpr ast.Expr) (symbol, scalar, bool) {
@@ -110,7 +112,7 @@ func (q *exprQuery) predicateCallSymbolOf(expr ast.Expr) (symbol, bool) {
 	}
 
 	obj, key, ok := q.calledFunc(call)
-	if !ok || !isIsPredicateName(obj.Name()) {
+	if !ok || !smellcheck.IsPredicateName(obj.Name()) {
 		return symbol{}, false
 	}
 

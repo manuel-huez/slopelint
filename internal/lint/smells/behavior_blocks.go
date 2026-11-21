@@ -55,10 +55,6 @@ func (b behaviorPackage) blockBehaviorCandidates() []behaviorCandidate {
 }
 
 func (b behaviorPackage) behaviorStmtLists(fn *ast.FuncDecl) []behaviorStmtList {
-	if b.behaviorCloneSuppressed(fn) {
-		return nil
-	}
-
 	owner := fn.Name.Name
 	typeKeys := &behaviorTypeEncoder{
 		params:   make(map[*types.TypeParam]string),
@@ -145,10 +141,6 @@ func (b behaviorPackage) behaviorWindowCandidates(list behaviorStmtList) []behav
 	for window := behaviorMinBlockStatements; window <= maxWindow; window++ {
 		for start := 0; start+window <= len(list.stmts); start++ {
 			stmts := list.stmts[start : start+window]
-			if b.behaviorCloneSuppressedStatements(list.stmts, start, start+window) {
-				continue
-			}
-
 			if candidate, ok := b.blockBehaviorCandidate(
 				list.owner,
 				list.bindings,
@@ -174,10 +166,6 @@ func (b behaviorPackage) behaviorStructuredCandidates(list behaviorStmtList) []b
 		}
 
 		if !behaviorStructuredStmt(stmt) || behaviorNodeCount(stmt) < minimumNodes {
-			continue
-		}
-
-		if b.behaviorCloneSuppressedStatements(list.stmts, idx, idx+1) {
 			continue
 		}
 
@@ -424,7 +412,7 @@ func (b behaviorPackage) behaviorCanonicalObjectKey(
 	case *types.PkgName:
 		return "package:" + obj.Imported().Path(), true
 	case *types.Func:
-		if summary, ok := b.calls[funcObjectKey(obj)]; ok {
+		if summary, ok := b.calls[FuncObjectKey(obj)]; ok {
 			return "function-behavior:" + summary.digest, true
 		}
 
@@ -538,7 +526,7 @@ func (b behaviorPackage) callBehaviorEffects(call *ast.CallExpr) behaviorEffects
 	}
 
 	if fn, _, ok := calledFunc(b.pkg.TypesInfo, call); ok {
-		if summary, exists := b.calls[funcObjectKey(fn)]; exists {
+		if summary, exists := b.calls[FuncObjectKey(fn)]; exists {
 			return behaviorEffectCall | summary.effects
 		}
 	}

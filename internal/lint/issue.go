@@ -47,6 +47,16 @@ func issuePosition(issue Issue) token.Position {
 	return issue.fset.Position(issue.Pos)
 }
 
+// issueFilePosition ignores //line directives, so it matches positions read
+// from the file itself.
+func issueFilePosition(issue Issue) token.Position {
+	if issue.fset != nil {
+		return issue.fset.PositionFor(issue.Pos, false)
+	}
+
+	return issuePosition(issue)
+}
+
 // FormatIssuePosition returns a stable source position for an issue.
 func FormatIssuePosition(issue Issue) string {
 	position := issuePosition(issue)

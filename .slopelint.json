@@ -1,13 +1,13 @@
 {
-  "schema": 14,
-  "source_digest": "d61795da3d92cc007363106c970efc34aad4af3507dc31f059b586abe622df28",
-  "repository_digest": "b7f3b52d329509b119062ab5b0ea9e426c2e249ba11134e0548c2f189e44839d",
+  "schema": 15,
+  "source_digest": "59f53f1b41759e046c592b7ee69410cb2937f54be590ea24cee85b29fd2c5893",
+  "repository_digest": "362249c55179cd942d61f7b42a6508cb7ae0debbfc9d0eebcd9603a7ed295043",
   "model": "jina-embeddings-v2-base-code",
   "threshold": 0.97,
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "c09b4c4f605feff8ddbbcbe42d648d4602e32654204ef08dc8737c005403bf09",
+  "description_digest": "0353ea4f89870420b00f91690df20e912fed2270cb4a4131b9b90aca4337a327",
   "review": {
     "go": 3,
     "typescript": 3,
@@ -19,35 +19,5 @@
     "model": "gpt-6.1-terra",
     "effort": "low"
   },
-  "checked_blocks": 1948,
-  "accepted": [
-    {
-      "id": "sim-033a373bab1f0612",
-      "left": "internal/lint/smells/api.go::nodeUsesObject",
-      "left_hash": "f65871ef6b5f43c8845472dfa9c562e604fc513862708658c3a88cebb3ed68d7",
-      "right": "internal/lint/structure/temp_alias.go::nodeUsesObject",
-      "right_hash": "065c95b34816e8762541945f0c7323120b0ba93c818d28936240361a11fcea89"
-    },
-    {
-      "id": "sim-2b3914356db95894",
-      "left": "internal/lint/deadcode/package.go::exprHasCalls",
-      "left_hash": "1f542ea63bd7d7dbd4d5f27765bb93d3e8395d908e9a9e2e05b20f1a77dc1ebf",
-      "right": "internal/lint/structure/branches.go::exprHasCalls",
-      "right_hash": "f0027126eee9ab36f62b34cf876eeeb6dd0d6e417b265aef8a4c46f2b37972d8"
-    },
-    {
-      "id": "sim-bdd2437aef77b411",
-      "left": "internal/lint/contracts.go::funcObjectKey",
-      "left_hash": "a4acea715f2bbd6ee1cc27548b370db976b513c6983457b343648673b87aec1c",
-      "right": "internal/lint/smells/runner.go::funcObjectKey",
-      "right_hash": "fa54866cdf40935cb5d3f2f1ddabd2431a8543132441a63e793c411964ecbae5"
-    },
-    {
-      "id": "sim-f7a499c48164d34e",
-      "left": "internal/lint/domain.go::isIsPredicateName",
-      "left_hash": "6373c2d55b02013d344a9edf692bf4af0a7f53293869881b79893580b315a46d",
-      "right": "internal/lint/smells/names.go::isIsPredicateName",
-      "right_hash": "6e9a888cc615912f9699fd450a6267b046d8628410b36c6a565c79f49c456644"
-    }
-  ]
+  "checked_blocks": 1947
 }

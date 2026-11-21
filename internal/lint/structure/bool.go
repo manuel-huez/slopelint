@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+
+	"github.com/manuel-huez/slopelint/internal/lint/astutil"
 )
 
 // boolBranchAction is a branch that only returns or assigns a bool literal.
@@ -104,7 +106,7 @@ func (r boolRules) branchAction(stmts []ast.Stmt) (boolBranchAction, bool) {
 		return boolBranchAction{value: value}, ok
 	case *ast.AssignStmt:
 		if stmt.Tok != token.ASSIGN || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 ||
-			exprHasCalls(stmt.Lhs[0]) {
+			astutil.HasCall(stmt.Lhs[0]) {
 			return boolBranchAction{}, false
 		}
 

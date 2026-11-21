@@ -35,8 +35,8 @@ merge, inline, or rename. Choose one surviving implementation.
   helper unless behavior differs materially or readability clearly improves.
 - Do not append to an owner file that is too large for whole-file reasoning.
   Split only when responsibility or whole-file readability improves, never
-  mechanically or to avoid the owner. Ask before a new package, cache policy,
-  persisted format, or non-obvious design split.
+  mechanically or to avoid the owner. Ask before a new cache policy, persisted
+  format, or non-obvious design split.
 - No speculative hooks, interfaces, option structs, flags, or extension points.
   Refactors must keep or reduce entrypoints, flags, and code paths unless user
   requests new surface.

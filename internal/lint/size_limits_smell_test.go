@@ -161,7 +161,15 @@ func TestDetectsGodReceiver(t *testing.T) {
 			methodSource("", "o objects", "object", 12)[len("package sample\n\n"):],
 	)
 
+	// A chain of parts is reported once, at its outermost type.
+	writeFile(t, filepath.Join(tmp, "chain.go"), methodSource("", "i inner", "inner", 45)+
+		"\ntype inner struct{}\ntype outer struct{ inner }\n")
+
 	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `type "inner" has`) {
+		t.Fatalf("part of a chain reported on its own:\n%s", joined)
+	}
+
 	if strings.Contains(joined, `type "left" has`) || strings.Contains(joined, `type "right" has`) {
 		t.Fatalf("shared embedded helper counted:\n%s", joined)
 	}
@@ -169,6 +177,7 @@ func TestDetectsGodReceiver(t *testing.T) {
 	for _, want := range []string{
 		`type "big" has 41 methods in 2 files`,
 		`type "wide" has 41 methods: 21 of its own in 1 file, plus those from part (20)`,
+		`type "outer" has 45 methods, all from inner (45)`,
 		`type "client" has 41 methods: 5 of its own in 1 file, plus those from catalog (12), objects (12), request (12)`,
 	} {
 		if !strings.Contains(joined, want) {

@@ -11,7 +11,7 @@ import (
 
 // TestGodReceiverCountsSameFileBaseClasses checks that a class split into a
 // base only it extends still counts as one class, while a base two classes
-// extend is shared and counts for neither.
+// extend is shared and counts for neither. Imported bases add nothing.
 func TestGodReceiverCountsSameFileBaseClasses(t *testing.T) {
 	t.Parallel()
 
@@ -31,7 +31,7 @@ func TestGodReceiverCountsSameFileBaseClasses(t *testing.T) {
 			"class Left extends Mixin {\n" + methods("  left%d() {}\n", 21) + "}\n" +
 			"class Right extends Mixin {\n" + methods("  right%d() {}\n", 21) + "}\n"},
 		{"store.py", "class Base:\n" + methods("    def base%d(self): pass\n", 20) +
-			"class Store(Base, mod.Other):\n" + methods("    def own%d(self): pass\n", 21) +
+			"from mod import Imported\nclass Store(Base, Imported, mod.Other):\n" + methods("    def own%d(self): pass\n", 21) +
 			"class Mixin:\n" + methods("    def mix%d(self): pass\n", 20) +
 			"class Left(Mixin):\n" + methods("    def left%d(self): pass\n", 21) +
 			"class Right(Mixin):\n" + methods("    def right%d(self): pass\n", 21)},

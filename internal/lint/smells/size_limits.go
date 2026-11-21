@@ -102,19 +102,31 @@ func godReceiverFindings(
 		}
 	}
 
+	// A part counted inside another type is reported with that type, so a
+	// chain of embedded parts yields one finding at its outermost type.
+	promoted := make(map[string]map[string]int)
+	counted := make(map[string]bool)
+
+	for name := range graph.embeds {
+		promoted[name] = graph.promoted(name)
+		for part := range promoted[name] {
+			counted[part] = true
+		}
+	}
+
 	var findings []OutlineFinding
 
 	for index, file := range files {
 		for _, typ := range file.Types {
 			own := methods[typ.Name]
-			embedded := graph.promoted(typ.Name)
+			embedded := promoted[typ.Name]
 
 			total := own
 			for _, count := range embedded {
 				total += count
 			}
 
-			if file.Test || total <= typeMethodLimit {
+			if file.Test || counted[typ.Name] || total <= typeMethodLimit {
 				continue
 			}
 
@@ -174,7 +186,9 @@ func (g typeGraph) promoted(name string) map[string]int {
 			shared := slices.ContainsFunc(g.embedders[embedded], func(embedder string) bool {
 				return !parts[embedder]
 			})
-			if seen[embedded] || shared {
+			// Script bases may be imported; only declared types count.
+			_, declared := g.embeds[embedded]
+			if seen[embedded] || shared || !declared {
 				continue
 			}
 
@@ -193,13 +207,25 @@ func godReceiverMessage(name string, own, total, fileCount int, embedded map[str
 		files = "1 file"
 	}
 
-	if len(embedded) == 0 {
+	var parts []string
+
+	for _, embed := range slices.Sorted(maps.Keys(embedded)) {
+		if embedded[embed] > 0 {
+			parts = append(parts, fmt.Sprintf("%s (%d)", embed, embedded[embed]))
+		}
+	}
+
+	if len(parts) == 0 {
 		return fmt.Sprintf("type %q has %d methods in %s", name, total, files)
 	}
 
-	parts := make([]string, 0, len(embedded))
-	for _, embed := range slices.Sorted(maps.Keys(embedded)) {
-		parts = append(parts, fmt.Sprintf("%s (%d)", embed, embedded[embed]))
+	if own == 0 {
+		return fmt.Sprintf(
+			"type %q has %d methods, all from %s",
+			name,
+			total,
+			strings.Join(parts, ", "),
+		)
 	}
 
 	return fmt.Sprintf(

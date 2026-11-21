@@ -1,13 +1,13 @@
 {
   "schema": 16,
-  "source_digest": "5f7a6e9c1fe9ce843fd98d1e5c925fa4a31dfe5b9c55371d34e840837921d38e",
-  "repository_digest": "acf8ad34915bc7de63e401485dff1f07e21c89ffdbc912e2065e7fa97156acd7",
+  "source_digest": "85d1cfab01fd05c17c719114c8d112325a7a92bae0b8f9e109474c5955e8d09b",
+  "repository_digest": "b3741660716c1a645019ead64b0966546f4f3b6dbe289dbbc561ab7b3be530e4",
   "model": "jina-embeddings-v2-base-code",
   "threshold": 0.97,
   "description_schema": 4,
   "description_model": "gpt-6-luna",
   "description_effort": "low",
-  "description_digest": "80ae098120c6478c204a025eb3d7aa26b9950636a9750a0844fb980623468b47",
+  "description_digest": "e0e8ebe02c9bb4400718d45610e7ae082599760229fc80a8d1b7d10f72cda347",
   "review": {
     "go": 4,
     "typescript": 4,

@@ -108,7 +108,6 @@ export function run(x, y) {
 		)
 	}
 
-	// tiny is called by step and step by run; shared has two calls.
 	want := []string{"1 step passes 1", "2 run passes 2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("split helpers = %q, want %q", got, want)

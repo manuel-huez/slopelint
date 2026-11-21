@@ -63,10 +63,10 @@ type codeReviewPolicy struct {
 }
 
 const (
-	// codeReviewLanguageVersion 3 asks to delete stale suppressions and to
-	// name intended error fallbacks, and a finding needs two votes; see
+	// codeReviewLanguageVersion 4 judges every slopelint:ignore reason, which
+	// must name why no clean change exists. A finding needs two votes; see
 	// combineFindingVotes.
-	codeReviewLanguageVersion = 3
+	codeReviewLanguageVersion = 4
 	// codeReviewTestGroupVersion 2 asks each group twice; see
 	// combineTestGroupVotes.
 	codeReviewTestGroupVersion = 2

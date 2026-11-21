@@ -465,7 +465,7 @@ func (c localRules) functions(root *ts.Node) {
 		use := uses[c.text(fn.name)]
 		if use.fn == fn && !use.other && use.calls > 0 &&
 			occurrences(string(c.src), c.text(fn.name)) == use.calls+1 &&
-			!c.localFunction(fn, use.calls) && use.calls == 1 {
+			!c.reportForwardingHelper(fn, use.calls) && use.calls == 1 {
 			c.splitHelper(fn, use.call)
 		}
 	}
@@ -513,8 +513,7 @@ func (c localRules) funcUses(root *ts.Node, fns []localFunc) map[string]*funcUse
 	return uses
 }
 
-// localFunction reports a helper that only forwards, and whether it did.
-func (c localRules) localFunction(fn localFunc, calls int) bool {
+func (c localRules) reportForwardingHelper(fn localFunc, calls int) bool {
 	stmts := c.bodyStatements(fn.body)
 	name := c.text(fn.name)
 
@@ -590,7 +589,6 @@ func (c localRules) splitHelper(fn localFunc, call *ts.Node) {
 	})
 }
 
-// topLevel returns the top-level statement that holds node.
 func topLevel(node *ts.Node) *ts.Node {
 	for current := node; current != nil; current = current.Parent() {
 		if parent := current.Parent(); parent != nil && parent.Parent() == nil {

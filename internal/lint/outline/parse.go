@@ -80,8 +80,6 @@ func Parse(name string, src []byte) (File, error) {
 	return file, nil
 }
 
-// markCallbacks sets Callback on plain functions whose name the file uses,
-// beyond its definition, but never calls.
 func (w *walker) markCallbacks(root *ts.Node) {
 	refs := make(map[string]int)
 	calls := make(map[string]int)

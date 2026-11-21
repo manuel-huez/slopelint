@@ -321,7 +321,6 @@ func collectScriptCodeReviewDeclarations(
 	return append(declarations, testGroups...), err
 }
 
-// addScriptTests sends each test with its suite header.
 func addScriptTests(
 	tests []outline.Test,
 	lines []string,

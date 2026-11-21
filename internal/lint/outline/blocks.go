@@ -83,8 +83,6 @@ func (w *walker) finishBlocks() {
 	}
 }
 
-// blockContent returns src[start:] without the bytes comment marks. A
-// line that held only comment text is dropped.
 func blockContent(src []byte, start uint32, comment []bool) string {
 	var (
 		lines  []string

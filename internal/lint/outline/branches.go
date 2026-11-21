@@ -75,7 +75,6 @@ func (c *checker) walk(node *ts.Node) {
 	}
 }
 
-// statements leaves out comments and a switch case's value.
 func (s syntax) statements(list *ts.Node) []*ts.Node {
 	var out []*ts.Node
 

@@ -19,19 +19,26 @@ type forwarderCheck struct {
 
 func (l forwarderCheck) check() {
 	useCounts := l.productionPackageFuncUseCounts()
+	fixed := signatureFixed(l.pkg)
 
 	for _, fn := range l.pkg.ProductionFuncs {
-		l.checkFunc(fn, useCounts)
+		l.checkFunc(fn, useCounts, fixed)
 	}
 }
 
-func (l forwarderCheck) checkFunc(fn *ast.FuncDecl, useCounts map[string]int) {
+func (l forwarderCheck) checkFunc(
+	fn *ast.FuncDecl,
+	useCounts map[string]int,
+	fixed func(*types.Func) bool,
+) {
 	if !isEligibleTrivialForwarderDecl(fn) {
 		return
 	}
 
+	// A wrapper passed as a value adapts a signature; inlining it is not
+	// possible.
 	obj, ok := l.forwarderObject(fn)
-	if !ok {
+	if !ok || fixed(obj) {
 		return
 	}
 

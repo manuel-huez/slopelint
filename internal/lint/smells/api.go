@@ -243,8 +243,11 @@ func signatureReturnsValueOKError(sig *types.Signature) bool {
 }
 
 func (l apiCheck) checkUnusedPrivateParams() {
+	fixed := signatureFixed(l.pkg)
+
 	for _, fn := range l.pkg.ProductionFuncs {
-		if fn.Body == nil || ast.IsExported(fn.Name.Name) {
+		obj, ok := funcDeclObject(l.pkg.TypesInfo, fn)
+		if fn.Body == nil || ast.IsExported(fn.Name.Name) || !ok || fixed(obj) {
 			continue
 		}
 

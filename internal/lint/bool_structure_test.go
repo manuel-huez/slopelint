@@ -56,7 +56,7 @@ func f(ok bool) error {
 	}
 }
 `,
-			want:    `if and else branches are identical; preserve condition evaluation and hoist shared body`,
+			want:    `if and else branches are identical`,
 			failure: "expected identical-branch finding, got:\n%s",
 			kind:    "control_flow_merge",
 		},
@@ -122,7 +122,7 @@ func f(ok bool) int {
 	return 0
 }
 `,
-			want:    `switch case "false" has identical body as previous case "true"; merge case lists`,
+			want:    `switch case "false" has identical body as previous case "true"`,
 			failure: "expected identical switch branch finding, got:\n%s",
 		},
 		{
@@ -185,7 +185,7 @@ func f(ok bool) int {
 	}
 }
 `,
-			forbidden: `if and else branches are identical; preserve condition evaluation and hoist shared body`,
+			forbidden: `if and else branches are identical`,
 			failure:   "unexpected identical-branch finding when branch-local defs exist, got:\n%s",
 		},
 		{
@@ -320,5 +320,53 @@ func f(value mode) int {
 				t.Fatalf(test.failure, joined)
 			}
 		})
+	}
+}
+
+// TestSkipsMergesThatLoseMeaning checks that switch cases with their own
+// trailing comments stay apart and that the last of a run of guards is not
+// folded into the return; a lone guard still is.
+func TestSkipsMergesThatLoseMeaning(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func CanFormat(mode, diffs int) bool {
+	switch {
+	case mode != 0:
+		return false // must be in diff mode
+	case diffs == 0:
+		return false // no differences
+	}
+	return true
+}
+
+func Valid(a, b bool) bool {
+	if a {
+		return false
+	}
+	if b {
+		return false
+	}
+	return true
+}
+
+func Lone(a bool) bool {
+	if a {
+		return false
+	}
+	return true
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, "has identical body as previous case") ||
+		strings.Contains(joined, `replace with "return !(b)"`) {
+		t.Fatalf("merge that loses meaning reported:\n%s", joined)
+	}
+
+	if !strings.Contains(joined, `replace with "return !(a)"`) {
+		t.Fatalf("lone guard not reported:\n%s", joined)
 	}
 }

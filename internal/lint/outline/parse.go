@@ -516,9 +516,20 @@ func (w *walker) params(node *ts.Node, receiver string) int {
 
 	count := 0
 
+	// Python parameters after `*` or `*args` are keyword-only: each call
+	// names them, as it would the fields of an options struct.
 	for index := range list.NamedChildCount() {
-		if !w.receiverOrSeparator(list.NamedChild(index), count == 0 && receiver != "") {
+		param := list.NamedChild(index)
+		if param.Type(w.grammar) == "keyword_separator" {
+			break
+		}
+
+		if !w.receiverOrSeparator(param, count == 0 && receiver != "") {
 			count++
+		}
+
+		if param.Type(w.grammar) == "list_splat_pattern" {
+			break
 		}
 	}
 

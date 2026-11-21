@@ -247,3 +247,40 @@ func Decode(raw map[string][]byte) *string {
 		t.Fatalf("escaped address kept its nil fact, got:\n%s", joined)
 	}
 }
+
+// TestForConditionUsesFactsAtEveryIteration checks that a for condition is
+// judged after the body's writes: a value the body sets is not known on the
+// next check, while one it never writes keeps its fact.
+func TestForConditionUsesFactsAtEveryIteration(t *testing.T) {
+	t.Parallel()
+
+	tmp := newTestModule(t)
+	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func First(names []string) string {
+	var name string
+	for i := 0; i < len(names) && name == ""; i++ {
+		name = names[i]
+	}
+	return name
+}
+
+func Count(names []string) int {
+	ready := true
+	total := 0
+	for i := 0; i < len(names) && ready; i++ {
+		total++
+	}
+	return total
+}
+`)
+
+	joined := joinMessages(lintInDir(t, tmp))
+	if strings.Contains(joined, `"name == \"\""`) {
+		t.Fatalf("condition the body changes reported as decided:\n%s", joined)
+	}
+
+	if !strings.Contains(joined, `right side of && is always true after the left side: "ready"`) {
+		t.Fatalf("condition the body never changes not reported:\n%s", joined)
+	}
+}

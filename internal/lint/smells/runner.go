@@ -314,3 +314,75 @@ func inspectNodesBetween(
 		return visit(node)
 	})
 }
+
+// signatureFixed reports functions whose signature callers do not choose:
+// ones passed as a value, such as a callback, and methods that implement an
+// interface of the package. Their parameters and wrappers must stay as they
+// are.
+func signatureFixed(pkg *Package) func(*types.Func) bool {
+	values := funcValues(pkg)
+
+	var interfaces []*types.Interface
+
+	for _, name := range pkg.TypesPkg.Scope().Names() {
+		if iface, ok := pkg.TypesPkg.Scope().Lookup(name).Type().Underlying().(*types.Interface); ok {
+			interfaces = append(interfaces, iface)
+		}
+	}
+
+	return func(fn *types.Func) bool {
+		fn = fn.Origin()
+		if values[fn] {
+			return true
+		}
+
+		recv := fn.Signature().Recv()
+		if recv == nil {
+			return false
+		}
+
+		return slices.ContainsFunc(interfaces, func(iface *types.Interface) bool {
+			method, _, _ := types.LookupFieldOrMethod(iface, false, fn.Pkg(), fn.Name())
+
+			return method != nil &&
+				(types.Implements(recv.Type(), iface) ||
+					types.Implements(types.NewPointer(recv.Type()), iface))
+		})
+	}
+}
+
+// funcValues collects the functions the production files use other than by
+// calling them, alone or as x.Name.
+func funcValues(pkg *Package) map[*types.Func]bool {
+	values := make(map[*types.Func]bool)
+
+	for _, file := range pkg.ProductionFiles {
+		ast.PreorderStack(file, nil, func(node ast.Node, stack []ast.Node) bool {
+			ident, ok := node.(*ast.Ident)
+			if !ok || len(stack) == 0 {
+				return true
+			}
+
+			fn, ok := pkg.TypesInfo.Uses[ident].(*types.Func)
+			if !ok {
+				return true
+			}
+
+			var callee ast.Expr = ident
+
+			parent := stack[len(stack)-1]
+			if selector, ok := parent.(*ast.SelectorExpr); ok && selector.Sel == ident &&
+				len(stack) > 1 {
+				callee, parent = selector, stack[len(stack)-2]
+			}
+
+			if call, ok := parent.(*ast.CallExpr); !ok || ast.Unparen(call.Fun) != callee {
+				values[fn.Origin()] = true
+			}
+
+			return true
+		})
+	}
+
+	return values
+}

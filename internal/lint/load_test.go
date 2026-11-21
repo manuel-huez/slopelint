@@ -363,3 +363,46 @@ import _ "example.com/sample/internal/mixed"
 
 	return dir
 }
+
+// TestTestSupportFilenamesSkipTestNamedPackages checks that a test-only
+// package whose path already says test, like go-cmp's internal/teststructs,
+// needs no marker in each file name.
+func TestTestSupportFilenamesSkipTestNamedPackages(t *testing.T) {
+	t.Parallel()
+
+	dir := newTestModule(t)
+	writeFile(t, filepath.Join(dir, "internal", "teststructs", "structs.go"),
+		"package teststructs\n\ntype Pair struct{ A, B int }\n")
+	writeFile(t, filepath.Join(dir, "internal", "fixture", "fixture.go"),
+		"package fixture\n\nconst Name = \"fixture\"\n")
+	writeFile(t, filepath.Join(dir, "sample.go"), "package sample\n")
+	writeFile(t, filepath.Join(dir, "sample_test.go"), `package sample
+
+import (
+	"testing"
+
+	"example.com/sample/internal/fixture"
+	"example.com/sample/internal/teststructs"
+)
+
+func TestPair(t *testing.T) {
+	t.Parallel()
+
+	if (teststructs.Pair{A: 1}).A != 1 || fixture.Name == "" {
+		t.Fatal("bad fixture")
+	}
+}
+`)
+
+	issues, err := LintRepository(t.Context(), nil, dir, Options{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := issueRelativePaths(t, dir, issues, "test_support_filename"); !slices.Equal(
+		got,
+		[]string{"internal/fixture/fixture.go"},
+	) {
+		t.Fatalf("naming diagnostics = %v, want only internal/fixture/fixture.go", got)
+	}
+}

@@ -6,21 +6,13 @@ import (
 	"testing"
 )
 
+// TestDetectsTestGlobalFuncStub checks that a test helper and a real test
+// both count as reassigning a package function variable.
 func TestDetectsTestGlobalFuncStub(t *testing.T) {
 	t.Parallel()
 
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func run() {}
-
-var runHook = run
-
-func call() {
-	runHook()
-}
-`)
-	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+	for name, test := range map[string]string{
+		"helper": `package sample
 
 func testCall() {
 	previous := runHook
@@ -28,38 +20,8 @@ func testCall() {
 	call()
 	runHook = previous
 }
-`)
-
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`package-level function variable "runHook" is reassigned in tests`,
-	) {
-		t.Fatalf("expected test-global-func-stub finding, got:\n%s", joined)
-	}
-
-	if !hasIssueKind(issues, "test_global_func_stub") {
-		t.Fatalf("expected test_global_func_stub kind, got %#v", issues)
-	}
-}
-
-func TestDetectsTestGlobalFuncStubWithTestingImport(t *testing.T) {
-	t.Parallel()
-
-	tmp := newTestModule(t)
-	writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
-
-func run() {}
-
-var runHook = run
-
-func call() {
-	runHook()
-}
-`)
-	writeFile(t, filepath.Join(tmp, "sample_test.go"), `package sample
+`,
+		"test": `package sample
 
 import "testing"
 
@@ -69,16 +31,32 @@ func TestCall(t *testing.T) {
 	call()
 	runHook = previous
 }
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := newTestModule(t)
+			writeFile(t, filepath.Join(tmp, "sample.go"), `package sample
+
+func run() {}
+
+var runHook = run
+
+func call() {
+	runHook()
+}
 `)
+			writeFile(t, filepath.Join(tmp, "sample_test.go"), test)
 
-	issues := lintInDir(t, tmp)
-	joined := joinMessages(issues)
-
-	if !strings.Contains(
-		joined,
-		`package-level function variable "runHook" is reassigned in tests`,
-	) {
-		t.Fatalf("expected test-global-func-stub finding, got:\n%s", joined)
+			issues := lintInDir(t, tmp)
+			if !hasIssueKind(issues, "test_global_func_stub") || !strings.Contains(
+				joinMessages(issues),
+				`package-level function variable "runHook" is reassigned in tests`,
+			) {
+				t.Fatalf("expected test_global_func_stub finding, got:\n%s", joinMessages(issues))
+			}
+		})
 	}
 }
 
@@ -512,11 +490,36 @@ func TestDetectsUnusedPrivateParameter(t *testing.T) {
 func parse(value string, unused int) string {
 	return value
 }
+
+// The interface and the callback fix these signatures, so their unused
+// parameters and the converting wrapper stay.
+type node interface{ format(b []byte, wide bool) []byte }
+
+type line string
+
+func (s line) format(b []byte, wide bool) []byte { return append(b, s...) }
+
+func apply(fn func(float32) bool, v float32) bool { return fn(v) }
+
+func positive64(v float64) bool { return v > 0 }
+
+func positive32(v float32) bool { return positive64(float64(v)) }
+
+func Use(n node) bool {
+	_ = n.format(nil, false)
+	return apply(positive32, 1)
+}
 `)
 
 	joined := joinMessages(lintInDir(t, tmp))
 	if !strings.Contains(joined, `private function "parse" does not use parameter "unused"`) {
 		t.Fatalf("expected unused-private-param finding, got:\n%s", joined)
+	}
+
+	for _, unwanted := range []string{`"format" does not use`, `"positive32" only forwards`} {
+		if strings.Contains(joined, unwanted) {
+			t.Fatalf("fixed signature reported (%s):\n%s", unwanted, joined)
+		}
 	}
 }
 

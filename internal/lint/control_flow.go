@@ -65,11 +65,15 @@ func (w *pathWalker) execForStmt(stmt *ast.ForStmt, label string, states []state
 
 	enterStates := states
 	exitStates := []state(nil)
+	writes := loopInvalidations(w.q, stmt.Body.List, stmt.Post)
 
 	if stmt.Cond != nil {
-		w.checkBooleanSubexpressions(states, stmt.Cond)
+		// The condition runs again after each iteration, so judge it without
+		// the facts about what the body and post statement write.
+		head := w.budget.normalize(writes.apply(states))
+		w.checkBooleanSubexpressions(head, stmt.Cond)
 
-		if tri, because := w.cond.truthAcross(states, stmt.Cond); tri == triFalse {
+		if tri, because := w.cond.truthAcross(head, stmt.Cond); tri == triFalse {
 			w.reportCondition(stmt.Cond, false, because)
 		} else if tri == triTrue {
 			w.reportCondition(stmt.Cond, true, because)
@@ -79,7 +83,6 @@ func (w *pathWalker) execForStmt(stmt *ast.ForStmt, label string, states []state
 		exitStates = w.cond.refineStates(states, stmt.Cond, false)
 	}
 
-	writes := loopInvalidations(w.q, stmt.Body.List, stmt.Post)
 	bodyRes := w.execBlock(stmt.Body.List, w.budget.normalize(writes.apply(enterStates)))
 
 	iterStates := w.budget.normalize(append(bodyRes.next, bodyRes.continues...))

@@ -36,9 +36,9 @@ function s(v) {
 }
 `,
 			want: []string{
-				"2 control_flow_merge if and else branches are identical; preserve condition evaluation and hoist shared body",
-				`4 control_flow_merge branch "b" has identical body as previous branch "a"; join the conditions`,
-				`11 control_flow_merge switch case "2" has identical body as previous case "1"; merge case lists`,
+				"2 control_flow_merge if and else branches are identical",
+				`4 control_flow_merge branch "b" has identical body as previous branch "a"`,
+				`11 control_flow_merge switch case "2" has identical body as previous case "1"`,
 			},
 		},
 		{
@@ -68,8 +68,8 @@ function s(v) {
         g("%s / [%s]\n")
 `,
 			want: []string{
-				"2 control_flow_merge if and else branches are identical; preserve condition evaluation and hoist shared body",
-				`8 control_flow_merge branch "b" has identical body as previous branch "a"; join the conditions`,
+				"2 control_flow_merge if and else branches are identical",
+				`8 control_flow_merge branch "b" has identical body as previous branch "a"`,
 			},
 		},
 		{
@@ -171,7 +171,7 @@ function k(a) {
 				`5 boolean_ceremony if returns boolean literals; replace with "return !(a)"`,
 				`9 boolean_ceremony if returns boolean literals; replace with "return Boolean(a.ok)"`,
 				`13 boolean_ceremony if assigns boolean literals; replace with "x.y = Boolean(a)"`,
-				"14 control_flow_merge if and else branches are identical; preserve condition evaluation and hoist shared body",
+				"14 control_flow_merge if and else branches are identical",
 			},
 		},
 		{
@@ -382,4 +382,45 @@ def use(x):
 
 func lines(items []string) string {
 	return "  " + strings.Join(items, "\n  ") + "\n"
+}
+
+// TestParseKeepsMergesThatLoseMeaning checks that switch cases with their
+// own comments stay apart and that the last of a run of guards is not folded
+// into the return.
+func TestParseKeepsMergesThatLoseMeaning(t *testing.T) {
+	t.Parallel()
+
+	for name, src := range map[string]string{
+		"guards.ts": `function ok(v) {
+  switch (v) {
+    case 1: return false; // too small
+    case 2: return false; // too big
+    default: return true;
+  }
+}
+function valid(a, b) {
+  if (a) { return false; }
+  if (b) { return false; }
+  return true;
+}
+`,
+		"guards.py": `def valid(a, b):
+    if a:
+        return False
+    if b:
+        return False
+    return True
+`,
+	} {
+		file, err := Parse(name, []byte(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, smell := range file.Smells {
+			if smell.Kind == "control_flow_merge" || smell.Kind == "boolean_ceremony" {
+				t.Errorf("%s: unexpected %s: %s", name, smell.Kind, smell.Message)
+			}
+		}
+	}
 }

@@ -1,6 +1,7 @@
 package outline
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"slices"
@@ -291,14 +292,14 @@ func (c branchRules) ifChain(stmt *ts.Node) {
 		switch {
 		case arm.cond != nil:
 			c.report(arm.keyword, kindControlFlowMerge, fmt.Sprintf(
-				"branch %q has identical body as previous branch %q; join the conditions",
+				"branch %q has identical body as previous branch %q",
 				c.oneLine(c.unparen(arm.cond)), c.oneLine(c.unparen(prior.cond)),
 			))
 		case len(arms) == 2 && !c.declaresNames(stmts):
 			c.report(
 				stmt,
 				kindControlFlowMerge,
-				"if and else branches are identical; preserve condition evaluation and hoist shared body",
+				"if and else branches are identical",
 			)
 		}
 	}
@@ -315,6 +316,17 @@ func (c branchRules) declaresNames(stmts []*ts.Node) bool {
 	}
 
 	return false
+}
+
+// lineEnd is the end of node's last line, so a comment trailing it, such as
+// `return false // why`, counts as the node's.
+func (c branchRules) lineEnd(node *ts.Node) uint32 {
+	end := node.EndByte()
+	if next := bytes.IndexByte(c.src[end:], '\n'); next >= 0 {
+		return end + uint32(next)
+	}
+
+	return uint32(len(c.src))
 }
 
 // switchCases reports a case whose body equals the previous case's. A
@@ -337,10 +349,10 @@ func (c branchRules) switchCases(stmt *ts.Node) {
 		}
 
 		if prior != nil && c.key(c.statements(prior)) == c.key(stmts) &&
-			c.commentsIn(prior.StartByte(), prior.EndByte()) ==
-				c.commentsIn(clause.StartByte(), clause.EndByte()) {
+			c.commentsIn(prior.StartByte(), c.lineEnd(prior)) ==
+				c.commentsIn(clause.StartByte(), c.lineEnd(clause)) {
 			c.report(clause, kindControlFlowMerge, fmt.Sprintf(
-				"switch case %q has identical body as previous case %q; merge case lists",
+				"switch case %q has identical body as previous case %q",
 				c.caseHeader(clause), c.caseHeader(prior),
 			))
 		}
@@ -571,7 +583,8 @@ func (c branchRules) boolChoice(stmts []*ts.Node, index int) {
 
 	otherTarget, otherValue, ok := c.boolAction(other)
 	if !ok || thenTarget != otherTarget || thenValue == otherValue ||
-		c.armComments(arms, 0) != otherComments {
+		c.armComments(arms, 0) != otherComments ||
+		len(arms) == 1 && c.followsSameGuard(stmts, index, thenTarget, thenValue) {
 		return
 	}
 
@@ -588,6 +601,23 @@ func (c branchRules) boolChoice(stmts []*ts.Node, index int) {
 	c.report(stmts[index], "boolean_ceremony", fmt.Sprintf(
 		`if %s boolean literals; replace with %q`, verb, prefix+replacement,
 	))
+}
+
+// followsSameGuard reports an if that ends a run of guards returning the
+// same literal; folding only the last one into the return reads worse.
+func (c branchRules) followsSameGuard(stmts []*ts.Node, index int, target string, value bool) bool {
+	if index == 0 || stmts[index-1].Type(c.grammar) != ifNode {
+		return false
+	}
+
+	arms := c.arms(stmts[index-1])
+	if len(arms) != 1 {
+		return false
+	}
+
+	prevTarget, prevValue, ok := c.boolAction(c.branchStatements(arms[0].body))
+
+	return ok && prevTarget == target && prevValue == value
 }
 
 // otherBoolArm returns what runs when the if's condition is false, with its

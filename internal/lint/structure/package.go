@@ -217,12 +217,15 @@ func (q *pkgQuery) renderCaseClauseHeader(clause *ast.CaseClause) string {
 func (q *pkgQuery) commentTexts(node ast.Node) []string {
 	fset := q.pkg.FSet
 	file := fset.File(node.Pos())
+	lastLine := fset.Position(node.End()).Line
 	out := make([]string, 0)
 
+	// A comment trailing the node's last line, such as `return false // why`,
+	// belongs to it too.
 	for _, astFile := range q.pkg.Files {
 		for _, group := range astFile.Comments {
 			if fset.File(group.Pos()) != file || group.Pos() < node.Pos() ||
-				group.End() > node.End() {
+				group.End() > node.End() && fset.Position(group.Pos()).Line != lastLine {
 				continue
 			}
 

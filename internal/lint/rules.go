@@ -61,8 +61,8 @@ var ruleGuides = map[string]ruleGuide{
 		"Delete the test, or test behavior that uses the value.",
 	},
 	"control_flow_merge": {
-		"Guard returns that repeat the next return",
-		"Delete the redundant guards.",
+		"Branches, cases, and guards that repeat a neighbor",
+		"Merge them: join the conditions or case lists, hoist a body both if and else share, and delete guards that repeat the next return.",
 	},
 	"control_flow_pyramid": {
 		"Nested ifs at the end of a function",

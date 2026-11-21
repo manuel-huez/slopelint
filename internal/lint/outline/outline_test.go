@@ -139,8 +139,8 @@ class K:
         pass
 `,
 			want: []string{
-				"func f:5@:5 s4", "func inner:1@:7 s1", "func <lit>:1@:9 s0",
-				"func s:3@K:15 s1", "func m:1@K:18 s1",
+				"func f:3@:5 s4", "func inner:1@:7 s1", "func <lit>:1@:9 s0",
+				"func s:2@K:15 s1", "func m:1@K:18 s1",
 				"type K",
 				"comment 1-1", "comment 2-2!", "comment 6-6", "comment 13-13",
 				"decl 2-2", "decl 5-9", "decl 12-19",

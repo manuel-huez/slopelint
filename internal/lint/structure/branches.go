@@ -41,7 +41,7 @@ func (r branchRules) identicalIf(stmt *ast.IfStmt) (Finding, bool) {
 	return Finding{
 		Pos:     stmt.If,
 		Kind:    kindControlFlowMerge,
-		Message: "if and else branches are identical; preserve condition evaluation and hoist shared body",
+		Message: "if and else branches are identical",
 	}, true
 }
 
@@ -64,7 +64,7 @@ func (r branchRules) identicalSwitchCases(stmt *ast.SwitchStmt) []Finding {
 				Pos:  clause.Case,
 				Kind: kindControlFlowMerge,
 				Message: fmt.Sprintf(
-					"switch case %q has identical body as previous case %q; merge case lists",
+					"switch case %q has identical body as previous case %q",
 					r.q.renderCaseClauseHeader(clause),
 					r.q.renderCaseClauseHeader(prior),
 				),

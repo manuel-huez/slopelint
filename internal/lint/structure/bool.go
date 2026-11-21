@@ -39,17 +39,7 @@ func (r boolRules) boolChoiceIfAt(stmts []ast.Stmt, idx int) (Finding, bool) {
 		other = elseBlock
 		otherAction, ok = r.branchAction(elseBlock.List)
 	} else {
-		if idx+1 >= len(stmts) {
-			return Finding{}, false
-		}
-
-		next, isReturn := stmts[idx+1].(*ast.ReturnStmt)
-		if !isReturn {
-			return Finding{}, false
-		}
-
-		other = next
-		otherAction.value, ok = singleBoolReturnValue(r.q.pkg.TypesInfo, next)
+		other, otherAction, ok = r.returnAfterGuard(stmts, idx)
 	}
 
 	if !ok {
@@ -62,6 +52,37 @@ func (r boolRules) boolChoiceIfAt(stmts []ast.Stmt, idx int) (Finding, bool) {
 	}
 
 	return r.ceremonyFinding(stmt, thenAction, otherAction)
+}
+
+// returnAfterGuard returns the bool return after the if at idx. An if that
+// ends a run of guards returning the same literal, as in
+// `if a { return false }; if b { return false }; return true`, has none:
+// folding only the last guard into the return would read worse than the run.
+func (r boolRules) returnAfterGuard(stmts []ast.Stmt, idx int) (ast.Node, boolBranchAction, bool) {
+	if idx+1 >= len(stmts) {
+		return nil, boolBranchAction{}, false
+	}
+
+	next, isReturn := stmts[idx+1].(*ast.ReturnStmt)
+	if !isReturn {
+		return nil, boolBranchAction{}, false
+	}
+
+	value, ok := singleBoolReturnValue(r.q.pkg.TypesInfo, next)
+	if !ok || idx == 0 {
+		return next, boolBranchAction{value: value}, ok
+	}
+
+	if prev, isIf := stmts[idx-1].(*ast.IfStmt); isIf && prev.Else == nil {
+		prevAction, prevOK := r.branchAction(prev.Body.List)
+		thisAction, thisOK := r.branchAction(stmts[idx].(*ast.IfStmt).Body.List)
+
+		if prevOK && thisOK && prevAction == thisAction {
+			return nil, boolBranchAction{}, false
+		}
+	}
+
+	return next, boolBranchAction{value: value}, true
 }
 
 func (r boolRules) ceremonyFinding(

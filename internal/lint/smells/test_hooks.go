@@ -197,6 +197,14 @@ func (l testSupportCheck) checkSleeps() {
 }
 
 func (l testSupportCheck) checkFilenames() {
+	// A package whose import path already says test, such as
+	// internal/teststructs, marks every file in it.
+	if slices.ContainsFunc(strings.Split(l.pkg.TypesPkg.Path(), "/"), func(part string) bool {
+		return strings.Contains(part, "test")
+	}) {
+		return
+	}
+
 	for _, file := range l.pkg.TestSupportFiles {
 		if ast.IsGenerated(file) {
 			continue

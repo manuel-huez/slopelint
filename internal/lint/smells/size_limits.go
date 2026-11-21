@@ -84,24 +84,22 @@ func godReceiverFindings(
 	methods map[string]int,
 	methodFiles map[string]map[int]struct{},
 ) []OutlineFinding {
-	// A type embedded by several types is a shared helper, not part of one
-	// type split up, so only types with a single embedder add methods.
-	embeds := make(map[string][]string)
-	embedders := make(map[string]int)
+	graph := typeGraph{
+		embeds:    make(map[string][]string),
+		fields:    make(map[string][]string),
+		embedders: make(map[string][]string),
+		methods:   methods,
+	}
 
 	for _, file := range files {
 		for _, typ := range file.Types {
-			embeds[typ.Name] = typ.Embeds
+			graph.embeds[typ.Name] = typ.Embeds
+			graph.fields[typ.Name] = typ.Fields
+
 			for _, embedded := range typ.Embeds {
-				embedders[embedded]++
+				graph.embedders[embedded] = append(graph.embedders[embedded], typ.Name)
 			}
 		}
-	}
-
-	for name, embedded := range embeds {
-		embeds[name] = slices.DeleteFunc(slices.Clone(embedded), func(embedded string) bool {
-			return embedders[embedded] > 1
-		})
 	}
 
 	var findings []OutlineFinding
@@ -109,8 +107,9 @@ func godReceiverFindings(
 	for index, file := range files {
 		for _, typ := range file.Types {
 			own := methods[typ.Name]
-			total, embedded := own, promotedFrom(typ.Name, embeds, methods, map[string]bool{})
+			embedded := graph.promoted(typ.Name)
 
+			total := own
 			for _, count := range embedded {
 				total += count
 			}
@@ -137,25 +136,51 @@ func godReceiverFindings(
 	return findings
 }
 
-// promotedFrom counts the methods each embedded type adds to name, nested
-// embeds included. seen stops pointer-embedding cycles.
-func promotedFrom(
-	name string,
-	embeds map[string][]string,
-	methods map[string]int,
-	seen map[string]bool,
-) map[string]int {
-	seen[name] = true
-	counts := make(map[string]int)
+type typeGraph struct {
+	embeds    map[string][]string
+	fields    map[string][]string
+	embedders map[string][]string
+	methods   map[string]int
+}
 
-	for _, embedded := range embeds[name] {
-		if seen[embedded] {
-			continue
+// promoted counts the methods each embedded type adds to name, nested embeds
+// included. A type that something outside name's own parts also embeds is a
+// shared helper, not a piece of name split off, so it adds nothing.
+func (g typeGraph) promoted(name string) map[string]int {
+	parts := map[string]bool{name: true}
+	stack := []string{name}
+
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		for _, next := range slices.Concat(g.embeds[current], g.fields[current]) {
+			if !parts[next] {
+				parts[next] = true
+				stack = append(stack, next)
+			}
 		}
+	}
 
-		counts[embedded] += methods[embedded]
-		for nested, count := range promotedFrom(embedded, embeds, methods, seen) {
-			counts[nested] += count
+	counts := make(map[string]int)
+	seen := map[string]bool{name: true}
+	stack = []string{name}
+
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		for _, embedded := range g.embeds[current] {
+			shared := slices.ContainsFunc(g.embedders[embedded], func(embedder string) bool {
+				return !parts[embedder]
+			})
+			if seen[embedded] || shared {
+				continue
+			}
+
+			seen[embedded] = true
+			counts[embedded] = g.methods[embedded]
+			stack = append(stack, embedded)
 		}
 	}
 
@@ -174,11 +199,11 @@ func godReceiverMessage(name string, own, total, fileCount int, embedded map[str
 
 	parts := make([]string, 0, len(embedded))
 	for _, embed := range slices.Sorted(maps.Keys(embedded)) {
-		parts = append(parts, fmt.Sprintf("%s %d", embed, embedded[embed]))
+		parts = append(parts, fmt.Sprintf("%s (%d)", embed, embedded[embed]))
 	}
 
 	return fmt.Sprintf(
-		"type %q has %d methods: %d of its own in %s, plus embedded %s",
+		"type %q has %d methods: %d of its own in %s, plus those from %s",
 		name, total, own, files, strings.Join(parts, ", "),
 	)
 }
@@ -317,10 +342,12 @@ func (l sizeLimitCheck) outlineDecls(file *ast.File, out *outline.File) {
 
 			for _, spec := range decl.Specs {
 				if spec, ok := spec.(*ast.TypeSpec); ok {
+					embeds, fields := l.structTypes(spec)
 					out.Types = append(out.Types, outline.Type{
 						Name:   spec.Name.Name,
 						Pos:    l.outlinePos(spec.Name.Pos()),
-						Embeds: l.embeddedTypes(spec),
+						Embeds: embeds,
+						Fields: fields,
 					})
 				}
 			}
@@ -332,32 +359,35 @@ func (l sizeLimitCheck) outlineDecls(file *ast.File, out *outline.File) {
 	}
 }
 
-// embeddedTypes names the package types a struct embeds. Their methods are
-// promoted, so moving methods into a type only it embeds does not shrink it.
-func (l sizeLimitCheck) embeddedTypes(spec *ast.TypeSpec) []string {
+// structTypes names the package types a struct embeds, whose methods are
+// promoted, and the ones its named fields hold, which make them its parts.
+func (l sizeLimitCheck) structTypes(spec *ast.TypeSpec) ([]string, []string) {
 	st, ok := spec.Type.(*ast.StructType)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
-	var names []string
+	var embeds, fields []string
 
 	for _, field := range st.Fields.List {
-		if len(field.Names) > 0 {
-			continue
-		}
-
 		typ := types.Unalias(l.pkg.TypesInfo.TypeOf(field.Type))
 		if ptr, ok := typ.(*types.Pointer); ok {
 			typ = types.Unalias(ptr.Elem())
 		}
 
-		if named, ok := typ.(*types.Named); ok && named.Obj().Pkg() == l.pkg.TypesPkg {
-			names = append(names, named.Origin().Obj().Name())
+		named, ok := typ.(*types.Named)
+		if !ok || named.Obj().Pkg() != l.pkg.TypesPkg {
+			continue
+		}
+
+		if name := named.Origin().Obj().Name(); len(field.Names) == 0 {
+			embeds = append(embeds, name)
+		} else {
+			fields = append(fields, name)
 		}
 	}
 
-	return names
+	return embeds, fields
 }
 
 func (l sizeLimitCheck) outlineFunc(fn *ast.FuncDecl) outline.Func {

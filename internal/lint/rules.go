@@ -77,7 +77,7 @@ var ruleGuides = map[string]ruleGuide{
 		"Rename the helper for what it does, or inline it.",
 	},
 	"god_receiver": {
-		"Types with over 40 methods, counting functions that take *T first and methods of types only they embed",
+		"Types with over 40 methods, counting functions that take *T first and methods of types they embed or extend, unless other types share them",
 		sizeFixFirst + "Then simplify methods more complex than their job, merge methods that differ without need, move methods another type owns, and split the rest by responsibility so each new type owns its own state. Moving methods into an embedded type, or into functions that take the type, is not a fix.",
 	},
 	"guard_complexity": {

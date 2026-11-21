@@ -287,7 +287,11 @@ func (w *walker) walkTypeScript(node *ts.Node, kind, receiver string) {
 	case tsClassNode, "abstract_class_declaration", "class":
 		name := w.field(node, nameField)
 		if name != nil {
-			w.file.Types = append(w.file.Types, Type{Name: w.text(name), Pos: w.pos(name)})
+			w.file.Types = append(w.file.Types, Type{
+				Name:   w.text(name),
+				Pos:    w.pos(name),
+				Embeds: w.baseClasses(node),
+			})
 		}
 
 		for index := range node.ChildCount() {
@@ -390,11 +394,49 @@ func (w *walker) pythonEvent(node *ts.Node, kind string) {
 	}
 }
 
+// baseClasses names the classes a class extends by plain name: the
+// TypeScript extends clause, or Python's base list. Qualified bases live in
+// another file, so they never count toward this one.
+func (w *walker) baseClasses(class *ts.Node) []string {
+	var bases []string
+
+	add := func(node *ts.Node) {
+		if node != nil && node.Type(w.grammar) == identifierNode {
+			bases = append(bases, w.text(node))
+		}
+	}
+
+	if supers := w.field(class, "superclasses"); supers != nil {
+		for index := range supers.NamedChildCount() {
+			add(supers.NamedChild(index))
+		}
+	}
+
+	for index := range class.NamedChildCount() {
+		heritage := class.NamedChild(index)
+		if heritage.Type(w.grammar) != "class_heritage" {
+			continue
+		}
+
+		for clause := range heritage.NamedChildCount() {
+			if extends := heritage.NamedChild(clause); extends.Type(w.grammar) == "extends_clause" {
+				add(extends.NamedChild(0))
+			}
+		}
+	}
+
+	return bases
+}
+
 func (w *walker) walkPython(node *ts.Node, kind, receiver string) {
 	switch kind {
 	case pyClassNode:
 		name := w.field(node, nameField)
-		w.file.Types = append(w.file.Types, Type{Name: w.text(name), Pos: w.pos(name)})
+		w.file.Types = append(w.file.Types, Type{
+			Name:   w.text(name),
+			Pos:    w.pos(name),
+			Embeds: w.baseClasses(node),
+		})
 		body := w.field(node, "body")
 		w.docstring(body)
 

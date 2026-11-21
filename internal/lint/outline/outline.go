@@ -117,11 +117,14 @@ func LargestStatements(blocks []StatementBlock) []StatementBlock {
 }
 
 // Type is one type or class that can own methods. Embeds names the
-// same-package Go types it embeds, whose methods it gains.
+// same-package Go types it embeds, or the same-file classes it extends,
+// whose methods it gains. Fields names the same-package Go types its named
+// fields hold.
 type Type struct {
 	Name   string
 	Pos    Pos
 	Embeds []string
+	Fields []string
 }
 
 // Comment is one group of adjacent comments, or one Python docstring.

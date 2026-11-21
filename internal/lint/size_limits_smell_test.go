@@ -145,6 +145,22 @@ func TestDetectsGodReceiver(t *testing.T) {
 	writeFile(t, filepath.Join(tmp, "sides.go"), methodSource("", "l left", "left", 21)+
 		methodSource("", "r right", "right", 21)[len("package sample\n\n"):])
 
+	// Parts of one client embed each other, and one is reached through a
+	// named field; none of them is shared outside the client, so all count.
+	writeFile(t, filepath.Join(tmp, "client.go"), methodSource("", "c *client", "own", 5)+
+		"\ntype client struct{ request; catalog; objects; derived store }\n"+
+		"type request struct{ *catalog; *objects }\n"+
+		"type store struct{ *catalog }\n"+
+		"type catalog struct{ *objects }\n"+
+		"type objects struct{}\n")
+	writeFile(
+		t,
+		filepath.Join(tmp, "client_parts.go"),
+		methodSource("", "r request", "request", 12)+
+			methodSource("", "c catalog", "catalog", 12)[len("package sample\n\n"):]+
+			methodSource("", "o objects", "object", 12)[len("package sample\n\n"):],
+	)
+
 	joined := joinMessages(lintInDir(t, tmp))
 	if strings.Contains(joined, `type "left" has`) || strings.Contains(joined, `type "right" has`) {
 		t.Fatalf("shared embedded helper counted:\n%s", joined)
@@ -152,7 +168,8 @@ func TestDetectsGodReceiver(t *testing.T) {
 
 	for _, want := range []string{
 		`type "big" has 41 methods in 2 files`,
-		`type "wide" has 41 methods: 21 of its own in 1 file, plus embedded part 20`,
+		`type "wide" has 41 methods: 21 of its own in 1 file, plus those from part (20)`,
+		`type "client" has 41 methods: 5 of its own in 1 file, plus those from catalog (12), objects (12), request (12)`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %q, got:\n%s", want, joined)

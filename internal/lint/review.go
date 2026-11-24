@@ -313,7 +313,8 @@ func (review codeReview) generate(
 		return ok
 	}
 
-	collector.total = len(missing) + len(groups)
+	collector.expect(len(missing) + len(groups))
+
 	for _, asked := range [][]codeReviewRequest{missing, groups} {
 		if len(asked) == 0 {
 			continue
@@ -332,21 +333,14 @@ func (review codeReview) generate(
 			len(second),
 		)
 
-		collector.total += len(second)
+		collector.expect(len(second))
+
 		if err := review.reviewer.review(ctx, second, done, collector.accept); err != nil {
 			return err
 		}
 	}
 
-	if collector.accepted != collector.total {
-		return fmt.Errorf(
-			"codex returned %d reviews for %d declarations",
-			collector.accepted,
-			collector.total,
-		)
-	}
-
-	return nil
+	return collector.completeError()
 }
 
 func (review codeReview) loadRecord(request codeReviewRequest) (codeReviewRecord, bool) {
@@ -422,6 +416,22 @@ type codeReviewCollector struct {
 	cacheEnabled bool
 	accepted     int
 	total        int
+}
+
+func (collector *codeReviewCollector) expect(count int) {
+	collector.total += count
+}
+
+func (collector *codeReviewCollector) completeError() error {
+	if collector.accepted != collector.total {
+		return fmt.Errorf(
+			"codex returned %d reviews for %d declarations",
+			collector.accepted,
+			collector.total,
+		)
+	}
+
+	return nil
 }
 
 // reuse takes a record another run stored while this one ran. It is final:

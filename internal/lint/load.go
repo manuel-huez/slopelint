@@ -20,6 +20,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 type packageMeta struct {
@@ -561,4 +563,271 @@ func (meta *packageMeta) targetImportPath() string {
 	path, _, _ := strings.Cut(meta.ImportPath, " ")
 
 	return path
+}
+
+const (
+	wideDirectoryRule        = "wide_directory"
+	wideDirectoryLimit       = 25
+	generatedHeaderLineLimit = 5
+	generatedHeaderReadLimit = 4096
+)
+
+type directoryInventory struct {
+	members     map[string]map[string]struct{}
+	directFiles map[string][]string
+	anyBelow    map[string]string
+}
+
+func (inv *directoryInventory) addFile(root, file string) {
+	rel, err := filepath.Rel(root, file)
+	if err != nil || !filepath.IsLocal(rel) {
+		return
+	}
+
+	parentDir := filepath.Dir(file)
+	inv.directFiles[parentDir] = append(inv.directFiles[parentDir], file)
+
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	currDir := root
+
+	for idx, part := range parts {
+		entry := part
+		if idx < len(parts)-1 {
+			entry += "/"
+		}
+
+		if inv.members[currDir] == nil {
+			inv.members[currDir] = make(map[string]struct{})
+		}
+
+		inv.members[currDir][entry] = struct{}{}
+
+		if _, ok := inv.anyBelow[currDir]; !ok {
+			inv.anyBelow[currDir] = file
+		}
+
+		if idx < len(parts)-1 {
+			currDir = filepath.Join(currDir, part)
+		}
+	}
+}
+
+func (inv *directoryInventory) issues(root string) ([]Issue, error) {
+	dirs := make([]string, 0, len(inv.members))
+	for dirPath, entries := range inv.members {
+		if len(entries) > wideDirectoryLimit {
+			dirs = append(dirs, dirPath)
+		}
+	}
+
+	slices.Sort(dirs)
+
+	issues := make([]Issue, 0, len(dirs))
+	for _, dirPath := range dirs {
+		issue, err := wideDirectoryIssue(
+			root,
+			dirPath,
+			inv.members[dirPath],
+			inv.directFiles[dirPath],
+			inv.anyBelow[dirPath],
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		issues = append(issues, issue)
+	}
+
+	return issues, nil
+}
+
+// checkWideDirectories reports directories holding more than wideDirectoryLimit
+// direct production source files and subdirectories containing production code.
+func checkWideDirectories(scan repoScan, dir string) ([]Issue, error) {
+	root, err := findSourceRoot(dir)
+	if err != nil {
+		if absDir, absErr := filepath.Abs(dir); absErr == nil {
+			root = absDir
+		} else {
+			root = filepath.Clean(dir)
+		}
+	}
+
+	prodFiles := collectProductionPaths(scan)
+	if len(prodFiles) <= wideDirectoryLimit {
+		return nil, nil
+	}
+
+	inv := directoryInventory{
+		members:     make(map[string]map[string]struct{}),
+		directFiles: make(map[string][]string),
+		anyBelow:    make(map[string]string),
+	}
+
+	for _, file := range prodFiles {
+		inv.addFile(root, file)
+	}
+
+	return inv.issues(root)
+}
+
+func collectProductionPaths(scan repoScan) []string {
+	seen := make(map[string]struct{})
+
+	add := func(path string) {
+		clean := filepath.Clean(path)
+		if _, ok := seen[clean]; ok || fileIsGeneratedHeader(clean) {
+			return
+		}
+
+		seen[clean] = struct{}{}
+	}
+
+	for _, target := range scan.targets {
+		if target.testOnly {
+			continue
+		}
+
+		for _, name := range slices.Concat(target.GoFiles, target.CgoFiles) {
+			if strings.HasSuffix(name, "_test.go") || strings.Contains(name, "test_support") {
+				continue
+			}
+
+			add(filepath.Join(target.Dir, name))
+		}
+	}
+
+	for _, script := range scan.scripts {
+		if outline.TestFile(script) {
+			continue
+		}
+
+		add(script)
+	}
+
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+
+	slices.Sort(paths)
+
+	return paths
+}
+
+func fileIsGeneratedHeader(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+
+	defer func() { _ = file.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(file, generatedHeaderReadLimit))
+	if err != nil {
+		return false
+	}
+
+	header := string(data)
+	for range generatedHeaderLineLimit {
+		line, rest, _ := strings.Cut(header, "\n")
+		if strings.Contains(line, "@generated") ||
+			strings.Contains(line, "DO NOT EDIT") ||
+			strings.Contains(line, "Code generated") {
+			return true
+		}
+
+		header = rest
+	}
+
+	return false
+}
+
+func wideDirectoryIssue(
+	root string,
+	dirPath string,
+	entries map[string]struct{},
+	direct []string,
+	fallback string,
+) (Issue, error) {
+	var fileCount, dirCount int
+
+	for entry := range entries {
+		if strings.HasSuffix(entry, "/") {
+			dirCount++
+		} else {
+			fileCount++
+		}
+	}
+
+	display, err := relativeSlashPath(root, dirPath)
+	if err != nil {
+		return Issue{}, err
+	}
+
+	if display == "." || display == "" {
+		display = "./"
+	}
+
+	anchor := pickDirectoryAnchor(dirPath, direct, fallback)
+
+	return Issue{
+		Kind: wideDirectoryRule,
+		Message: fmt.Sprintf(
+			"directory %q has %d production entries (%s; limit %d)",
+			display,
+			len(entries),
+			formatEntryBreakdown(fileCount, dirCount),
+			wideDirectoryLimit,
+		),
+		position: token.Position{Filename: anchor, Line: 1, Column: 1},
+	}, nil
+}
+
+func pickDirectoryAnchor(dirPath string, direct []string, fallback string) string {
+	if len(direct) == 0 {
+		return fallback
+	}
+
+	byBase := make(map[string]string, len(direct))
+	for _, candidate := range direct {
+		byBase[filepath.Base(candidate)] = candidate
+	}
+
+	preferred := []string{
+		"doc.go",
+		"package.go",
+		filepath.Base(dirPath) + ".go",
+		"index.ts",
+		"index.tsx",
+		"__init__.py",
+	}
+	for _, want := range preferred {
+		if candidate, ok := byBase[want]; ok {
+			return candidate
+		}
+	}
+
+	return direct[0]
+}
+
+func formatEntryBreakdown(files, dirs int) string {
+	var parts []string
+	if files > 0 {
+		parts = append(parts, pluralCount(files, "file", "files"))
+	}
+
+	if dirs > 0 {
+		parts = append(parts, pluralCount(dirs, "directory", "directories"))
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func pluralCount(count int, singular, plural string) string {
+	if count == 1 {
+		return "1 " + singular
+	}
+
+	return fmt.Sprintf("%d %s", count, plural)
 }

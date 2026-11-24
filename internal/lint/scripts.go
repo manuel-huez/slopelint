@@ -136,7 +136,12 @@ func lintScriptFiles(files []string, root string, opts Options) ([]Issue, error)
 		issues = append(issues, fileIssues...)
 	}
 
-	return issues, nil
+	cycleIssues, err := checkScriptModuleCycles(files, root)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(issues, cycleIssues...), nil
 }
 
 func lintScriptFile(name, root string, opts Options) ([]Issue, error) {
@@ -512,4 +517,322 @@ func scriptPosition(filename string, pos outline.Pos) token.Position {
 		Line:     pos.Line,
 		Column:   pos.Column,
 	}
+}
+
+const (
+	moduleCycleRule  = "module_cycle"
+	minCycleFilePair = 2
+)
+
+func checkScriptModuleCycles(files []string, root string) ([]Issue, error) {
+	var prod []string
+
+	for _, file := range files {
+		if !outline.TestFile(file) {
+			prod = append(prod, filepath.Clean(file))
+		}
+	}
+
+	if len(prod) < minCycleFilePair {
+		return nil, nil
+	}
+
+	slices.Sort(prod)
+
+	indexByPath := make(map[string]int, len(prod))
+	for index, path := range prod {
+		indexByPath[path] = index
+	}
+
+	edges, edgePos, err := buildScriptImportGraph(prod, root, indexByPath)
+	if err != nil {
+		return nil, err
+	}
+
+	components := smellcheck.StronglyConnectedComponents(edges)
+	if len(components) == 0 {
+		return nil, nil
+	}
+
+	issues := make([]Issue, 0, len(components))
+	for _, comp := range components {
+		issue, err := moduleCycleIssue(comp, prod, root, edges, edgePos)
+		if err != nil {
+			return nil, err
+		}
+
+		issues = append(issues, issue)
+	}
+
+	return issues, nil
+}
+
+func buildScriptImportGraph(
+	prod []string,
+	root string,
+	indexByPath map[string]int,
+) ([][]int, map[[2]int]outline.Pos, error) {
+	edges := make([][]int, len(prod))
+	edgePos := make(map[[2]int]outline.Pos)
+
+	for index, path := range prod {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		parsed, err := parseReadableScript(path, content)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if parsed.Generated || len(parsed.Imports) == 0 {
+			continue
+		}
+
+		seen := make(map[int]bool)
+
+		for _, imp := range parsed.Imports {
+			for _, target := range resolveScriptImportTargets(
+				path,
+				root,
+				outline.LanguageFor(path),
+				imp,
+				indexByPath,
+			) {
+				if target == index || seen[target] {
+					continue
+				}
+
+				seen[target] = true
+				edges[index] = append(edges[index], target)
+				edgePos[[2]int{index, target}] = imp.Pos
+			}
+		}
+
+		slices.Sort(edges[index])
+	}
+
+	return edges, edgePos, nil
+}
+
+func resolveScriptImportTargets(
+	file string,
+	root string,
+	lang outline.Language,
+	imp outline.Import,
+	indexByPath map[string]int,
+) []int {
+	if lang == outline.TypeScript {
+		if target, ok := resolveTypeScriptImport(file, imp.Path, indexByPath); ok {
+			return []int{target}
+		}
+
+		return nil
+	}
+
+	return resolvePythonImport(file, root, imp, indexByPath)
+}
+
+func resolveTypeScriptImport(
+	file string,
+	spec string,
+	indexByPath map[string]int,
+) (int, bool) {
+	if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
+		return 0, false
+	}
+
+	base := filepath.Clean(filepath.Join(filepath.Dir(file), filepath.FromSlash(spec)))
+	candidates := []string{base}
+
+	for _, jsExt := range []string{".js", ".jsx", ".mjs", ".cjs"} {
+		if stem, ok := strings.CutSuffix(base, jsExt); ok {
+			candidates = append(candidates, stem+".ts", stem+".tsx")
+		}
+	}
+
+	candidates = append(
+		candidates,
+		base+".ts",
+		base+".tsx",
+		filepath.Join(base, "index.ts"),
+		filepath.Join(base, "index.tsx"),
+	)
+
+	for _, candidate := range candidates {
+		if index, ok := indexByPath[candidate]; ok {
+			return index, true
+		}
+	}
+
+	return 0, false
+}
+
+func resolvePythonImport(
+	file string,
+	root string,
+	imp outline.Import,
+	indexByPath map[string]int,
+) []int {
+	bases := pythonImportBaseDirs(file, root, imp.Relative)
+
+	if imp.Path != "" {
+		if target, ok := resolvePythonModuleInDirs(bases, imp.Path, indexByPath); ok {
+			return []int{target}
+		}
+	}
+
+	var targets []int
+
+	for _, name := range imp.Names {
+		sub := name
+		if imp.Path != "" {
+			sub = imp.Path + "." + name
+		}
+
+		if target, ok := resolvePythonModuleInDirs(bases, sub, indexByPath); ok {
+			targets = append(targets, target)
+		}
+	}
+
+	return targets
+}
+
+func pythonImportBaseDirs(file, root string, relative int) []string {
+	if relative <= 0 {
+		return []string{root, filepath.Join(root, "src")}
+	}
+
+	baseDir := filepath.Dir(file)
+	for range relative - 1 {
+		baseDir = filepath.Dir(baseDir)
+	}
+
+	return []string{baseDir}
+}
+
+func resolvePythonModuleInDirs(
+	bases []string,
+	modulePath string,
+	indexByPath map[string]int,
+) (int, bool) {
+	rel := filepath.FromSlash(strings.ReplaceAll(modulePath, ".", "/"))
+
+	for _, dir := range bases {
+		joined := filepath.Clean(filepath.Join(dir, rel))
+		for _, candidate := range []string{
+			joined + ".py",
+			filepath.Join(joined, "__init__.py"),
+		} {
+			if index, ok := indexByPath[candidate]; ok {
+				return index, true
+			}
+		}
+	}
+
+	return 0, false
+}
+
+func moduleCycleIssue(
+	comp []int,
+	prod []string,
+	root string,
+	edges [][]int,
+	edgePos map[[2]int]outline.Pos,
+) (Issue, error) {
+	inComp := make(map[int]bool, len(comp))
+	for _, node := range comp {
+		inComp[node] = true
+	}
+
+	cycle := shortestCyclePath(comp[0], edges, inComp)
+	anchorNode := cycle[0]
+	nextNode := cycle[1]
+	pos := edgePos[[2]int{anchorNode, nextNode}]
+
+	relNames := make([]string, len(cycle))
+	for i, node := range cycle {
+		rel, err := relativeSlashPath(root, prod[node])
+		if err != nil {
+			return Issue{}, err
+		}
+
+		relNames[i] = rel
+	}
+
+	return Issue{
+		Kind: moduleCycleRule,
+		Message: fmt.Sprintf(
+			"%d modules form an import cycle: %s",
+			len(comp),
+			strings.Join(relNames, " -> "),
+		),
+		position: scriptPosition(prod[anchorNode], pos),
+	}, nil
+}
+
+// shortestCyclePath finds a shortest directed cycle starting and ending at
+// start using only nodes in allowed.
+func shortestCyclePath(start int, edges [][]int, allowed map[int]bool) []int {
+	prev := map[int]int{}
+	queue := make([]int, 0, len(allowed))
+
+	for _, next := range edges[start] {
+		if !allowed[next] {
+			continue
+		}
+
+		if next == start {
+			return []int{start, start}
+		}
+
+		if _, seen := prev[next]; !seen {
+			prev[next] = start
+			queue = append(queue, next)
+		}
+	}
+
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+
+		for _, next := range edges[curr] {
+			if !allowed[next] {
+				continue
+			}
+
+			if next == start {
+				path := []int{start}
+				for node := curr; node != start; node = prev[node] {
+					path = append(path, node)
+				}
+
+				path = append(path, start)
+				slices.Reverse(path)
+
+				return path
+			}
+
+			if _, seen := prev[next]; !seen {
+				prev[next] = curr
+				queue = append(queue, next)
+			}
+		}
+	}
+
+	return []int{start, start}
+}
+
+func relativeSlashPath(root, path string) (string, error) {
+	if root == "" {
+		return filepath.ToSlash(path), nil
+	}
+
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", fmt.Errorf("relative path for %q from %q: %w", path, root, err)
+	}
+
+	return filepath.ToSlash(rel), nil
 }

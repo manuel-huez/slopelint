@@ -1,8 +1,6 @@
 package lint
 
 import (
-	"go/ast"
-	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
@@ -266,61 +264,6 @@ func lintLoadedPackages(pkgs []*LoadedPackage, opts Options) []Issue {
 	)
 
 	return issues
-}
-
-func firstRangeStmt(files []*ast.File) *ast.RangeStmt {
-	var out *ast.RangeStmt
-
-	for _, file := range files {
-		ast.Inspect(file, func(n ast.Node) bool {
-			if out != nil {
-				return false
-			}
-
-			stmt, ok := n.(*ast.RangeStmt)
-			if !ok {
-				return true
-			}
-
-			out = stmt
-
-			return false
-		})
-	}
-
-	return out
-}
-
-func namedObject(files []*ast.File, info *types.Info, name string) *types.Var {
-	for _, file := range files {
-		var out *types.Var
-
-		ast.Inspect(file, func(n ast.Node) bool {
-			if out != nil {
-				return false
-			}
-
-			ident, ok := n.(*ast.Ident)
-			if !ok || ident.Name != name {
-				return true
-			}
-
-			obj, ok := info.ObjectOf(ident).(*types.Var)
-			if !ok || obj == nil {
-				return true
-			}
-
-			out = obj
-
-			return false
-		})
-
-		if out != nil {
-			return out
-		}
-	}
-
-	return nil
 }
 
 func requireDeadCode(t *testing.T, dir string, kept, dead []string) {

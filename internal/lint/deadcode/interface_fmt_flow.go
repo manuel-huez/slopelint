@@ -69,6 +69,10 @@ func (flow fmtConcreteFlow) fmtStringerFlowUses(
 	return out
 }
 
+func (flow fmtConcreteFlow) resetFmtStringerVarSummaries(live map[string]struct{}) {
+	flow.summaries.resetFmtStringerVarSummaries(live)
+}
+
 func (flow fmtConcreteFlow) ensureFmtStringerVarSummaries() {
 	if flow.summaries.built {
 		return
@@ -78,11 +82,11 @@ func (flow fmtConcreteFlow) ensureFmtStringerVarSummaries() {
 	for range flow.fmtStringerSummaryPasses() {
 		changed := false
 
-		for _, pkg := range flow.decls.packages {
+		flow.decls.forEachPackage(func(pkg *Package) {
 			if flow.updateFmtStringerPackageVarSummaries(newPackageLinter(pkg)) {
 				changed = true
 			}
-		}
+		})
 
 		if !changed {
 			return
@@ -93,13 +97,13 @@ func (flow fmtConcreteFlow) ensureFmtStringerVarSummaries() {
 func (flow fmtConcreteFlow) fmtStringerSummaryPasses() int {
 	count := 1
 
-	for _, pkg := range flow.decls.packages {
+	flow.decls.forEachPackage(func(pkg *Package) {
 		for _, decl := range pkg.ProductionDecls {
 			for _, spec := range valueSpecsForDecl(decl) {
 				count += len(spec.Names)
 			}
 		}
-	}
+	})
 
 	return count
 }

@@ -47,6 +47,16 @@ func (l forwarderCheck) checkFunc(
 		return
 	}
 
+	// A method that delegates to a method on one of its receiver's fields hides
+	// that field from callers; flagging it would fight field_leak.
+	if receiverFieldMethodCall(
+		l.pkg.TypesInfo,
+		call,
+		funcReceiverObject(l.pkg.TypesInfo, fn.Recv),
+	) {
+		return
+	}
+
 	useCount := useCounts[FuncObjectKey(obj)]
 	reason := " at one production use"
 
@@ -473,4 +483,37 @@ func identRefersToObject(info *types.Info, expr ast.Expr, obj types.Object) bool
 	ident, ok := ast.Unparen(expr).(*ast.Ident)
 
 	return ok && info.ObjectOf(ident) == obj
+}
+
+func receiverFieldMethodCall(info *types.Info, call *ast.CallExpr, receiver *types.Var) bool {
+	if receiver == nil {
+		return false
+	}
+
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	selection := info.Selections[sel]
+	if selection == nil || selection.Kind() != types.MethodVal {
+		return false
+	}
+
+	return fieldChainOnReceiver(info, sel.X, receiver)
+}
+
+func fieldChainOnReceiver(info *types.Info, expr ast.Expr, receiver *types.Var) bool {
+	sel, ok := ast.Unparen(expr).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	selection := info.Selections[sel]
+	if selection == nil || selection.Kind() != types.FieldVal {
+		return false
+	}
+
+	return identRefersToObject(info, sel.X, receiver) ||
+		fieldChainOnReceiver(info, sel.X, receiver)
 }

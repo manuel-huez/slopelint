@@ -65,7 +65,7 @@ func Parse(name string, src []byte) (File, error) {
 	}
 
 	w := walker{
-		syntax:   syntax{grammar: grammar, src: src},
+		grammar: grammar, src: src,
 		name:     name,
 		language: language,
 		file:     &file,
@@ -76,6 +76,10 @@ func Parse(name string, src []byte) (File, error) {
 	w.finishTests()
 	w.finishBlocks()
 	w.finishSmells(root)
+
+	if !file.Test {
+		file.Imports = collectImports(w.syntax, language, root)
+	}
 
 	return file, nil
 }

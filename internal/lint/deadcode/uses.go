@@ -16,6 +16,10 @@ type useCollector struct {
 	reflect reflectionUses
 }
 
+func (uses *useCollector) resetFmtStringerVarSummaries(live map[string]struct{}) {
+	uses.fmt.resetFmtStringerVarSummaries(live)
+}
+
 func (uses *useCollector) usesFrom(
 	l *packageLinter,
 	node ast.Node,

@@ -10,6 +10,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/manuel-huez/slopelint/internal/lint/outline"
 )
 
 // findingSink collects findings in report order and drops exact repeats.
@@ -385,4 +389,66 @@ func funcValues(pkg *Package) map[*types.Func]bool {
 	}
 
 	return values
+}
+
+const initFuncName = "init"
+
+func reportGenericNameForHelper(sink *findingSink, fn *ast.FuncDecl, reason string) {
+	if !outline.GenericName(fn.Name.Name) {
+		return
+	}
+
+	sink.report(
+		fn.Name.Pos(),
+		"generic_naming",
+		fmt.Sprintf(
+			`private helper %q has generic name and %s`,
+			fn.Name.Name,
+			reason,
+		),
+	)
+}
+
+func funcParamCount(fields *ast.FieldList) int {
+	if fields == nil {
+		return 0
+	}
+
+	count := 0
+
+	for _, field := range fields.List {
+		if len(field.Names) == 0 {
+			count++
+			continue
+		}
+
+		count += len(field.Names)
+	}
+
+	return count
+}
+
+func isBoolType(t types.Type) bool {
+	basic, ok := types.Unalias(t).Underlying().(*types.Basic)
+
+	return ok && basic.Info()&types.IsBoolean != 0
+}
+
+func isErrorType(t types.Type) bool {
+	errorType := types.Universe.Lookup("error")
+
+	return errorType != nil && types.Identical(types.Unalias(t), errorType.Type())
+}
+
+// IsPredicateName reports names such as IsReady: "Is" followed by an
+// uppercase letter, digit, or underscore.
+func IsPredicateName(name string) bool {
+	rest, ok := strings.CutPrefix(name, "Is")
+	if !ok || rest == "" {
+		return false
+	}
+
+	r, _ := utf8.DecodeRuneInString(rest)
+
+	return r == '_' || unicode.IsUpper(r) || unicode.IsDigit(r)
 }

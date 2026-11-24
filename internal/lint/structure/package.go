@@ -65,7 +65,7 @@ func (l *Runner) ScanFunctionBody(
 	recv *ast.FieldList,
 	body *ast.BlockStmt,
 ) []Finding {
-	start := len(l.sink.findings)
+	start := l.sink.mark()
 	info := l.q.pkg.TypesInfo
 
 	inputs := make(map[types.Object]struct{})
@@ -104,10 +104,7 @@ func (l *Runner) ScanFunctionBody(
 		},
 	}.walkList(body.List, ctx)
 
-	out := make([]Finding, len(l.sink.findings)-start)
-	copy(out, l.sink.findings[start:])
-
-	return out
+	return l.sink.since(start)
 }
 
 func addFieldListObjects(info *types.Info, out map[types.Object]struct{}, fields *ast.FieldList) {
@@ -167,6 +164,17 @@ func (s *findingSink) report(finding Finding) {
 
 	s.reported[key] = struct{}{}
 	s.findings = append(s.findings, finding)
+}
+
+func (s *findingSink) mark() int {
+	return len(s.findings)
+}
+
+func (s *findingSink) since(start int) []Finding {
+	out := make([]Finding, len(s.findings)-start)
+	copy(out, s.findings[start:])
+
+	return out
 }
 
 type pkgQuery struct {

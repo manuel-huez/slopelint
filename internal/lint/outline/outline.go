@@ -48,6 +48,16 @@ type File struct {
 	// function calls once. TypeScript only: Python modules import and
 	// tests patch even underscore names.
 	SplitHelpers []SplitHelper
+	// Imports are module imports used to detect cross-file import cycles.
+	Imports []Import
+}
+
+// Import is one module import statement in a TypeScript or Python file.
+type Import struct {
+	Pos      Pos
+	Path     string
+	Relative int
+	Names    []string
 }
 
 // SplitHelper is a single-use helper and its caller, for code review to

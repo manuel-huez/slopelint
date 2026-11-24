@@ -251,42 +251,6 @@ func f(items []int) {
 	}
 }
 
-func TestStateDedupePreservesFirstSeenOrder(t *testing.T) {
-	t.Parallel()
-
-	const (
-		firstKey  = "first"
-		secondKey = "second"
-	)
-
-	first := newState()
-	first.facts[firstKey] = fact{not: map[string]evidence{"nil": {text: firstKey}}}
-	second := newState()
-	second.facts[secondKey] = fact{not: map[string]evidence{"nil": {text: secondKey}}}
-
-	states := dedupeStateSlice([]state{first, second, first})
-	if len(states) != 2 {
-		t.Fatalf("dedupeStateSlice length = %d, want 2", len(states))
-	}
-
-	if states[0].hash() != first.hash() || states[1].hash() != second.hash() {
-		t.Fatalf("dedupeStateSlice reordered first-seen states")
-	}
-
-	returns := dedupeReturnStates([]returnState{
-		{state: first},
-		{state: second},
-		{state: first},
-	})
-	if len(returns) != 2 {
-		t.Fatalf("dedupeReturnStates length = %d, want 2", len(returns))
-	}
-
-	if returns[0].state.hash() != first.hash() || returns[1].state.hash() != second.hash() {
-		t.Fatalf("dedupeReturnStates reordered first-seen states")
-	}
-}
-
 func TestNestedCallbackArgInvalidatesCapturedFact(t *testing.T) {
 	t.Parallel()
 

@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	deadcodecheck "github.com/manuel-huez/slopelint/internal/lint/deadcode"
+	flowcheck "github.com/manuel-huez/slopelint/internal/lint/flow"
 	smellcheck "github.com/manuel-huez/slopelint/internal/lint/smells"
 )
 
@@ -40,7 +41,9 @@ func LintRepository(
 	}
 
 	ignores := loadIgnores(scan.files())
-	ignores.complete = scansWholeRoot(patterns, dir)
+	if scansWholeRoot(patterns, dir) {
+		ignores.markComplete()
+	}
 
 	var (
 		issues        []Issue
@@ -75,8 +78,11 @@ func LintRepository(
 
 	packageIssues, err := lintPackageTargets(scan.targets, scan.byImportPath, opts)
 	scriptIssues, scriptErr := lintScriptFiles(scan.scripts, scan.scriptRoot, opts)
-	err = errors.Join(err, scriptErr)
-	packageIssues, found := splitCodeReviewCandidates(append(packageIssues, scriptIssues...))
+	wideDirIssues, wideDirErr := checkWideDirectories(scan, dir)
+	err = errors.Join(err, scriptErr, wideDirErr)
+	packageIssues, found := splitCodeReviewCandidates(
+		slices.Concat(packageIssues, scriptIssues, wideDirIssues),
+	)
 
 	if candidates != nil {
 		if err == nil {
@@ -92,11 +98,14 @@ func LintRepository(
 		return nil, err
 	}
 
-	issues = append(issues, ignores.filter(packageIssues)...)
-	issues = append(issues, ignores.invalid...)
-	issues = append(issues, ignores.stale(func(rule string) bool {
-		return rule != similarityIssueKind
-	})...)
+	issues = slices.Concat(
+		issues,
+		ignores.filter(packageIssues),
+		ignores.invalid,
+		ignores.stale(func(rule string) bool {
+			return rule != similarityIssueKind
+		}),
+	)
 	sortIssues(issues)
 
 	persistRepoAnalysisResult(patterns, dir, opts, similarity, issues)
@@ -399,7 +408,7 @@ func lintRepoPackageInputs(
 	repoOpts.skipDeadCode = repoDeadCode
 	repoOpts.skipBehaviorClones = true
 
-	summaries := make(map[string]callSummary)
+	summaries := make(map[string]flowcheck.CallSummary)
 	results := make(map[string]repoPackageLintResult, len(inputs))
 
 	for _, level := range repoPackageDependencyLevels(inputs) {
@@ -510,7 +519,7 @@ func repoBehaviorIssues(
 
 	issues := make([]Issue, 0)
 	for _, l := range linters {
-		issues = append(issues, l.sink.issues...)
+		issues = append(issues, l.issues()...)
 	}
 
 	storeRepoBehaviorCache(cache, files, issues)
@@ -613,7 +622,7 @@ func storeRepoBehaviorCache(
 
 func lintRepoPackageLevel(
 	inputs []repoPackageInput,
-	summaries map[string]callSummary,
+	summaries map[string]flowcheck.CallSummary,
 	opts Options,
 	typeDigests map[string]string,
 	repoDeadCode bool,
@@ -640,7 +649,7 @@ func lintRepoPackageLevel(
 
 func lintRepoPackage(
 	input repoPackageInput,
-	summaries map[string]callSummary,
+	summaries map[string]flowcheck.CallSummary,
 	opts Options,
 	typeDigests map[string]string,
 	repoDeadCode bool,
@@ -685,9 +694,9 @@ func lintRepoPackage(
 	l := newLinter(pkg, opts)
 	dependencies := make(map[string]analysisCacheImportedFact)
 
-	l.run(func(obj *types.Func) (callSummary, bool) {
+	l.run(func(obj *types.Func) (flowcheck.CallSummary, bool) {
 		if obj.Pkg() == nil || obj.Pkg().Path() == pkg.ImportPath {
-			return callSummary{}, false
+			return flowcheck.CallSummary{}, false
 		}
 
 		key := smellcheck.FuncObjectKey(obj)
@@ -702,19 +711,19 @@ func lintRepoPackage(
 
 		return summary, ok
 	})
-	sortIssues(l.sink.issues)
+	issues := l.sortedIssues()
 
 	result := repoPackageLintResult{
 		importPath: input.importPath,
 		cacheKey:   cacheKey,
-		issues:     l.sink.issues,
+		issues:     issues,
 		exports:    cachedExportsForLinter(l),
 		pkg:        pkg,
 	}
 	if cache != nil {
 		_ = cache.storeStandalone(
 			l,
-			l.sink.issues,
+			issues,
 			sortedAnalysisCacheDependencies(dependencies),
 		)
 	}
@@ -744,7 +753,7 @@ func loadedRepoPackage(
 func cachedRepoPackageLintResult(
 	cache *analysisCache,
 	input repoPackageInput,
-	summaries map[string]callSummary,
+	summaries map[string]flowcheck.CallSummary,
 	opts Options,
 	repoDeadCode bool,
 	loadContext *packageLoadContext,

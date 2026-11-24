@@ -219,6 +219,11 @@ func ParallelParams(
 	imported func(*types.Func) []int,
 ) map[*types.Func][]int {
 	walk := newParallelWalk(info, files, imported)
+
+	return walk.params()
+}
+
+func (walk parallelWalk) params() map[*types.Func][]int {
 	out := make(map[*types.Func][]int)
 
 	for obj, fn := range walk.funcs {

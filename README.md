@@ -108,6 +108,8 @@ than the typed Go rules.
 | `prod_must_panic`, `sentinel_error_break` | Panics in production code, sentinel errors used for control flow | ✅ | – | – |
 | `behavior_clone` | Functions or blocks with the same behavior | ✅ | – | – |
 | `dead_code` | Unreachable declarations | ✅ | – | – |
+| `field_leak`, `type_tangle` | Outsiders working on a guarded struct's fields, over 7 mutually dependent types in a package | ✅ | – | – |
+| `module_cycle` | Circular imports between modules | – | ✅ | ✅ |
 | `const_grouping`, `var_grouping`, `type_grouping`, `mixed_const_prefixes` | Declarations to group | ✅ | – | – |
 
 ### Size
@@ -115,6 +117,7 @@ than the typed Go rules.
 | Rules | Finds | Go | TS | Py |
 | --- | --- | :-: | :-: | :-: |
 | `oversized_owner_file`, `long_function`, `long_param_list`, `god_receiver` | Files over 1,000 lines, functions over 40 statements (closures inside count; a switch counts one per case plus its longest case), over 6 params (TS and Python skip a function their file only passes as a callback), types or classes over 40 methods (Go also counts functions that take `*T` first; all count methods of types they embed or extend that no outside type shares) | ✅ | ✅ | ✅ |
+| `wide_directory` | Directories with over 25 production files and subdirectories | ✅ | ✅ | ✅ |
 | `long_result_list` | Over 3 results | ✅ | – | – |
 
 ### Tests

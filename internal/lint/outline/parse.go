@@ -77,6 +77,10 @@ func Parse(name string, src []byte) (File, error) {
 	w.finishBlocks()
 	w.finishSmells(root)
 
+	if !file.Test {
+		file.Imports = collectImports(w.syntax, language, root)
+	}
+
 	return file, nil
 }
 

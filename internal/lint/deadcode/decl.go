@@ -31,8 +31,7 @@ func (index declIndex) addPackageDecls(l *packageLinter, mode deadCodeMode) {
 // fmt and reflection caches filled here only see candidates indexed so far,
 // and later results can depend on them. indexEdges recomputes root edges.
 func (index declIndex) addRootUses(l *packageLinter, node ast.Node) {
-	index.graph.rootUses = append(index.graph.rootUses, deadCodeRootUse{pkg: l.pkg, node: node})
-	index.graph.addRootUseEdges(index.uses, l.pkg, node)
+	index.graph.addRootUse(index.uses, l.pkg, node)
 }
 
 func (index declIndex) addDecl(l *packageLinter, decl ast.Decl, mode deadCodeMode) {
@@ -205,7 +204,7 @@ func (index declIndex) addFuncCandidate(
 		owner = deadCodeObjectKey(receiver.Obj())
 	}
 
-	index.graph.candidates[deadCodeObjectKey(origin)] = deadCodeDecl{
+	index.graph.addCandidate(deadCodeObjectKey(origin), deadCodeDecl{
 		obj:      origin,
 		node:     fn,
 		owner:    owner,
@@ -214,7 +213,7 @@ func (index declIndex) addFuncCandidate(
 		pos:      fn.Name.Pos(),
 		exported: ast.IsExported(fn.Name.Name),
 		pkg:      pkg,
-	}
+	})
 }
 
 func (index declIndex) addGenDecl(
@@ -244,7 +243,7 @@ func (index declIndex) addTypeSpec(
 	}
 
 	if reportableDeadCodeNameForMode(spec.Name.Name, mode) {
-		index.graph.candidates[deadCodeObjectKey(obj)] = deadCodeDecl{
+		index.graph.addCandidate(deadCodeObjectKey(obj), deadCodeDecl{
 			obj:      obj,
 			node:     spec,
 			name:     spec.Name.Name,
@@ -252,7 +251,7 @@ func (index declIndex) addTypeSpec(
 			pos:      spec.Name.Pos(),
 			exported: ast.IsExported(spec.Name.Name),
 			pkg:      l.pkg,
-		}
+		})
 	} else {
 		index.addRootUses(l, spec)
 	}
@@ -281,16 +280,19 @@ func (index declIndex) addStructFieldCandidates(
 				continue
 			}
 
-			index.graph.candidates[deadCodeStructFieldKey(l.pkg.ImportPath, spec.Name.Name, name.Name)] = deadCodeDecl{
-				obj:      obj,
-				node:     field,
-				owner:    deadCodeObjectKey(l.pkg.TypesInfo.Defs[spec.Name]),
-				name:     spec.Name.Name + "." + name.Name,
-				kind:     "field",
-				pos:      name.Pos(),
-				exported: ast.IsExported(name.Name),
-				pkg:      l.pkg,
-			}
+			index.graph.addCandidate(
+				deadCodeStructFieldKey(l.pkg.ImportPath, spec.Name.Name, name.Name),
+				deadCodeDecl{
+					obj:      obj,
+					node:     field,
+					owner:    deadCodeObjectKey(l.pkg.TypesInfo.Defs[spec.Name]),
+					name:     spec.Name.Name + "." + name.Name,
+					kind:     "field",
+					pos:      name.Pos(),
+					exported: ast.IsExported(name.Name),
+					pkg:      l.pkg,
+				},
+			)
 		}
 	}
 }
@@ -334,7 +336,7 @@ func (index declIndex) addValueSpec(
 			kind = "var"
 		}
 
-		index.graph.candidates[deadCodeObjectKey(obj)] = deadCodeDecl{
+		index.graph.addCandidate(deadCodeObjectKey(obj), deadCodeDecl{
 			obj:      obj,
 			node:     spec,
 			name:     name.Name,
@@ -342,7 +344,7 @@ func (index declIndex) addValueSpec(
 			pos:      name.Pos(),
 			exported: ast.IsExported(name.Name),
 			pkg:      l.pkg,
-		}
+		})
 	}
 
 	if rootSpec {

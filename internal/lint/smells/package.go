@@ -77,6 +77,8 @@ func RunPackage(pkg *Package) []Finding {
 	apiCheck{env}.checkOptionalResultTriples()
 	errorCheck{env}.checkPanics()
 	errorCheck{env}.checkSentinelBreaks()
+	tangleOf := typeTangleCheck{env}.check()
+	fieldLeakCheck{ruleEnv: env, tangleOf: tangleOf}.check()
 
 	return env.findings
 }

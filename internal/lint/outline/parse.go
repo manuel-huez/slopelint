@@ -65,7 +65,7 @@ func Parse(name string, src []byte) (File, error) {
 	}
 
 	w := walker{
-		syntax:   syntax{grammar: grammar, src: src},
+		grammar: grammar, src: src,
 		name:     name,
 		language: language,
 		file:     &file,

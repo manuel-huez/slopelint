@@ -321,12 +321,11 @@ func genericCodecFallbackEvidence(path string) bool {
 }
 
 func genericFallbackPathBase(path string) string {
-	index := strings.LastIndex(path, "/")
-	if index < 0 {
-		return path
+	if _, after, ok := strings.CutLast(path, "/"); ok {
+		return after
 	}
 
-	return path[index+1:]
+	return path
 }
 
 func genericFallbackTag(name string, path string) string {

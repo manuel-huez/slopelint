@@ -272,7 +272,7 @@ func invariantWorkCallLabel(info *types.Info, call *ast.CallExpr) (string, bool)
 	if pkgPath == "text/template" || pkgPath == "html/template" {
 		switch name {
 		case "Must", "ParseFiles", "ParseFS", "ParseGlob":
-			return shortPackagePath(pkgPath) + "." + name, true
+			return "template." + name, true
 		}
 	}
 
@@ -701,12 +701,4 @@ func funcObject(info *types.Info, expr ast.Expr) *types.Func {
 	default:
 		return nil
 	}
-}
-
-func shortPackagePath(path string) string {
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
-		return path[idx+1:]
-	}
-
-	return path
 }

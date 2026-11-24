@@ -554,7 +554,7 @@ func Save() ([]byte, error) {
 // encoding/json/v2 takes the value before its options and calls both the v1
 // and the streaming hooks of field types.
 func TestRepoDeadCodeKeepsJSONv2Hooks(t *testing.T) {
-	t.Setenv("GOEXPERIMENT", "jsonv2")
+	t.Parallel()
 
 	tmp := newTestModule(t)
 	writeTestMain(t, tmp, `	_, _ = lib.Load(nil)`)

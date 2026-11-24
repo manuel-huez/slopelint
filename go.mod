@@ -1,6 +1,6 @@
 module github.com/manuel-huez/slopelint
 
-go 1.26.5
+go 1.27.4
 
 require (
 	github.com/odvcencio/gotreesitter v0.57.0
